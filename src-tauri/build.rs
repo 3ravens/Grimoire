@@ -69,7 +69,7 @@ fn copy_zim_dlls_to_out() {
     for dll in &dlls {
         let src = src_dir.join(dll);
         let dst = bin_dir.join(dll);
-        if src.exists() && !dst.exists() {
+        if src.exists() {
             let _ = std::fs::copy(&src, &dst);
         }
         // Rerun if the source DLL changes.

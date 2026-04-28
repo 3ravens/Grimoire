@@ -27,6 +27,8 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   import Chat from './lib/Chat.svelte';
   import Graph from './lib/Graph.svelte';
   import Kanban from './lib/Kanban.svelte';
+  import WikipediaReader from './lib/WikipediaReader.svelte';
+  import WikipediaSearchModal from './lib/WikipediaSearchModal.svelte';
   import TabBar from './lib/TabBar.svelte';
   import LockScreen from './lib/LockScreen.svelte';
   import PasswordModal from './lib/PasswordModal.svelte';
@@ -105,8 +107,9 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   let folderExpanded = $state({}); // { [folderId]: boolean }
 
   // Settings overlay
-  let settingsOpen      = $state(false);
-  let quickSwitcherOpen = $state(false);
+  let settingsOpen          = $state(false);
+  let quickSwitcherOpen     = $state(false);
+  let wikiSearchOpen        = $state(false);
 
   // Database / table view
   let tableViewOpen      = $state(false);
@@ -913,6 +916,19 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     activeTabId = id; activeNote = null; editorTitle = ''; editorContent = ''; isDirty = false;
   }
 
+  function openWikipediaArticle(bundleId, articlePath, title) {
+    if (isDirty) saveNote();
+    const existing = tabs.find(t => t.type === 'wikipedia' && t.bundleId === bundleId && t.articlePath === articlePath);
+    if (existing) { activeTabId = existing.id; activeNote = null; editorTitle = ''; editorContent = ''; isDirty = false; return; }
+    const id = makeTabId();
+    tabs = [...tabs, { id, type: 'wikipedia', noteId: null, label: title || 'Wikipedia', customLabel: null, bundleId, articlePath }];
+    activeTabId = id; activeNote = null; editorTitle = ''; editorContent = ''; isDirty = false;
+  }
+
+  function updateWikipediaTab(bundleId, articlePath, title) {
+    tabs = tabs.map(t => t.id === activeTabId ? { ...t, bundleId, articlePath, label: title || t.label, customLabel: t.customLabel } : t);
+  }
+
   function openChatTab() {
     if (isDirty) saveNote();
     const existing = tabs.find(t => t.type === 'chat');
@@ -1380,6 +1396,8 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   onCalendar={openCalendarTab}
   onDailyNote={createDailyNote}
   onQuickSwitcher={() => (quickSwitcherOpen = true)}
+  wikipediaEnabled={settings.wikipediaEnabled}
+  onWikipedia={() => (wikiSearchOpen = true)}
   onLock={lockVault}
   onSettings={() => (settingsOpen = true)}
   onHelp={() => openUrl('https://grimoire.app')}
@@ -1596,8 +1614,19 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
           <button class="tab-fullview-close" onclick={() => closeTab(activeTabId)} title="Close kanban">✕ Close</button>
           <Kanban folderId={activeTab.folderId} onOpenNote={(id) => openNoteById(id)} />
         </div>
+      {:else if activeTab?.type === 'wikipedia'}
+        <div class="tab-fullview">
+          <WikipediaReader
+            bundleId={activeTab.bundleId}
+            articlePath={activeTab.articlePath}
+            bundleName={activeTab.label}
+            onArticleNavigate={(bid, apath, title) => updateWikipediaTab(bid, apath, title)}
+            onOpenArticle={(bid, apath, title) => openWikipediaArticle(bid, apath, title)}
+            onClose={() => closeTab(activeTabId)}
+          />
+        </div>
       {:else if activeTab?.type === 'chat'}
-        <Chat activeNote={null} pendingInsert={null} keepInMemory={settings.keepModelInMemory} llmEnabled={settings.llmEnabled} wikipediaEnabled={settings.wikipediaEnabled} onClose={() => closeTab(activeTabId)} onContextMenu={(x, y, items) => (ctxMenu = { x, y, items })} onInsertIntoNote={null} {activeView} {activeViewFolderId} {activeViewLabel} {activeViewFilters} />
+        <Chat activeNote={null} pendingInsert={null} keepInMemory={settings.keepModelInMemory} llmEnabled={settings.llmEnabled} wikipediaEnabled={settings.wikipediaEnabled} onClose={() => closeTab(activeTabId)} onContextMenu={(x, y, items) => (ctxMenu = { x, y, items })} onInsertIntoNote={null} onOpenWikipediaArticle={openWikipediaArticle} {activeView} {activeViewFolderId} {activeViewLabel} {activeViewFilters} />
       {:else if activeNote}
         <NoteEditor
           {activeNote}
@@ -1655,7 +1684,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
   {#if layout.chatOpen && activeTab?.type !== 'chat'}
     <button class="panel-divider chat-divider" aria-label="Resize chat panel" class:dragging={layout.activeDrag?.panel === 'chat'} onmousedown={(e) => layout.startDrag('chat', e)}></button>
-    <Chat {activeNote} pendingInsert={chatInsert} keepInMemory={settings.keepModelInMemory} llmEnabled={settings.llmEnabled} wikipediaEnabled={settings.wikipediaEnabled} onClose={() => (layout.chatOpen = false)} onContextMenu={(x, y, items) => (ctxMenu = { x, y, items })} onInsertIntoNote={activeNote ? insertIntoActiveNote : null} {activeView} {activeViewFolderId} {activeViewLabel} {activeViewFilters} />
+    <Chat {activeNote} pendingInsert={chatInsert} keepInMemory={settings.keepModelInMemory} llmEnabled={settings.llmEnabled} wikipediaEnabled={settings.wikipediaEnabled} onClose={() => (layout.chatOpen = false)} onContextMenu={(x, y, items) => (ctxMenu = { x, y, items })} onInsertIntoNote={activeNote ? insertIntoActiveNote : null} onOpenWikipediaArticle={openWikipediaArticle} {activeView} {activeViewFolderId} {activeViewLabel} {activeViewFilters} />
   {/if}
 </div>
 
@@ -1664,6 +1693,13 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     onSelect={(note) => navigateToNote(note)}
     onSelectNewTab={(note) => openNoteInNewTab(note)}
     onClose={() => (quickSwitcherOpen = false)}
+  />
+{/if}
+
+{#if wikiSearchOpen}
+  <WikipediaSearchModal
+    onOpenArticle={(bid, apath, title) => { openWikipediaArticle(bid, apath, title); wikiSearchOpen = false; }}
+    onClose={() => (wikiSearchOpen = false)}
   />
 {/if}
 

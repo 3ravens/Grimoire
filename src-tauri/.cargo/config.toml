@@ -12,3 +12,6 @@
 
 [env]
 CXXFLAGS = { value = "/IC:\\vcpkg\\installed\\x64-windows\\include", force = false }
+# Suppress LanceDB/Arrow/DataFusion internal span noise in dev builds.
+# Set RUST_LOG in your shell to override (force = false).
+RUST_LOG = { value = "warn,app=info", force = false }

@@ -157,6 +157,13 @@ pub fn run() {
         commands::index_wikipedia_bundle,
         commands::read_wikipedia_article,
         commands::search_wikipedia,
+        commands::read_wikipedia_article_html,
+        commands::serve_wikipedia_image,
+        commands::resolve_wikipedia_link,
+        commands::suggest_wikipedia_articles,
+        commands::load_wikipedia_highlights,
+        commands::save_wikipedia_highlight,
+        commands::delete_wikipedia_highlight,
         // ── Debug-only commands (excluded from release builds) ───────────────
         #[cfg(debug_assertions)]
         commands::debug_search,

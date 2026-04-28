@@ -72,13 +72,14 @@
   {/if}
 </div>
 
-<ul>
+<ul role="listbox" aria-label="Notes">
   {#each sortedNotes as note (note.id)}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
     <li
+      role="option"
+      aria-selected={activeNote?.id === note.id}
       class:active={activeNote?.id === note.id}
       class:locked-row={note.locked}
-      aria-current={activeNote?.id === note.id ? 'page' : undefined}
       data-note-id={note.id}
       draggable={!note.locked}
       ondragstart={(e) => !note.locked && onNoteDragStart?.(e, note)}

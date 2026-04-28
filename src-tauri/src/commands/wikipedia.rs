@@ -66,6 +66,25 @@ pub struct CatalogueEntry {
     pub sha256_url:    Option<String>,
 }
 
+/// A persisted user highlight inside a Wikipedia article.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct WikiHighlight {
+    pub id:               i64,
+    pub highlighted_text: String,
+    pub context_before:   Option<String>,
+    pub context_after:    Option<String>,
+    pub status:           String,
+}
+
+/// Internal row type for bundle lookup queries.
+#[derive(sqlx::FromRow)]
+struct BundleRow {
+    id:       String,
+    name:     String,
+    title:    Option<String>,
+    zim_path: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -734,6 +753,510 @@ pub async fn read_wikipedia_article(
     .map_err(|e| e.to_string())?;
 
     result
+}
+
+// ---------------------------------------------------------------------------
+// Article HTML reader
+// ---------------------------------------------------------------------------
+
+/// Rewrite `href` attributes in an HTML fragment for the Wikipedia reader.
+///
+/// Rules:
+///   - External URLs (`http://`, `https://`, protocol-relative `//`) →
+///     `href="#"` + `data-external="true"` + tooltip.
+///   - Fragment-only (`#…`) or empty → kept as-is.
+///   - All other (internal ZIM) links → `href="#"` +
+///     `data-wiki-path="<normalised path>"`.
+fn rewrite_hrefs_in_html(html: &str) -> String {
+    let mut out = String::with_capacity(html.len() + 1024);
+    let mut pos = 0;
+
+    while pos < html.len() {
+        match html[pos..].find("href=") {
+            None => {
+                out.push_str(&html[pos..]);
+                break;
+            }
+            Some(rel) => {
+                let href_start = pos + rel;
+                // Emit everything before "href="
+                out.push_str(&html[pos..href_start]);
+
+                let after_eq = href_start + 5; // skip past "href="
+                if after_eq >= html.len() {
+                    out.push_str("href=");
+                    pos = after_eq;
+                    continue;
+                }
+
+                let quote = html.as_bytes()[after_eq];
+                if quote != b'"' && quote != b'\'' {
+                    // Unquoted attribute – copy and move on
+                    out.push_str("href=");
+                    pos = after_eq;
+                    continue;
+                }
+
+                let q = quote as char;
+                let val_start = after_eq + 1;
+
+                match html[val_start..].find(q) {
+                    None => {
+                        // Unterminated attribute – copy as-is and bail
+                        out.push_str("href=");
+                        pos = after_eq;
+                    }
+                    Some(val_len) => {
+                        let val_end = val_start + val_len;
+                        let val = &html[val_start..val_end];
+
+                        if val.starts_with("http://")
+                            || val.starts_with("https://")
+                            || val.starts_with("//")
+                        {
+                            // External: disable, mark for tooltip
+                            out.push_str(
+                                "href=\"#\" data-external=\"true\" title=\"External links are disabled\"",
+                            );
+                        } else if val.is_empty() || val.starts_with('#') {
+                            // Fragment or empty – keep as-is
+                            out.push_str(&format!("href=\"{val}\""));
+                        } else {
+                            // Internal wiki link – normalise to plain ZIM path
+                            let clean = normalize_wiki_path(val);
+                            // HTML-escape the path so it is safe in an attribute value
+                            let escaped = clean
+                                .replace('&', "&amp;")
+                                .replace('"', "&quot;")
+                                .replace('<', "&lt;")
+                                .replace('>', "&gt;");
+                            out.push_str(&format!(
+                                "href=\"#\" data-wiki-path=\"{escaped}\""
+                            ));
+                        }
+
+                        pos = val_end + 1; // skip past closing quote
+                    }
+                }
+            }
+        }
+    }
+
+    out
+}
+
+/// Strip the common ZIM path prefixes introduced by Kiwix to obtain the
+/// plain article path (e.g. `./Photosynthesis` → `Photosynthesis`).
+/// Preserves any `#fragment` suffix so section links still work.
+fn normalize_wiki_path(href: &str) -> String {
+    // Split off any fragment first
+    let (path, fragment) = if let Some(hash) = href.find('#') {
+        (&href[..hash], &href[hash..])
+    } else {
+        (href, "")
+    };
+
+    let clean = path
+        .trim_start_matches("./")
+        .trim_start_matches("../A/")
+        .trim_start_matches("../")
+        .trim_start_matches("/wiki/")
+        .trim_start_matches("A/");
+
+    if fragment.is_empty() {
+        clean.to_string()
+    } else {
+        format!("{clean}{fragment}")
+    }
+}
+
+/// Read a Wikipedia article and return sanitised HTML for the reader pane.
+///
+/// Only the `#mw-content-text` subtree is returned (page chrome stripped).
+/// Internal `href` attributes are rewritten for in-app navigation;
+/// external `href` values are disabled with a tooltip.
+///
+/// Returns `{ title, path, html }`.
+#[tauri::command]
+pub async fn read_wikipedia_article_html(
+    pool: State<'_, SqlitePool>,
+    bundle_id: String,
+    article_path: String,
+) -> Result<serde_json::Value, String> {
+    let zim_path: String = sqlx::query_scalar(
+        "SELECT zim_path FROM wikipedia_bundles WHERE id = ?",
+    )
+    .bind(&bundle_id)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|e| e.to_string())?
+    .flatten()
+    .ok_or_else(|| format!("Bundle not found or has no file: {bundle_id}"))?;
+
+    let path_clone = article_path.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        use zim_rs::archive::Archive;
+        use scraper::{Html, Selector};
+
+        let archive = Archive::new(&zim_path)
+            .map_err(|_| format!("Failed to open ZIM file: {zim_path}"))?;
+
+        let entry = archive
+            .get_entry_bypath_str(&path_clone)
+            .map_err(|_| format!("Article not found: {path_clone}"))?;
+
+        let item = entry
+            .get_item(true) // follow redirects
+            .map_err(|_| "Failed to get article item".to_string())?;
+
+        let blob = item
+            .get_data()
+            .map_err(|_| "Failed to read article data".to_string())?;
+
+        let raw_html = String::from_utf8_lossy(blob.data()).to_string();
+        let title     = entry.get_title();
+        let final_path = item.get_path(); // may differ from entry path if redirect
+
+        // Extract only the article body, discarding the page shell.
+        let doc = Html::parse_document(&raw_html);
+        let content_sel  = Selector::parse("#mw-content-text").unwrap();
+        let body_sel     = Selector::parse("body").unwrap();
+
+        let content_html = if let Some(el) = doc.select(&content_sel).next() {
+            el.inner_html()
+        } else if let Some(el) = doc.select(&body_sel).next() {
+            el.inner_html()
+        } else {
+            raw_html.clone()
+        };
+
+        // Rewrite hrefs for in-app navigation
+        let html_out = rewrite_hrefs_in_html(&content_html);
+
+        Ok::<_, String>(serde_json::json!({
+            "title": title,
+            "path":  final_path,
+            "html":  html_out,
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    result
+}
+
+/// Serve a Wikipedia article image as a `data:<mime>;base64,…` string.
+/// The image bytes are read directly from the ZIM file.
+/// Returns an empty string if the image is not found (non-fatal).
+#[tauri::command]
+pub async fn serve_wikipedia_image(
+    pool: State<'_, SqlitePool>,
+    bundle_id: String,
+    image_path: String,
+) -> Result<String, String> {
+    let zim_path: String = sqlx::query_scalar(
+        "SELECT zim_path FROM wikipedia_bundles WHERE id = ?",
+    )
+    .bind(&bundle_id)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|e| e.to_string())?
+    .flatten()
+    .ok_or_else(|| format!("Bundle not found: {bundle_id}"))?;
+
+    tokio::task::spawn_blocking(move || {
+        use zim_rs::archive::Archive;
+        use base64::Engine;
+
+        let archive = Archive::new(&zim_path)
+            .map_err(|_| format!("Failed to open ZIM: {zim_path}"))?;
+
+        // Try the path as given, then common ZIM prefixes
+        let paths_to_try: &[&str] = &[
+            &image_path,
+        ];
+
+        for path in paths_to_try {
+            if let Ok(entry) = archive.get_entry_bypath_str(path) {
+                if let Ok(item) = entry.get_item(true) {
+                    let mime = item.get_mimetype().unwrap_or_default();
+                    if let Ok(blob) = item.get_data() {
+                        let b64 = base64::engine::general_purpose::STANDARD
+                            .encode(blob.data());
+                        return Ok(format!("data:{mime};base64,{b64}"));
+                    }
+                }
+            }
+        }
+
+        // Image not found – return empty string so broken images are invisible
+        Ok(String::new())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Check whether a Wikipedia article path resolves to any installed bundle.
+///
+/// Checks the current bundle first (short-circuits on first match), then
+/// all other installed bundles in alphabetical order.
+///
+/// Returns `{ bundle_id, article_path, title, bundle_title }` if found,
+/// or `null` if no installed bundle contains the article.
+#[tauri::command]
+pub async fn resolve_wikipedia_link(
+    pool: State<'_, SqlitePool>,
+    current_bundle_id: String,
+    article_path: String,
+) -> Result<Option<serde_json::Value>, String> {
+    // Fetch all installed bundles, current bundle first to short-circuit early.
+    let bundles: Vec<BundleRow> = sqlx::query_as(
+        "SELECT id, name, title, zim_path
+         FROM wikipedia_bundles
+         WHERE zim_path IS NOT NULL
+         ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, COALESCE(title, name)",
+    )
+    .bind(&current_bundle_id)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|e| e.to_string())?;
+
+    for bundle in &bundles {
+        let zim_path = match &bundle.zim_path {
+            Some(p) if !p.is_empty() => p.clone(),
+            _ => continue,
+        };
+        let bundle_id    = bundle.id.clone();
+        let bundle_title = bundle.title.clone().unwrap_or_else(|| bundle.name.clone());
+        let path         = article_path.clone();
+
+        let found = tokio::task::spawn_blocking(move || {
+            use zim_rs::archive::Archive;
+
+            let archive = match Archive::new(&zim_path) {
+                Ok(a)  => a,
+                Err(_) => return None,
+            };
+
+            // Try the path as-is; also try with / without the "A/" namespace prefix
+            // to handle both old-namespace and new-namespace ZIM files.
+            let candidates: Vec<String> = {
+                let mut v = vec![path.clone()];
+                if path.starts_with("A/") {
+                    v.push(path[2..].to_string()); // strip "A/"
+                } else {
+                    v.push(format!("A/{path}")); // add "A/"
+                }
+                v
+            };
+
+            for candidate in &candidates {
+                if archive.has_entry_bypath(candidate) {
+                    let title = archive
+                        .get_entry_bypath_str(candidate)
+                        .map(|e| e.get_title())
+                        .unwrap_or_else(|_| candidate.clone());
+                    return Some((bundle_id, candidate.clone(), title, bundle_title));
+                }
+            }
+
+            None
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if let Some((bid, apath, title, btitle)) = found {
+            return Ok(Some(serde_json::json!({
+                "bundle_id":    bid,
+                "article_path": apath,
+                "title":        title,
+                "bundle_title": btitle,
+            })));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Title-prefix autocomplete for articles within a single bundle.
+/// Uses libzim's built-in suggestion index (title prefix search).
+/// Returns up to 10 results matching the query prefix.
+#[tauri::command]
+pub async fn suggest_wikipedia_articles(
+    pool: State<'_, SqlitePool>,
+    bundle_id: String,
+    query: String,
+) -> Result<Vec<serde_json::Value>, String> {
+    if query.trim().is_empty() {
+        return Ok(vec![]);
+    }
+
+    let zim_path: String = sqlx::query_scalar(
+        "SELECT zim_path FROM wikipedia_bundles WHERE id = ?",
+    )
+    .bind(&bundle_id)
+    .fetch_optional(pool.inner())
+    .await
+    .map_err(|e| e.to_string())?
+    .flatten()
+    .ok_or_else(|| format!("Bundle not found: {bundle_id}"))?;
+
+    tokio::task::spawn_blocking(move || {
+        use zim_rs::archive::Archive;
+        use zim_rs::suggestion::SuggestionSearcher;
+
+        let archive = Archive::new(&zim_path)
+            .map_err(|_| "Failed to open ZIM".to_string())?;
+
+        // ── 1. Title-prefix suggestion search ───────────────────────────────
+        let mut suggestions = Vec::new();
+        if let Ok(mut searcher) = SuggestionSearcher::new(&archive) {
+            if let Ok(search) = searcher.suggest(&query) {
+                if let Ok(result_set) = search.get_results(0, 10) {
+                    for item_result in result_set {
+                        if let Ok(item) = item_result {
+                            suggestions.push(serde_json::json!({
+                                "title": item.get_title(),
+                                "path":  item.get_path(),
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── 2. Title-index binary search fallback ───────────────────────────
+        // Used when the ZIM has no Xapian suggestion index (common for nopic ZIMs).
+        // We binary-search the alphabetical title list, then scan forward collecting
+        // entries whose title starts with the query prefix. This is O(log N + K).
+        if suggestions.is_empty() {
+            let query_lower = query.to_lowercase();
+            let total = archive.get_entrycount();
+
+            if total > 0 {
+                // Binary search: find the first title-index position >= query_lower.
+                let mut lo = 0u32;
+                let mut hi = total;
+                while lo < hi {
+                    let mid = lo + (hi - lo) / 2;
+                    let title_lower = archive
+                        .get_entry_bytitle_index(mid)
+                        .map(|e| e.get_title().to_lowercase())
+                        .unwrap_or_default();
+                    if title_lower < query_lower {
+                        lo = mid + 1;
+                    } else {
+                        hi = mid;
+                    }
+                }
+
+                // Scan forward from lo.  Since titles are alphabetically ordered,
+                // once we've seen 300 consecutive non-matching real entries after
+                // the last hit we know we've left the prefix range.
+                let mut skipped = 0u32;
+                for idx in lo..total {
+                    if suggestions.len() >= 10 || skipped > 300 {
+                        break;
+                    }
+                    let Ok(entry) = archive.get_entry_bytitle_index(idx) else {
+                        skipped += 1;
+                        continue;
+                    };
+                    // Skip redirects and empty-title entries without counting them
+                    // toward the skip budget (dense redirect runs would abort too early).
+                    if entry.is_redirect() {
+                        continue;
+                    }
+                    let title = entry.get_title();
+                    if title.is_empty() {
+                        continue;
+                    }
+                    if title.to_lowercase().starts_with(&query_lower) {
+                        suggestions.push(serde_json::json!({
+                            "title": title,
+                            "path":  entry.get_path(),
+                        }));
+                        skipped = 0; // reset on each hit
+                    } else {
+                        skipped += 1;
+                    }
+                }
+            }
+        }
+
+        Ok::<_, String>(suggestions)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// ---------------------------------------------------------------------------
+// Article highlights
+// ---------------------------------------------------------------------------
+
+/// Load all saved highlights for a specific Wikipedia article.
+#[tauri::command]
+pub async fn load_wikipedia_highlights(
+    pool: State<'_, SqlitePool>,
+    bundle_id: String,
+    article_path: String,
+) -> Result<Vec<WikiHighlight>, String> {
+    sqlx::query_as::<_, WikiHighlight>(
+        "SELECT id, highlighted_text, context_before, context_after, status
+         FROM wikipedia_highlights
+         WHERE bundle_id = ? AND article_path = ?
+         ORDER BY id",
+    )
+    .bind(&bundle_id)
+    .bind(&article_path)
+    .fetch_all(pool.inner())
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Save a new highlight for a Wikipedia article. Returns the new highlight ID.
+#[tauri::command]
+pub async fn save_wikipedia_highlight(
+    pool: State<'_, SqlitePool>,
+    bundle_id: String,
+    article_path: String,
+    highlighted_text: String,
+    context_before: String,
+    context_after: String,
+) -> Result<i64, String> {
+    let now = chrono_now();
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO wikipedia_highlights
+             (bundle_id, article_path, highlighted_text, context_before, context_after, created_at, status)
+         VALUES (?, ?, ?, ?, ?, ?, 'active')
+         RETURNING id",
+    )
+    .bind(&bundle_id)
+    .bind(&article_path)
+    .bind(&highlighted_text)
+    .bind(&context_before)
+    .bind(&context_after)
+    .bind(&now)
+    .fetch_one(pool.inner())
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(id)
+}
+
+/// Delete a Wikipedia highlight by ID.
+#[tauri::command]
+pub async fn delete_wikipedia_highlight(
+    pool: State<'_, SqlitePool>,
+    id: i64,
+) -> Result<(), String> {
+    sqlx::query("DELETE FROM wikipedia_highlights WHERE id = ?")
+        .bind(id)
+        .execute(pool.inner())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   // pendingInsert: { text: string, seq: number } — injected quote from the editor keybind.
   // keepInMemory: when true, keep_alive: -1 is sent so Ollama never unloads the model.
   // llmEnabled: false disables the chat UI and shows a hardware warning banner.
-  let { activeNote = null, pendingInsert = null, keepInMemory = false, llmEnabled = true, wikipediaEnabled = false, onClose = null, onContextMenu = null, onInsertIntoNote = null, activeView = null, activeViewFolderId = null, activeViewLabel = '', activeViewFilters = {} } = $props();
+  let { activeNote = null, pendingInsert = null, keepInMemory = false, llmEnabled = true, wikipediaEnabled = false, onClose = null, onContextMenu = null, onInsertIntoNote = null, onOpenWikipediaArticle = null, activeView = null, activeViewFolderId = null, activeViewLabel = '', activeViewFilters = {} } = $props();
 
   // ── State ──────────────────────────────────────────────────────────────────
 
@@ -59,21 +59,17 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   let useWiki = $state(true);
   let useViewContext = $state(true);
   let useFeatureGuide = $state(true);
+  let chatOptsOpen = $state(false);
 
-  $effect(() => {
-    localStorage.setItem('grimoire:chat:useViewContext', JSON.stringify(useViewContext));
-  });
-  $effect(() => {
-    const saved = localStorage.getItem('grimoire:chat:useViewContext');
-    if (saved !== null) useViewContext = JSON.parse(saved);
-  });
-  $effect(() => {
-    localStorage.setItem('grimoire:chat:useFeatureGuide', JSON.stringify(useFeatureGuide));
-  });
-  $effect(() => {
-    const saved = localStorage.getItem('grimoire:chat:useFeatureGuide');
-    if (saved !== null) useFeatureGuide = JSON.parse(saved);
-  });
+  // Persist all four context toggles to localStorage.
+  $effect(() => { localStorage.setItem('grimoire:chat:useNotes',       JSON.stringify(useNotes)); });
+  $effect(() => { const v = localStorage.getItem('grimoire:chat:useNotes');       if (v !== null) useNotes       = JSON.parse(v); });
+  $effect(() => { localStorage.setItem('grimoire:chat:useWiki',        JSON.stringify(useWiki)); });
+  $effect(() => { const v = localStorage.getItem('grimoire:chat:useWiki');        if (v !== null) useWiki        = JSON.parse(v); });
+  $effect(() => { localStorage.setItem('grimoire:chat:useViewContext', JSON.stringify(useViewContext)); });
+  $effect(() => { const v = localStorage.getItem('grimoire:chat:useViewContext'); if (v !== null) useViewContext = JSON.parse(v); });
+  $effect(() => { localStorage.setItem('grimoire:chat:useFeatureGuide', JSON.stringify(useFeatureGuide)); });
+  $effect(() => { const v = localStorage.getItem('grimoire:chat:useFeatureGuide'); if (v !== null) useFeatureGuide = JSON.parse(v); });
 
   // Load chat model from SQLite on mount.
   $effect(() => {
@@ -356,7 +352,11 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         // Wikipedia search is best-effort — don't surface errors in the UI.
       }
       if (wikiMatches.length > 0) {
-        wikiSourcesUsed = wikiMatches.map(m => m.title);
+        wikiSourcesUsed = wikiMatches.map(m => ({
+          title: m.title,
+          bundleId: m.bundle_id,
+          articlePath: m.article_id.includes('/') ? m.article_id.slice(m.article_id.indexOf('/') + 1) : m.article_id,
+        }));
         const wikiContext = wikiMatches
           .map(m => `[Wikipedia: "${m.title}"]\n${m.excerpts.join('\n')}`)
           .join('\n\n');
@@ -663,6 +663,10 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   }
 </script>
 
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<svelte:window onclick={(e) => { if (chatOptsOpen && !(/** @type {Element} */ (e.target)).closest('.chat-opts-wrap')) chatOptsOpen = false; }} />
+
 <aside class="chat-panel">
   {#if !llmEnabled}
     <div class="chat-hw-banner">
@@ -680,22 +684,47 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       placeholder="model"
       title="Ollama model name (e.g. llama3.2)"
     />
-    <label class="notes-toggle" title="Search your notes and inject the most relevant ones as context before each message (requires nomic-embed-text)">
-      <input type="checkbox" bind:checked={useNotes} />
-      Use notes
-    </label>
-    <label class="notes-toggle" title="Search the indexed Wikipedia catalogue and inject relevant articles as context" class:disabled={!wikipediaEnabled}>
-      <input type="checkbox" bind:checked={useWiki} disabled={!wikipediaEnabled} />
-      Use wiki
-    </label>
-    <label class="notes-toggle view-context-toggle" title="Include the current board or table view state as context for the LLM" class:disabled={!activeView}>
-      <input type="checkbox" bind:checked={useViewContext} disabled={!activeView} />
-      Use view
-    </label>
-    <label class="notes-toggle" title="Include a feature guide describing Grimoire keyboard shortcuts, view types, and commands">
-      <input type="checkbox" bind:checked={useFeatureGuide} />
-      Use guide
-    </label>
+    <div class="chat-opts-wrap">
+      <button
+        class="chat-opts-btn"
+        class:active={chatOptsOpen}
+        onclick={() => (chatOptsOpen = !chatOptsOpen)}
+        title="Context options"
+        aria-label="Context options"
+        aria-expanded={chatOptsOpen}
+      >
+        <!-- Sliders icon -->
+        <svg width="14" height="14" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+          <line x1="3"  y1="3"  x2="3"  y2="12"/>
+          <line x1="8"  y1="3"  x2="8"  y2="12"/>
+          <line x1="13" y1="3"  x2="13" y2="12"/>
+          <rect x="1"   y="5.5" width="4"  height="2" rx="1"/>
+          <rect x="6"   y="8.5" width="4"  height="2" rx="1"/>
+          <rect x="11"  y="4"   width="4"  height="2" rx="1"/>
+        </svg>
+      </button>
+
+      {#if chatOptsOpen}
+        <div class="chat-opts-dropdown" role="menu">
+          <label class="chat-opt-row" title="Search your notes and inject the most relevant ones as context before each message (requires nomic-embed-text)">
+            <input type="checkbox" bind:checked={useNotes} />
+            Use notes
+          </label>
+          <label class="chat-opt-row" class:disabled={!wikipediaEnabled} title="Search the indexed Wikipedia catalogue and inject relevant articles as context">
+            <input type="checkbox" bind:checked={useWiki} disabled={!wikipediaEnabled} />
+            Use wiki
+          </label>
+          <label class="chat-opt-row" class:disabled={!activeView} title="Include the current board or table view state as context for the LLM">
+            <input type="checkbox" bind:checked={useViewContext} disabled={!activeView} />
+            Use view
+          </label>
+          <label class="chat-opt-row" title="Include a feature guide describing Grimoire keyboard shortcuts, view types, and commands">
+            <input type="checkbox" bind:checked={useFeatureGuide} />
+            Use guide
+          </label>
+        </div>
+      {/if}
+    </div>
     {#if onClose}
       <button class="chat-close-btn" onclick={onClose} aria-label="Close chat">✕</button>
     {/if}
@@ -739,8 +768,12 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         {#each sourcesUsed as title}
           <span class="chat-source-pill">{title}</span>
         {/each}
-        {#each wikiSourcesUsed as title}
-          <span class="chat-source-pill chat-source-wiki">W · {title}</span>
+        {#each wikiSourcesUsed as src}
+          <button
+            class="chat-source-pill chat-source-wiki"
+            onclick={() => onOpenWikipediaArticle?.(src.bundleId, src.articlePath, src.title)}
+            title="Open article: {src.title}"
+          >W · {src.title}</button>
         {/each}
       </div>
     </details>

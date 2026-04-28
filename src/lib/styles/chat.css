@@ -104,6 +104,76 @@
   cursor: not-allowed;
 }
 
+/* ── Context options button + dropdown ─────────────────────────────────── */
+
+.chat-opts-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.chat-opts-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.chat-opts-btn:hover,
+.chat-opts-btn.active {
+  background: var(--bg3);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.chat-opts-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 200;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 0;
+  min-width: 150px;
+  white-space: nowrap;
+}
+
+.chat-opt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.chat-opt-row:hover {
+  background: var(--bg3);
+}
+
+.chat-opt-row input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.chat-opt-row.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.chat-opt-row.disabled input[type="checkbox"] {
+  cursor: not-allowed;
+}
+
 .chat-messages {
   flex: 1;
   overflow-y: auto;

@@ -3,13 +3,15 @@ This file is part of Grimoire — licensed under GPL-3.0 or later. -->
 
 <script>
   const {
-    searchActive  = false,
-    showLock      = false,
+    searchActive      = false,
+    showLock          = false,
+    wikipediaEnabled  = false,
     onSearch,
     onGraph,
     onCalendar,
     onDailyNote,
     onQuickSwitcher,
+    onWikipedia,
     onLock,
     onSettings,
     onHelp,
@@ -96,6 +98,23 @@ This file is part of Grimoire — licensed under GPL-3.0 or later. -->
         <line x1="12.8" y1="11.8" x2="14" y2="13"/>
       </svg>
     </button>
+
+    {#if wikipediaEnabled}
+      <!-- Wikipedia article search -->
+      <button
+        class="activity-bar-btn"
+        onclick={onWikipedia}
+        title="Search Wikipedia"
+        aria-label="Search Wikipedia"
+      >
+        <svg width="16" height="16" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="1.5" y="1.5" width="12" height="12" rx="1"/>
+          <line x1="4" y1="4.5" x2="11" y2="4.5"/>
+          <line x1="4" y1="7.5" x2="11" y2="7.5"/>
+          <line x1="4" y1="10.5" x2="8" y2="10.5"/>
+        </svg>
+      </button>
+    {/if}
 
     <!-- Pinned actions placeholder (deferred) -->
     <div class="activity-bar-separator"></div>

@@ -24,6 +24,10 @@ export function createTabService({ onError }) {
       tabs: tabs.map(t => ({
         id: t.id, type: t.type, noteId: t.noteId,
         label: t.label, customLabel: t.customLabel,
+        // wikipedia tab fields
+        ...(t.type === 'wikipedia' ? {
+          bundleId: t.bundleId, articlePath: t.articlePath,
+        } : {}),
       })),
       activeTabId,
     }));
@@ -175,6 +179,31 @@ export function createTabService({ onError }) {
     return 'new';
   }
 
+  function openWikipediaArticle(bundleId, articlePath, title) {
+    // Deduplicate: if already open, activate the existing tab
+    const existing = tabs.find(
+      t => t.type === 'wikipedia' && t.bundleId === bundleId && t.articlePath === articlePath
+    );
+    if (existing) { activeTabId = existing.id; return; }
+    const id = makeTabId();
+    tabs = [...tabs, {
+      id, type: 'wikipedia', noteId: null,
+      label: title || articlePath, customLabel: null,
+      bundleId, articlePath,
+    }];
+    activeTabId = id;
+  }
+
+  // Called when the reader navigates internally (cross-link or search).
+  // Updates the active tab's path and label in place so no extra tab is opened.
+  function updateWikipediaTab(bundleId, articlePath, title) {
+    tabs = tabs.map(t =>
+      t.id === activeTabId
+        ? { ...t, bundleId, articlePath, label: title || articlePath, customLabel: null }
+        : t
+    );
+  }
+
   function closeNoteInTab() {
     tabs = tabs.map(t => t.id === activeTabId ? { ...t, noteId: null, label: 'New Tab' } : t);
   }
@@ -195,6 +224,8 @@ export function createTabService({ onError }) {
             } catch { return null; }
           } else if (t.type === 'graph') {
             return { tab: t, note: null };
+          } else if (t.type === 'wikipedia' && t.bundleId && t.articlePath) {
+            return { tab: { ...t, readMode: false }, note: null };
           }
           return null;
         })
@@ -242,6 +273,8 @@ export function createTabService({ onError }) {
     openCalendarTab,
     openKanbanTab,
     openChatTab,
+    openWikipediaArticle,
+    updateWikipediaTab,
     closeNoteInTab,
     restoreTabs,
   };
