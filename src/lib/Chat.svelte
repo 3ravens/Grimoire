@@ -57,15 +57,18 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   let error = $state('');
   let useNotes = $state(true);
   let useWiki = $state(true);
+  let useFiles = $state(true);
   let useViewContext = $state(true);
   let useFeatureGuide = $state(true);
   let chatOptsOpen = $state(false);
 
-  // Persist all four context toggles to localStorage.
+  // Persist all context toggles to localStorage.
   $effect(() => { localStorage.setItem('grimoire:chat:useNotes',       JSON.stringify(useNotes)); });
   $effect(() => { const v = localStorage.getItem('grimoire:chat:useNotes');       if (v !== null) useNotes       = JSON.parse(v); });
   $effect(() => { localStorage.setItem('grimoire:chat:useWiki',        JSON.stringify(useWiki)); });
   $effect(() => { const v = localStorage.getItem('grimoire:chat:useWiki');        if (v !== null) useWiki        = JSON.parse(v); });
+  $effect(() => { localStorage.setItem('grimoire:chat:useFiles',       JSON.stringify(useFiles)); });
+  $effect(() => { const v = localStorage.getItem('grimoire:chat:useFiles');       if (v !== null) useFiles       = JSON.parse(v); });
   $effect(() => { localStorage.setItem('grimoire:chat:useViewContext', JSON.stringify(useViewContext)); });
   $effect(() => { const v = localStorage.getItem('grimoire:chat:useViewContext'); if (v !== null) useViewContext = JSON.parse(v); });
   $effect(() => { localStorage.setItem('grimoire:chat:useFeatureGuide', JSON.stringify(useFeatureGuide)); });
@@ -364,30 +367,58 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       }
     }
 
+    // ── 4. Scanned files RAG context ─────────────────────────────────────────
+    let fileMatches = [];
+    if (useFiles) {
+      try {
+        fileMatches = await invoke('search_scanned_files', { query: ragQuery });
+      } catch (_) {
+        // Best-effort — don't block the chat if scanned file search fails.
+      }
+      if (fileMatches.length > 0) {
+        const fileContext = fileMatches
+          .map(m => `[File: "${m.title}" (${m.file_path})]\n${m.excerpts.join('\n')}`)
+          .join('\n\n');
+        systemParts.push(`SCANNED FILES:\n${fileContext}`);
+      }
+    }
+
     // ── Assemble system message ──────────────────────────────────────────────
     if (systemParts.length > 0) {
-      const hasWikiContext = wikiSourcesUsed.length > 0;
+      const hasWikiContext  = wikiSourcesUsed.length > 0;
       const hasNotesContext = sourcesUsed.length > 0;
-      const hasAnyContext = hasNotesContext || hasWikiContext;
+      const hasFilesContext = fileMatches.length > 0;
+      const hasAnyContext   = hasNotesContext || hasWikiContext || hasFilesContext;
 
       // Build a strict source-priority preamble that varies based on what was actually retrieved.
       let preamble =
         `You are a personal knowledge assistant embedded in Grimoire, a local note-taking app.\n` +
         `You also have access to a feature guide that documents Grimoire's keyboard shortcuts and features.\n`;
 
-      if (hasNotesContext && hasWikiContext) {
+      const sourceList = [hasNotesContext && 'notes', hasWikiContext && 'wiki', hasFilesContext && 'files'].filter(Boolean);
+
+      if (sourceList.length >= 2) {
+        const labels = { notes: "the user's notes", wiki: 'Wikipedia articles', files: 'scanned files' };
+        const sourcesDesc = sourceList.map(s => labels[s]).join(' AND ');
         preamble +=
-          `You have been given the user's notes AND Wikipedia articles for this question.\n` +
+          `You have been given ${sourcesDesc} for this question.\n` +
           `STRICT SOURCE PRIORITY — follow this order without exception:\n` +
-          `  1. Answer first from the user's notes if they contain genuinely relevant information.\n` +
-          `  2. Then draw on the Wikipedia articles provided.\n` +
-          `  3. Only use your own general knowledge to fill gaps that neither notes nor Wikipedia cover. Do NOT lead with general knowledge when provided sources exist.`;
+          (hasNotesContext ? `  1. Answer first from the user's notes if they contain genuinely relevant information.\n` : '') +
+          (hasWikiContext  ? `  ${hasNotesContext ? 2 : 1}. Then draw on the Wikipedia articles provided.\n` : '') +
+          (hasFilesContext ? `  ${(hasNotesContext ? 1 : 0) + (hasWikiContext ? 1 : 0) + 1}. Then draw on the scanned files provided.\n` : '') +
+          `  ${sourceList.length + 1}. Only use your own general knowledge to fill gaps that none of the provided sources cover. Do NOT lead with general knowledge when provided sources exist.`;
       } else if (hasWikiContext) {
         preamble +=
           `You have been given Wikipedia articles for this question. The user's notes were not relevant.\n` +
           `STRICT SOURCE PRIORITY — follow this order without exception:\n` +
           `  1. Answer from the Wikipedia articles provided. They are your primary source.\n` +
           `  2. Only use your own general knowledge to fill gaps the Wikipedia articles do not cover. Do NOT lead with general knowledge when Wikipedia articles are available.`;
+      } else if (hasFilesContext) {
+        preamble +=
+          `You have been given scanned files for this question. The user's notes were not relevant.\n` +
+          `STRICT SOURCE PRIORITY — follow this order without exception:\n` +
+          `  1. Answer from the scanned files provided. They are your primary source.\n` +
+          `  2. Only use your own general knowledge to fill gaps the scanned files do not cover.`;
       } else if (hasNotesContext) {
         preamble +=
           `You have been given the user's notes for this question.\n` +
@@ -395,7 +426,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
           `  1. Answer from the user's notes where they are genuinely relevant.\n` +
           `  2. Only use your own general knowledge to fill gaps the notes do not cover.`;
       } else {
-        preamble += `No relevant notes or Wikipedia articles were found for this question. Answer from your own general knowledge.`;
+        preamble += `No relevant notes, Wikipedia articles, or scanned files were found for this question. Answer from your own general knowledge.`;
       }
 
       let content;
@@ -426,6 +457,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
           `5. Every sentence drawn from a source MUST be attributed inline — no exceptions:\n` +
           `   - User notes: begin with "In your note on X, …" or "Your note on X explains that …" (use the exact note title)\n` +
           `   - Wikipedia: begin with "According to Wikipedia's article on X, …" or "Wikipedia (X) explains that …" (use the exact article title)\n` +
+          `   - Scanned files: begin with "From your file X, …" or "Your file X states that …" (use the exact file title)\n` +
           `   - General knowledge (only as fallback): begin with "Based on general knowledge, …"\n` +
           `   - When switching sources mid-answer, explicitly signal the transition.\n` +
           `6. Never fabricate a source attribution. Ignore formatting like [[ ]] or **.` +
@@ -713,6 +745,10 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
           <label class="chat-opt-row" class:disabled={!wikipediaEnabled} title="Search the indexed Wikipedia catalogue and inject relevant articles as context">
             <input type="checkbox" bind:checked={useWiki} disabled={!wikipediaEnabled} />
             Use wiki
+          </label>
+          <label class="chat-opt-row" title="Search scanned files (added in Settings → File Scanner) and inject relevant excerpts as context">
+            <input type="checkbox" bind:checked={useFiles} />
+            Use files
           </label>
           <label class="chat-opt-row" class:disabled={!activeView} title="Include the current board or table view state as context for the LLM">
             <input type="checkbox" bind:checked={useViewContext} disabled={!activeView} />

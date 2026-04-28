@@ -27,6 +27,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   import SettingsKeybinds from './settings/SettingsKeybinds.svelte';
   import SettingsDeveloper from './settings/SettingsDeveloper.svelte';
   import SettingsWikipedia from './settings/SettingsWikipedia.svelte';
+  import SettingsFileScanner from './settings/SettingsFileScanner.svelte';
 
   let {
     onClose,
@@ -62,7 +63,8 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     { id: 'security',   label: 'Security' },
     { id: 'privacy',    label: 'Privacy' },
     { id: 'data',       label: 'Data' },
-    { id: 'wikipedia',  label: 'Wikipedia' },
+    { id: 'wikipedia',    label: 'Wikipedia' },
+    { id: 'file_scanner', label: 'File Scanner' },
     { id: 'keybinds',   label: 'Keybinds' },
     ...(isDev ? [{ id: 'developer', label: 'Developer' }] : []),
   ]);
@@ -105,6 +107,8 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         <SettingsPrivacy />
       {:else if activeSection === 'wikipedia'}
         <SettingsWikipedia {wikipediaEnabled} {onWikipediaEnabledChange} />
+      {:else if activeSection === 'file_scanner'}
+        <SettingsFileScanner />
       {:else if activeSection === 'keybinds'}
         <SettingsKeybinds />
       {:else if activeSection === 'developer'}

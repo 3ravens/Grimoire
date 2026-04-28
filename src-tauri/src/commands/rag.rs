@@ -89,7 +89,7 @@ fn split_at_punctuation(text: &str) -> Vec<String> {
 /// Split `text` into individual sentences.
 /// First splits on newlines (one idea per line is common in notes), then
 /// further splits long lines at sentence-ending punctuation.
-pub(crate) fn split_sentences(text: &str) -> Vec<String> {
+pub fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences: Vec<String> = Vec::new();
 
     for line in text.lines() {
@@ -116,7 +116,7 @@ pub(crate) fn split_sentences(text: &str) -> Vec<String> {
 /// Group a flat list of sentences into overlapping chunks.
 /// `per_chunk` is the number of sentences per chunk; `overlap` is how many
 /// sentences the next chunk re-uses from the end of the previous one.
-pub(crate) fn chunk_sentences(
+pub fn chunk_sentences(
     sentences: Vec<String>,
     per_chunk: usize,
     overlap: usize,
@@ -201,11 +201,34 @@ pub async fn index_note(
     }
 
     let model = get_embedding_model(pool.inner()).await;
-    let mut chunks: Vec<(i32, String, Vec<f32>)> = Vec::new();
-    for (i, chunk_text) in raw_chunks.into_iter().enumerate() {
-        let embedding = embed_document(&chunk_text, &model).await?;
-        chunks.push((i as i32, chunk_text, embedding));
-    }
+
+    // Prefix every chunk with the document search prefix expected by nomic-embed-text.
+    let doc_texts: Vec<String> = raw_chunks
+        .iter()
+        .map(|chunk| format!("search_document: {title}\n{chunk}"))
+        .collect();
+
+    // Embed all chunks in a single batch request instead of one-by-one.
+    // For large files this is orders of magnitude faster.
+    let embeddings = match crate::vector::embed_batch(&doc_texts, &model).await {
+        Ok(e) => e,
+        Err(_) => {
+            // Fall back to sequential embedding if batch fails.
+            let mut fallback = Vec::with_capacity(raw_chunks.len());
+            for chunk in &raw_chunks {
+                let emb = embed_document(chunk, &model).await?;
+                fallback.push(emb);
+            }
+            fallback
+        }
+    };
+
+    let chunks: Vec<(i32, String, Vec<f32>)> = raw_chunks
+        .into_iter()
+        .enumerate()
+        .zip(embeddings)
+        .map(|((i, chunk_text), embedding)| (i as i32, chunk_text, embedding))
+        .collect();
 
     crate::vector::upsert(&vdb.0, note_id, &title, chunks).await
 }

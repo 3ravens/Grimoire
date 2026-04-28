@@ -19,6 +19,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { openUrl } from '@tauri-apps/plugin-opener';
+  import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
   import { onMount, tick, untrack } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
   import { computeDiff, applyAcceptedHunks } from './lib/utils/diff.js';
@@ -623,6 +624,22 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
     await tick();
     await getCurrentWindow().show();
+
+    // Refresh notes when the file scanner imports a file as a note.
+    window.addEventListener('grimoire:note-imported', (e) => {
+      loadNotes();
+    });
+
+    // Navigate directly to a note (used by file scanner's "View note" button).
+    window.addEventListener('grimoire:navigate-note', async (e) => {
+      const noteId = /** @type {CustomEvent} */ (e).detail?.noteId;
+      if (!noteId) return;
+      try {
+        const note = await invoke('get_note', { id: noteId });
+        settingsOpen = false;
+        navigateToNote(note);
+      } catch { /* ignore */ }
+    });
   });
 
   // ── Folder actions ──────────────────────────────────────────────────────────────
@@ -714,6 +731,33 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   }
 
   // ── Note actions ─────────────────────────────────────────────────────────────────
+
+  async function handleImportNote() {
+    const selected = await openFileDialog({
+      directory: false,
+      multiple: false,
+      filters: [{ name: 'Supported files', extensions: ['txt', 'md', 'pdf'] }],
+    }).catch(() => null);
+    if (!selected) return;
+    const filePath = Array.isArray(selected) ? selected[0] : selected;
+    const folderId = selectedFolderId === 'all' ? null : (selectedFolderId ?? null);
+    try {
+      const note = await invoke('import_file_as_note', { filePath, folderId });
+      await loadNotes();
+      navigateToNote(note);
+      // Vector-index the note, then register it in the file scanner.
+      // Use .finally() so add_scanned_path always runs even if index_note fails
+      // (e.g. large PDFs with many chunks can time out or exceed Ollama capacity).
+      // Both operations use the embed model so they must be sequential, not concurrent.
+      invoke('index_note', { noteId: note.id, title: note.title, content: note.content })
+        .catch(() => {})
+        .finally(() => {
+          invoke('add_scanned_path', { path: filePath, kind: 'file' }).catch(() => {});
+        });
+    } catch (e) {
+      showError(e);
+    }
+  }
 
   async function startNoteInline(templateId = -1) {
     layout.notesOpen = true;
@@ -1504,6 +1548,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         bind:folderExpanded
         onSelectFolder={selectFolder}
         onCreateNote={() => startNoteInline()}
+        onImportNote={() => handleImportNote()}
         onCreateFolder={() => startFolderInline()}
         onDeleteFolder={deleteFolder}
         onOpenNoteById={openNoteById}

@@ -1,0 +1,239 @@
+/* File Scanner settings panel styles. */
+
+.file-scanner-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.fs-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.fs-header h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.fs-description {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.fs-description code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg3);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.fs-add-buttons {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.fs-add-btn {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-family: var(--sans);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.fs-add-btn:hover {
+  background: var(--bg2);
+  color: var(--text-h);
+  border-color: var(--accent);
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+
+.fs-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+}
+
+/* ── Path list ───────────────────────────────────────────────────────────── */
+
+.fs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--border);
+}
+
+.fs-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--bg2);
+  transition: background 0.1s;
+}
+
+.fs-row:hover {
+  background: var(--bg3);
+}
+
+.fs-row.disabled {
+  opacity: 0.55;
+}
+
+.fs-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fs-kind-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-family: var(--sans);
+  color: var(--text-muted);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.fs-path {
+  font-size: 13px;
+  color: var(--text-h);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+
+.fs-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.fs-file-count,
+.fs-scanned-at {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.fs-error {
+  font-size: 12px;
+  color: var(--danger);
+  font-weight: 500;
+}
+
+/* ── Progress bar ────────────────────────────────────────────────────────── */
+
+.fs-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.fs-progress-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.fs-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+
+.fs-progress-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── Row actions ─────────────────────────────────────────────────────────── */
+
+.fs-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fs-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.fs-toggle input[type='checkbox'] {
+  cursor: pointer;
+}
+
+.fs-action-btn {
+  padding: 3px 10px;
+  font-size: 12px;
+  font-family: var(--sans);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.fs-action-btn:hover:not(:disabled) {
+  background: var(--bg2);
+  color: var(--text-h);
+  border-color: var(--accent);
+}
+
+.fs-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.fs-remove-btn:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--bg2);
+}
+
+.fs-view-btn {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.fs-view-btn:hover:not(:disabled) {
+  background: var(--bg2);
+  color: var(--accent);
+  border-color: var(--accent);
+}

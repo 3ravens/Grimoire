@@ -25,6 +25,7 @@
     // Events
     onSelectFolder,
     onCreateNote,
+    onImportNote,
     onCreateFolder,
     onDeleteFolder,
     onOpenNoteById,
@@ -194,6 +195,13 @@
       <svg width="14" height="14" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M11.5 1.5 L13.5 3.5 L5 12 L2 12.5 L2.5 9.5 Z"/>
         <line x1="9.5" y1="3.5" x2="11.5" y2="5.5"/>
+      </svg>
+    </button>
+    <button class="icon-btn" onclick={() => onImportNote?.()} title="Import file as note (.txt, .md, or .pdf)">
+      <svg width="14" height="14" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 4A1 1 0 0 1 3 3H8L10 5H12A1 1 0 0 1 13 6V11A1 1 0 0 1 12 12H3A1 1 0 0 1 2 11V4Z"/>
+        <line x1="7.5" y1="7" x2="7.5" y2="10.5"/>
+        <polyline points="5.5,8.5 7.5,10.5 9.5,8.5"/>
       </svg>
     </button>
     <button class="icon-btn" onclick={() => onCreateFolder?.()} title="New folder">

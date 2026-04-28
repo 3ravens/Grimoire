@@ -164,6 +164,13 @@ pub fn run() {
         commands::load_wikipedia_highlights,
         commands::save_wikipedia_highlight,
         commands::delete_wikipedia_highlight,
+        commands::get_scanned_paths,
+        commands::add_scanned_path,
+        commands::remove_scanned_path,
+        commands::toggle_scanned_path,
+        commands::rescan_path,
+        commands::search_scanned_files,
+        commands::import_file_as_note,
         // ── Debug-only commands (excluded from release builds) ───────────────
         #[cfg(debug_assertions)]
         commands::debug_search,
