@@ -31,9 +31,18 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
   let bundles         = $state([]);
   let catalogueItems  = $state([]);
+  let catalogueSearch   = $state('');
   let loadingCatalogue  = $state(false);
   let catalogueError    = $state('');
   let storagePath       = $state('');
+
+  const filteredCatalogue = $derived(
+    catalogueSearch.trim()
+      ? catalogueItems.filter((i) =>
+          (i.title || i.name).toLowerCase().includes(catalogueSearch.toLowerCase())
+        )
+      : catalogueItems
+  );
 
   // Per-bundle indexing progress: bundle_id → { indexed, scanned, total, done, error }
   let progress = $state({});
@@ -167,8 +176,9 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         }
       }
 
-      const pctPart = pct ? ` (${pct}${etaPart})` : '';
-      return `Indexing… ${p.indexed.toLocaleString()} articles indexed${pctPart}`;
+      const pctPart = pct ? `${pct}` : '';
+      const indexedPart = p.indexed > 0 ? ` · ${p.indexed.toLocaleString()} articles embedded` : '';
+      return `Indexing… ${pctPart}${indexedPart}${etaPart}`;
     }
     if (bundle.indexing_state === 'done') return 'Indexed';
     if (bundle.indexing_state === 'error') return 'Error';
@@ -217,6 +227,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         downloadUrl: item.download_url,
         destDir: storagePath,
         expectedSizeBytes: item.size_bytes,
+        articleCount: item.article_count ?? null,
       });
       await loadBundles();
       // Clear download progress on completion.
@@ -345,8 +356,19 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 {/if}
 
 {#if catalogueItems.length > 0}
+  <div class="wiki-catalogue-search-row">
+    <input
+      class="wiki-catalogue-search"
+      type="search"
+      placeholder="Filter bundles…"
+      bind:value={catalogueSearch}
+    />
+    <span class="wiki-catalogue-count">
+      {filteredCatalogue.length} of {catalogueItems.length}
+    </span>
+  </div>
   <div class="wiki-catalogue">
-    {#each catalogueItems as item (item.id)}
+    {#each filteredCatalogue as item (item.id)}
       {@const isInstalled = installedIds().has(item.id)}
       {@const dl = downloadProgress[item.id]}
       <div class="wiki-catalogue-row">

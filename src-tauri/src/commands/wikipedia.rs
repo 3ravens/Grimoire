@@ -302,6 +302,7 @@ pub async fn download_wikipedia_bundle(
     download_url: String,
     dest_dir: String,
     expected_size_bytes: Option<i64>,
+    article_count: Option<i64>,
 ) -> Result<String, String> {
     use tokio::io::AsyncWriteExt;
 
@@ -371,16 +372,18 @@ pub async fn download_wikipedia_bundle(
 
     // Upsert the bundle record in SQLite.
     sqlx::query(
-        "INSERT INTO wikipedia_bundles (id, name, flavour, title, size_bytes, zim_path, installed_at, indexing_state)
-         VALUES (?, ?, 'nopic', ?, ?, ?, ?, 'none')
+        "INSERT INTO wikipedia_bundles (id, name, flavour, title, article_count, size_bytes, zim_path, installed_at, indexing_state)
+         VALUES (?, ?, 'nopic', ?, ?, ?, ?, ?, 'none')
          ON CONFLICT(id) DO UPDATE SET
              name = excluded.name, title = excluded.title,
+             article_count = excluded.article_count,
              size_bytes = excluded.size_bytes, zim_path = excluded.zim_path,
              installed_at = excluded.installed_at, indexing_state = 'none'",
     )
     .bind(&bundle_id)
     .bind(&bundle_name)
     .bind(&bundle_title)
+    .bind(article_count)
     .bind(downloaded)
     .bind(&zim_path_str)
     .bind(&now)
@@ -472,16 +475,16 @@ pub async fn index_wikipedia_bundle(
         .await
         .map_err(|e| e.to_string())?;
 
-    // Load checkpoint (resume offset).
-    let start_entry: u32 = sqlx::query_scalar(
-        "SELECT last_indexed_entry FROM wikipedia_index_checkpoint WHERE bundle_id = ?",
+    // Load checkpoint (resume offset + previously indexed count).
+    let (start_entry, base_indexed): (u32, i64) = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT last_indexed_entry, indexed_count FROM wikipedia_index_checkpoint WHERE bundle_id = ?",
     )
     .bind(&bundle_id)
     .fetch_optional(pool.inner())
     .await
     .map_err(|e| e.to_string())?
-    .flatten()
-    .unwrap_or(0i64) as u32;
+    .map(|(e, c)| (e as u32, c))
+    .unwrap_or((0, 0));
 
     let pool_clone = pool.inner().clone();
     let vdb_conn  = vdb.0.clone();
@@ -511,7 +514,7 @@ pub async fn index_wikipedia_bundle(
 
         let model = rt.block_on(super::rag::get_embedding_model_pub(&pool_clone));
 
-        let mut indexed = 0i64;
+        let mut indexed = base_indexed;
         let mut last_checkpoint_idx = start_entry;
 
         // Process ZIM entries in sliding windows:
@@ -567,7 +570,25 @@ pub async fn index_wikipedia_bundle(
                     if text.contains(".mw-parser-output") || text.starts_with(".mw-") || text.contains("/* start https://") {
                         return None;
                     }
-                    if text.contains("may refer to:") || text.contains("disambiguation") {
+                    // Skip disambiguation pages. Wikipedia marks them with
+                    // "(disambiguation)" in the title / path. Do NOT check body
+                    // text for the word "disambiguation" — nearly every real article
+                    // contains it in a hatnote ("For other uses, see X (disambiguation).")
+                    // and would be incorrectly filtered out.
+                    let title_lower = title.to_lowercase();
+                    if title_lower.ends_with("(disambiguation)")
+                        || path_lower.contains("_(disambiguation)")
+                    {
+                        return None;
+                    }
+                    // "may refer to:" is the opening line of disambiguation pages.
+                    // Only check the first ~300 bytes to avoid false positives in
+                    // article body prose. Walk back from byte 300 to the nearest
+                    // char boundary so multi-byte characters (e.g. en-dash) don't panic.
+                    let cap = 300.min(text.len());
+                    let head_end = (0..=cap).rev().find(|&i| text.is_char_boundary(i)).unwrap_or(0);
+                    let text_head = &text[..head_end];
+                    if text_head.contains("may refer to:") {
                         return None;
                     }
                     let content: String = text.chars().take(1500).collect();
@@ -609,9 +630,10 @@ pub async fn index_wikipedia_bundle(
             if !articles.is_empty() {
                 let _ = rt.block_on(sqlx::query(
                     "UPDATE wikipedia_index_checkpoint
-                     SET last_indexed_entry = ? WHERE bundle_id = ?",
+                     SET last_indexed_entry = ?, indexed_count = ? WHERE bundle_id = ?",
                 )
                 .bind(last_checkpoint_idx as i64 + 1)
+                .bind(indexed)
                 .bind(&bundle_id_clone)
                 .execute(&pool_clone));
             }

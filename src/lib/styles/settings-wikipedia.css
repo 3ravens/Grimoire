@@ -148,3 +148,33 @@
   background: var(--accent);
   transition: width 0.3s ease;
 }
+
+.wiki-catalogue-search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.wiki-catalogue-search {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  color: var(--text-h);
+  outline: none;
+}
+
+.wiki-catalogue-search:focus {
+  border-color: var(--accent);
+}
+
+.wiki-catalogue-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
