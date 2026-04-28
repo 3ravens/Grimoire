@@ -17,6 +17,8 @@
 
 use serde::{Deserialize, Serialize};
 use futures::StreamExt;
+use sqlx::SqlitePool;
+use tauri::State;
 
 // ---------------------------------------------------------------------------
 // Chat (Ollama)
@@ -92,6 +94,7 @@ struct OllamaStreamChunk {
 #[tauri::command(rename_all = "camelCase")]
 pub async fn chat(
     app: tauri::AppHandle,
+    pool: State<'_, SqlitePool>,
     model: String,
     messages: Vec<ChatMessage>,
     keep_in_memory: bool,
@@ -102,6 +105,14 @@ pub async fn chat(
     num_ctx: i32,
 ) -> Result<(), String> {
     use tauri::Emitter;
+
+    // Capture the last user message for the audit log before the messages vec is moved.
+    let audit_detail: String = messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| crate::audit::truncate(&m.content, 500).to_string())
+        .unwrap_or_default();
 
     let client = reqwest::Client::new();
 
@@ -150,6 +161,10 @@ pub async fn chat(
                 }
 
                 if parsed.done {
+                    let _ = crate::audit::log_event(
+                        pool.inner(), "llm_chat", None, None, None,
+                        if audit_detail.is_empty() { None } else { Some(audit_detail.as_str()) },
+                    ).await;
                     return Ok(());
                 }
             } else {
@@ -166,7 +181,10 @@ pub async fn chat(
 #[tauri::command(rename_all = "camelCase")]
 pub async fn suggest_note_improvement(
     app: tauri::AppHandle,
+    pool: State<'_, SqlitePool>,
     model: String,
+    note_id: Option<i64>,
+    note_title: Option<String>,
     note_content: String,
     instruction: String,
     temperature: f32,
@@ -177,7 +195,11 @@ pub async fn suggest_note_improvement(
 ) -> Result<(), String> {
     use tauri::Emitter;
 
-    // Combine system instruction, user instruction, and note content into a single user message.
+    let _ = crate::audit::log_event(
+        pool.inner(), "llm_improve", Some("note"),
+        note_id, note_title.as_deref(),
+        Some(crate::audit::truncate(&instruction, 500)),
+    ).await;
     // Using a single user message avoids issues with models that don't support the `system` role.
     let user_content = format!(
         "{}\n\nUser instruction: {}\n\nNote content:\n{}",

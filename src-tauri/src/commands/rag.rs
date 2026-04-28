@@ -316,6 +316,9 @@ pub async fn search_notes(
         }
     }
 
+    let _ = crate::audit::log_event(
+        pool.inner(), "search_semantic", None, None, None, Some(&query),
+    ).await;
     Ok(matches)
 }
 

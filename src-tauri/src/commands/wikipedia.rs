@@ -774,7 +774,13 @@ pub async fn read_wikipedia_article(
     .await
     .map_err(|e| e.to_string())?;
 
-    result
+    let result = result?;
+    let title = result.get("title").and_then(|t| t.as_str()).map(|s| s.to_string());
+    let _ = crate::audit::log_event(
+        pool.inner(), "wikipedia_read", Some("wikipedia"),
+        None, title.as_deref(), Some(&article_path),
+    ).await;
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------

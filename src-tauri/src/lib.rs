@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
+mod audit;
 mod auth;
 mod commands;
 mod crypto;
@@ -171,6 +172,9 @@ pub fn run() {
         commands::rescan_path,
         commands::search_scanned_files,
         commands::import_file_as_note,
+        commands::get_audit_log,
+        commands::get_audit_log_count,
+        commands::clear_audit_log,
         // ── Debug-only commands (excluded from release builds) ───────────────
         #[cfg(debug_assertions)]
         commands::debug_search,

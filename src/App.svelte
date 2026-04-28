@@ -383,6 +383,8 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       const numCtx = await invoke('get_setting', { key: 'chat_num_ctx' });
       await invoke('suggest_note_improvement', {
         model, noteContent: editorContent, instruction,
+        noteId: activeNote?.id ?? null,
+        noteTitle: activeNote?.title ?? null,
         temperature: temperature !== '' ? Number(temperature) : 0.8,
         topP: topP !== '' ? Number(topP) : 0.9,
         topK: topK !== '' ? Number(topK) : 40,

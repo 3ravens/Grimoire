@@ -190,7 +190,11 @@ pub async fn fts_search(
     if query.is_empty() {
         return Ok(vec![]);
     }
-    fts_search_inner(pool.inner(), &keys, &query, limit.unwrap_or(12)).await
+    let results = fts_search_inner(pool.inner(), &keys, &query, limit.unwrap_or(12)).await?;
+    let _ = crate::audit::log_event(
+        pool.inner(), "search_fts", None, None, None, Some(&query),
+    ).await;
+    Ok(results)
 }
 
 // ---------------------------------------------------------------------------
@@ -346,6 +350,9 @@ pub async fn combined_search(
 
     results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     results.truncate(limit);
+    let _ = crate::audit::log_event(
+        pool.inner(), "search_combined", None, None, None, Some(&query),
+    ).await;
     Ok(results)
 }
 

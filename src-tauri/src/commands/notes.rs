@@ -52,6 +52,10 @@ pub async fn create_note(
     if !note.locked {
         super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
     }
+    let _ = crate::audit::log_event(
+        pool.inner(), "note_create", Some("note"),
+        Some(note.id), Some(&note.title), None,
+    ).await;
     Ok(note)
 }
 
@@ -83,7 +87,12 @@ pub async fn get_note(
         false
     };
 
-    Ok(map_note_row(row, folder_locked, &keys))
+    let note = map_note_row(row, folder_locked, &keys);
+    let _ = crate::audit::log_event(
+        pool.inner(), "note_open", Some("note"),
+        Some(note.id), Some(&note.title), None,
+    ).await;
+    Ok(note)
 }
 
 /// List all notes, optionally filtered to a specific folder.
@@ -197,6 +206,10 @@ pub async fn update_note(
     if !note.locked {
         super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
     }
+    let _ = crate::audit::log_event(
+        pool.inner(), "note_update", Some("note"),
+        Some(note.id), Some(&note.title), None,
+    ).await;
     Ok(note)
 }
 
@@ -220,7 +233,12 @@ pub async fn move_note(
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(map_note_row(row, false, &keys))
+    let note = map_note_row(row, false, &keys);
+    let _ = crate::audit::log_event(
+        pool.inner(), "note_update", Some("note"),
+        Some(note.id), Some(&note.title), Some("moved"),
+    ).await;
+    Ok(note)
 }
 
 /// Rename a note (title only). Returns the updated note.
@@ -258,6 +276,10 @@ pub async fn rename_note(
 
     let note = map_note_row(row, false, &keys);
     super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
+    let _ = crate::audit::log_event(
+        pool.inner(), "note_update", Some("note"),
+        Some(note.id), Some(&note.title), Some("renamed"),
+    ).await;
     Ok(note)
 }
 
@@ -271,6 +293,10 @@ pub async fn delete_note(pool: State<'_, SqlitePool>, id: i64) -> Result<(), Str
         .map_err(|e| e.to_string())?;
 
     super::search::fts_delete(pool.inner(), id).await;
+    let _ = crate::audit::log_event(
+        pool.inner(), "note_delete", Some("note"),
+        Some(id), None, None,
+    ).await;
     Ok(())
 }
 
@@ -342,6 +368,10 @@ pub async fn duplicate_note(
     if !note.locked {
         super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
     }
+    let _ = crate::audit::log_event(
+        pool.inner(), "note_create", Some("note"),
+        Some(note.id), Some(&note.title), Some("duplicated"),
+    ).await;
     Ok(note)
 }
 
@@ -373,7 +403,12 @@ pub async fn create_folder(
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(map_folder_row(row, &keys))
+    let folder = map_folder_row(row, &keys);
+    let _ = crate::audit::log_event(
+        pool.inner(), "folder_create", Some("folder"),
+        Some(folder.id), Some(&folder.name), None,
+    ).await;
+    Ok(folder)
 }
 
 /// List all folders. The frontend is responsible for building the tree from parent_id.
@@ -416,7 +451,12 @@ pub async fn rename_folder(
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(map_folder_row(row, &keys))
+    let folder = map_folder_row(row, &keys);
+    let _ = crate::audit::log_event(
+        pool.inner(), "folder_rename", Some("folder"),
+        Some(folder.id), Some(&folder.name), None,
+    ).await;
+    Ok(folder)
 }
 
 /// Delete a folder. Child folders and notes are handled by ON DELETE CASCADE
@@ -429,6 +469,10 @@ pub async fn delete_folder(pool: State<'_, SqlitePool>, id: i64) -> Result<(), S
         .await
         .map_err(|e| e.to_string())?;
 
+    let _ = crate::audit::log_event(
+        pool.inner(), "folder_delete", Some("folder"),
+        Some(id), None, None,
+    ).await;
     Ok(())
 }
 
@@ -595,6 +639,10 @@ pub async fn export_notes(
         exported += 1;
     }
 
+    let _ = crate::audit::log_event(
+        pool.inner(), "note_export", Some("note"),
+        None, None, Some(&dest_dir),
+    ).await;
     Ok(exported)
 }
 

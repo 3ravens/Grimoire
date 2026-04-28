@@ -505,6 +505,11 @@ pub async fn rescan_path(
 
     let (path, kind) = row.ok_or_else(|| format!("Scanned path {id} not found"))?;
 
+    let _ = crate::audit::log_event(
+        pool.inner(), "file_scan", Some("file"),
+        Some(id), Some(&path), None,
+    ).await;
+
     let app_clone  = app.clone();
     let pool_clone = pool.inner().clone();
     let vdb_clone  = vdb.0.clone();
@@ -595,6 +600,9 @@ pub async fn search_scanned_files(
         })
         .collect();
 
+    let _ = crate::audit::log_event(
+        pool.inner(), "search_semantic", Some("file"), None, None, Some(&query),
+    ).await;
     Ok(filtered)
 }
 
@@ -636,6 +644,11 @@ pub async fn import_file_as_note(
 
     // Update FTS index so the note is immediately searchable.
     super::search::fts_upsert(pool.inner(), row.id, &title, &content).await;
+
+    let _ = crate::audit::log_event(
+        pool.inner(), "file_import", Some("file"),
+        Some(row.id), Some(&file_path), None,
+    ).await;
 
     // Return the full Note struct (locked = false — Unfiled and user-selected folders
     // are never locked at import time; encrypted folders are intentionally unsupported).
