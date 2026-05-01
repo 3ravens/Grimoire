@@ -35,6 +35,10 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   // lastImportedNoteId[path_id] = note id — set after a successful import so we can show "View note"
   let lastImportedNoteId = $state({});
 
+  // Global bulk re-index status for all scanned paths.
+  let rescanningAll = $state(false);
+  let rescanAllStatus = $state('');
+
   let unlisten = null;
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -125,6 +129,37 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     }
   }
 
+  async function rescanAllPaths() {
+    if (!paths.length) {
+      return;
+    }
+    if (paths.some((p) => isScanning(p.id))) {
+      return;
+    }
+
+    rescanningAll = true;
+    rescanAllStatus = '';
+
+    const ids = paths.map((p) => p.id);
+    for (const id of ids) {
+      progress = { ...progress, [id]: { scanned: 0, total: 0, done: false, error: null } };
+    }
+
+    const starts = await Promise.all(
+      ids.map((id) => invoke('rescan_path', { id }).then(() => null).catch((e) => String(e)))
+    );
+    const failed = starts.filter(Boolean).length;
+    const started = ids.length - failed;
+
+    if (failed > 0) {
+      rescanAllStatus = `Started ${started} of ${ids.length} paths. ${failed} failed to start.`;
+    } else {
+      rescanAllStatus = `Started re-indexing ${started} path${started === 1 ? '' : 's'}. Progress appears per row.`;
+    }
+
+    rescanningAll = false;
+  }
+
   async function importAsNote(p) {
     importingNoteId = p.id;
     try {
@@ -167,10 +202,22 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       </p>
     </div>
     <div class="fs-add-buttons">
+      <button
+        class="fs-add-btn"
+        onclick={rescanAllPaths}
+        disabled={rescanningAll || paths.some((p) => isScanning(p.id)) || paths.length === 0}
+        title="Re-index every path currently in File Scanner"
+      >
+        Re-index all
+      </button>
       <button class="fs-add-btn" onclick={addFile}>Add file</button>
       <button class="fs-add-btn" onclick={addFolder}>Add folder</button>
     </div>
   </div>
+
+  {#if rescanAllStatus}
+    <p class="fs-bulk-status">{rescanAllStatus}</p>
+  {/if}
 
   {#if paths.length === 0}
     <div class="fs-empty">

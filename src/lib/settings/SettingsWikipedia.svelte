@@ -47,13 +47,16 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   // Per-bundle indexing progress: bundle_id → { indexed, scanned, total, done, error }
   let progress = $state({});
 
-  // { startTime: ms, startScan: number } recorded on the first non-zero progress event.
+  // { startTime: ms, startScan: number } recorded on the first non-zero scan event.
   // Rate = (current_scanned - startScan) / elapsed, which avoids inflating the rate
   // with entries that were already scanned before we started the timer.
   let indexingStarts = $state({});
 
   // Download progress: bundle_id → { downloaded_bytes, total_bytes }
   let downloadProgress = $state({});
+
+  // Global bulk re-index status for installed bundles.
+  let reindexAll = $state({ running: false, done: 0, total: 0, error: '' });
 
   // Confirm modal state
   let confirmModal = $state(null); // { message, onConfirm }
@@ -68,7 +71,17 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     storagePath = await invoke('get_setting', { key: 'wikipedia_storage_path' }).catch(() => '');
 
     unlistenIndex = await listen('wikipedia:index-progress', (ev) => {
-      const { bundle_id, indexed, scanned, total, done, error } = ev.payload;
+      const {
+        bundle_id,
+        indexed,
+        scanned,
+        total,
+        article_count,
+        batch_splits,
+        single_fallbacks,
+        done,
+        error,
+      } = ev.payload;
 
       // Record the moment we first see real scan progress so we can derive rate.
       if ((scanned ?? 0) > 0 && !indexingStarts[bundle_id]) {
@@ -81,13 +94,15 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
           indexed: indexed ?? 0,
           scanned: scanned ?? 0,
           total: total ?? 0,
+          article_count: article_count ?? null,
+          batch_splits: batch_splits ?? 0,
+          single_fallbacks: single_fallbacks ?? 0,
           done: !!done,
           error: error ?? null,
         },
       };
 
       if (done) {
-        // Drop the start info — no longer needed.
         const next = { ...indexingStarts };
         delete next[bundle_id];
         indexingStarts = next;
@@ -158,18 +173,15 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   function stateLabel(bundle) {
     const p = progress[bundle.id];
     if (p && !p.done) {
-      const pct = p.total > 0 ? `${Math.floor((p.scanned / p.total) * 100)}%` : '';
+      const totalArticles = p.article_count || bundle.article_count || 0;
+      const pct = totalArticles > 0 ? `${Math.floor((p.indexed / totalArticles) * 100)}%` : '';
 
       let etaPart = '';
       const start = indexingStarts[bundle.id];
       if (start && p.scanned > start.startScan && p.total > 0 && p.scanned < p.total) {
         const elapsedSec = (Date.now() - start.startTime) / 1000;
-        // Rate only counts entries scanned after the timer started, so we don't
-        // inflate it with entries that finished before the first event fired.
         const rate = (p.scanned - start.startScan) / elapsedSec;
         const remainingSec = (p.total - p.scanned) / rate;
-        // Only show ETA once the estimate has stabilised (elapsed > 5s) and
-        // there's enough time left to be meaningful (> 5s remaining).
         if (elapsedSec > 5 && remainingSec > 5) {
           const formatted = fmtEta(remainingSec);
           if (formatted) etaPart = ` · ~${formatted} left`;
@@ -177,7 +189,9 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       }
 
       const pctPart = pct ? `${pct}` : '';
-      const indexedPart = p.indexed > 0 ? ` · ${p.indexed.toLocaleString()} articles embedded` : '';
+      const indexedPart = totalArticles > 0
+        ? ` · ${p.indexed.toLocaleString()} of ${totalArticles.toLocaleString()} articles indexed`
+        : ` · ${p.indexed.toLocaleString()} articles embedded`;
       return `Indexing… ${pctPart}${indexedPart}${etaPart}`;
     }
     if (bundle.indexing_state === 'done') return 'Indexed';
@@ -185,6 +199,40 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     if (bundle.indexing_state === 'indexing') return 'Indexing…';
     if (bundle.indexing_state === 'queued') return 'Queued';
     return 'Not indexed';
+  }
+
+  function performanceWarning(bundle) {
+    const p = progress[bundle.id];
+    if (!p || p.done) return '';
+    const splits = p.batch_splits ?? 0;
+    const singles = p.single_fallbacks ?? 0;
+    if (singles > 0) {
+      return `Performance warning: ${singles} single-item embed fallback${singles === 1 ? '' : 's'} detected.`;
+    }
+    if (splits >= 10) {
+      return `Performance warning: batch requests were split ${splits} times.`;
+    }
+    return '';
+  }
+
+  function progressBarPercent(bundle) {
+    const p = progress[bundle.id];
+    if (!p) return 0;
+    const totalArticles = p.article_count || bundle.article_count || 0;
+    if (totalArticles > 0) {
+      return ((p.indexed ?? 0) / totalArticles) * 100;
+    }
+    if ((p.total ?? 0) > 0) {
+      return ((p.scanned ?? 0) / p.total) * 100;
+    }
+    return 0;
+  }
+
+  function hasActiveBundleIndexing() {
+    return bundles.some((bundle) => {
+      const p = progress[bundle.id];
+      return bundle.indexing_state === 'indexing' || (p && !p.done);
+    });
   }
 
   // ── Actions ───────────────────────────────────────────────────────────────
@@ -234,21 +282,47 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       const next = { ...downloadProgress };
       delete next[item.id];
       downloadProgress = next;
+      // Auto-index after download completes.
+      const bundle = bundles.find((b) => b.id === item.id);
+      if (bundle) {
+        await startIndexing(bundle);
+      }
     } catch (e) {
       catalogueError = `Download failed: ${e}`;
     }
   }
 
-  async function startIndexing(bundle) {
+  async function startIndexing(bundle, reset = false) {
     progress = {
       ...progress,
       [bundle.id]: { indexed: 0, total: 0, done: false, error: null },
     };
     try {
-      await invoke('index_wikipedia_bundle', { bundleId: bundle.id });
+      await invoke('index_wikipedia_bundle', { bundleId: bundle.id, reset });
+      return true;
     } catch (e) {
       // Progress event with error will have already arrived via the event listener.
+      return false;
     }
+  }
+
+  async function reindexAllBundles() {
+    if (!bundles.length || hasActiveBundleIndexing()) {
+      return;
+    }
+
+    reindexAll = { running: true, done: 0, total: bundles.length, error: '' };
+
+    for (const bundle of bundles) {
+      const ok = await startIndexing(bundle, true);
+      if (!ok && !reindexAll.error) {
+        reindexAll = { ...reindexAll, error: `Some bundles failed to index. Check each row for details.` };
+      }
+      reindexAll = { ...reindexAll, done: reindexAll.done + 1 };
+    }
+
+    await loadBundles();
+    reindexAll = { ...reindexAll, running: false };
   }
 
   function confirmRemove(bundle) {
@@ -309,6 +383,14 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 <!-- Installed bundles -->
 {#if bundles.length > 0}
   <h4 class="settings-subsection">Installed bundles</h4>
+  <div class="wiki-bulk-actions">
+    <button class="wiki-btn" onclick={reindexAllBundles} disabled={reindexAll.running || hasActiveBundleIndexing()}>
+      {reindexAll.running ? `Re-indexing ${reindexAll.done}/${reindexAll.total}…` : 'Re-index all bundles'}
+    </button>
+    {#if reindexAll.error}
+      <span class="wiki-error">{reindexAll.error}</span>
+    {/if}
+  </div>
   <div class="wiki-bundle-list">
     {#each bundles as bundle (bundle.id)}
       {@const p = progress[bundle.id]}
@@ -322,15 +404,18 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
           <span class="wiki-bundle-state" class:state-done={bundle.indexing_state === 'done'} class:state-error={bundle.indexing_state === 'error'}>
             {stateLabel(bundle)}
           </span>
-          {#if p && !p.done && p.total > 0}
+          {#if performanceWarning(bundle)}
+            <span class="wiki-bundle-warning">{performanceWarning(bundle)}</span>
+          {/if}
+          {#if p && !p.done && ((p.article_count || bundle.article_count || 0) > 0 || p.total > 0)}
             <div class="wiki-progress-bar">
-              <div class="wiki-progress-fill" style="width: {Math.min(100, (p.scanned / p.total) * 100).toFixed(1)}%"></div>
+              <div class="wiki-progress-fill" style="width: {Math.max(0, Math.min(100, progressBarPercent(bundle))).toFixed(1)}%"></div>
             </div>
           {/if}
         </div>
         <div class="wiki-bundle-actions">
           {#if bundle.indexing_state !== 'indexing' && !(p && !p.done)}
-            <button class="wiki-btn" onclick={() => startIndexing(bundle)}>
+            <button class="wiki-btn" onclick={() => startIndexing(bundle, bundle.indexing_state === 'done' || bundle.indexing_state === 'error')}>
               {bundle.indexing_state === 'done' ? 'Re-index' : 'Index'}
             </button>
           {/if}

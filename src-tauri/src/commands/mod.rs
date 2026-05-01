@@ -17,6 +17,18 @@
 
 use serde::Serialize;
 use crate::KeyStore;
+use std::sync::{Arc, atomic::AtomicBool, Mutex};
+use std::collections::HashMap;
+
+/// Shared map of cancellation flags for in-progress indexing operations,
+/// keyed by bundle_id. Set to true to request cancellation.
+pub struct CancelMap(pub Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>);
+
+impl CancelMap {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(HashMap::new())))
+    }
+}
 
 pub mod audit;
 pub mod bookmarks;

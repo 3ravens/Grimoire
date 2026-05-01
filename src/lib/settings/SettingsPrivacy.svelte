@@ -1,26 +1,23 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
+  import { onMount } from 'svelte';
   import AuditLog from '../AuditLog.svelte';
 
   let auditEnabled = $state(true);
   let logFileAccess = $state(true);
 
-  $effect(() => {
-    invoke('get_setting', { key: 'audit_enabled' })
-      .then(v => { if (v !== '') auditEnabled = v === 'true'; })
-      .catch(() => {});
-    invoke('get_setting', { key: 'log_file_access' })
-      .then(v => { if (v !== '') logFileAccess = v === 'true'; })
-      .catch(() => {});
+  onMount(async () => {
+    const [a, l] = await Promise.all([
+      invoke('get_setting', { key: 'audit_enabled' }),
+      invoke('get_setting', { key: 'log_file_access' }),
+    ]).catch(() => [null, null]);
+    if (a !== null && a !== '') auditEnabled = a === 'true';
+    if (l !== null && l !== '') logFileAccess = l === 'true';
   });
 
-  $effect(() => {
-    invoke('set_setting', { key: 'audit_enabled', value: String(auditEnabled) }).catch(() => {});
-  });
-
-  $effect(() => {
-    invoke('set_setting', { key: 'log_file_access', value: String(logFileAccess) }).catch(() => {});
-  });
+  function save(key, value) {
+    invoke('set_setting', { key, value: String(value) }).catch(() => {});
+  }
 </script>
 
 <h3>Privacy</h3>
@@ -47,7 +44,7 @@
     </span>
   </div>
   <label class="toggle">
-    <input type="checkbox" bind:checked={auditEnabled} />
+    <input type="checkbox" checked={auditEnabled} onchange={e => { auditEnabled = e.currentTarget.checked; save('audit_enabled', auditEnabled); }} />
     <span class="toggle-label">{auditEnabled ? 'On' : 'Off'}</span>
   </label>
 </div>
@@ -62,7 +59,7 @@
     </span>
   </div>
   <label class="toggle" class:toggle-locked={!auditEnabled}>
-    <input type="checkbox" bind:checked={logFileAccess} disabled={!auditEnabled} />
+    <input type="checkbox" checked={logFileAccess} disabled={!auditEnabled} onchange={e => { logFileAccess = e.currentTarget.checked; save('log_file_access', logFileAccess); }} />
     <span class="toggle-label">{logFileAccess ? 'On' : 'Off'}</span>
   </label>
 </div>

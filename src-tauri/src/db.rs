@@ -36,6 +36,12 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool, sqlx::Error> {
         .connect(&db_url)
         .await?;
 
+    // Enable WAL journal mode. This allows reads and writes to proceed concurrently
+    // instead of serialising — eliminates the 5s write-queue delays under load.
+    sqlx::query("PRAGMA journal_mode=WAL")
+        .execute(&pool)
+        .await?;
+
     // Run any pending migrations from the migrations/ folder.
     // sqlx tracks which ones have already been applied, so this is safe to call every startup.
     sqlx::migrate!("./migrations").run(&pool).await?;

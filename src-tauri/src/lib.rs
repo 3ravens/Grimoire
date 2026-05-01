@@ -18,13 +18,14 @@
 mod audit;
 mod auth;
 mod commands;
+mod config;
 mod crypto;
 mod db;
 mod hardware;
 mod vector;
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
 use tauri::Manager;
 
 /// In-memory store for derived encryption keys.
@@ -58,6 +59,12 @@ pub fn run() {
                     .await
                     .expect("failed to initialise database");
                 let pool_for_fts = pool.clone();
+
+                let app_config = config::AppConfig::load(&pool)
+                    .await
+                    .expect("failed to load app config");
+                app_handle.manage(Arc::new(RwLock::new(app_config)) as config::SharedConfig);
+
                 app_handle.manage(pool);
 
                 tauri::async_runtime::spawn(async move {
@@ -73,6 +80,8 @@ pub fn run() {
                     vault_key: Mutex::new(None),
                     folder_keys: Mutex::new(HashMap::new()),
                 });
+
+                app_handle.manage(commands::CancelMap::new());
             });
 
             Ok(())
@@ -100,6 +109,9 @@ pub fn run() {
         commands::remove_note_index,
         commands::search_notes,
         commands::reindex_all,
+        commands::clear_notes_index,
+        commands::clear_wiki_index,
+        commands::clear_scanned_index,
         commands::sync_note_relations,
         commands::get_note_tags,
         commands::get_note_links,

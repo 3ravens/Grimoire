@@ -1,10 +1,23 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
+  import { onMount } from 'svelte';
 
   let {
     devNativeContextMenu = false,
     onDevNativeContextMenuChange = () => {},
   } = $props();
+
+  let wikiPerfLogging = $state(false);
+
+  onMount(async () => {
+    const raw = await invoke('get_setting', { key: 'wiki_perf_logging' }).catch(() => '');
+    wikiPerfLogging = raw === 'true';
+  });
+
+  function saveWikiPerfLogging(enabled) {
+    wikiPerfLogging = enabled;
+    invoke('set_setting', { key: 'wiki_perf_logging', value: enabled ? 'true' : 'false' }).catch(() => {});
+  }
 
   // ── ZIM parsing PoC ───────────────────────────────────────────────────────
   let zimPath    = $state('');
@@ -46,6 +59,25 @@
       onchange={(e) => onDevNativeContextMenuChange(e.currentTarget.checked)}
     />
     <span class="toggle-label">{devNativeContextMenu ? 'On' : 'Off'}</span>
+  </label>
+</div>
+
+<div class="setting-row">
+  <div class="setting-label">
+    <span class="setting-name">Wikipedia perf logs</span>
+    <span class="setting-desc">
+      Emits periodic <code>[wiki_index_perf]</code> timing summaries while indexing.
+      Disable to keep logs clean. Output appears in the dev terminal and is also
+      written to a dedicated <code>wiki-index-perf.log</code> file.
+    </span>
+  </div>
+  <label class="toggle">
+    <input
+      type="checkbox"
+      checked={wikiPerfLogging}
+      onchange={(e) => saveWikiPerfLogging(e.currentTarget.checked)}
+    />
+    <span class="toggle-label">{wikiPerfLogging ? 'On' : 'Off'}</span>
   </label>
 </div>
 

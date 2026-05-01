@@ -27,7 +27,8 @@ use serde::Serialize;
 use pdf_extract;
 
 use crate::vector::{VectorDb, ScannedFileMatch};
-use super::rag::{split_sentences, chunk_sentences, get_embedding_model_pub};
+use crate::config::SharedConfig;
+use super::rag::{split_sentences, chunk_sentences};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -134,8 +135,8 @@ async fn index_path(
     path_id: i64,
     path: &str,
     kind: &str,
+    model: &str,
 ) -> Result<(), String> {
-    let model = get_embedding_model_pub(pool).await;
     let files = collect_files(path, kind);
     let total = files.len();
     let mut scanned = 0usize;
@@ -320,6 +321,7 @@ pub async fn add_scanned_path(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     vdb: State<'_, VectorDb>,
+    config: State<'_, SharedConfig>,
     path: String,
     kind: String,
 ) -> Result<ScannedPath, String> {
@@ -347,16 +349,9 @@ pub async fn add_scanned_path(
     }
 
     // Guard: reject paths inside the vault directory.
-    let vault_path_raw: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM settings WHERE key = 'vault_path' LIMIT 1",
-    )
-    .fetch_optional(pool.inner())
-    .await
-    .map_err(|e| e.to_string())?
-    .flatten();
-
-    if let Some(vault_raw) = vault_path_raw {
-        let vault_p = std::path::Path::new(&vault_raw);
+    let vault_path_raw = config.read().unwrap().vault_path.clone();
+    if !vault_path_raw.is_empty() {
+        let vault_p = std::path::Path::new(&vault_path_raw);
         if p.starts_with(vault_p) {
             return Err(
                 "Cannot scan a path inside the vault — vault files are already indexed separately."
@@ -394,10 +389,11 @@ pub async fn add_scanned_path(
     let vdb_clone  = vdb.0.clone();
     let path_clone = path.clone();
     let kind_clone = kind.clone();
+    let model_clone = config.read().unwrap().embedding_model.clone();
     let pool_err   = pool.inner().clone();
 
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path_clone, &kind_clone).await {
+        if let Err(e) = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path_clone, &kind_clone, &model_clone).await {
             // Persist the error so the UI can surface it.
             let _ = sqlx::query(
                 "UPDATE scanned_paths SET error_msg = ? WHERE id = ?",
@@ -493,6 +489,7 @@ pub async fn rescan_path(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     vdb: State<'_, VectorDb>,
+    config: State<'_, SharedConfig>,
     id: i64,
 ) -> Result<(), String> {
     let row: Option<(String, String)> = sqlx::query_as(
@@ -513,10 +510,11 @@ pub async fn rescan_path(
     let app_clone  = app.clone();
     let pool_clone = pool.inner().clone();
     let vdb_clone  = vdb.0.clone();
+    let model_clone = config.read().unwrap().embedding_model.clone();
     let pool_err   = pool.inner().clone();
 
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path, &kind).await {
+        if let Err(e) = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path, &kind, &model_clone).await {
             let _ = sqlx::query(
                 "UPDATE scanned_paths SET error_msg = ? WHERE id = ?",
             )
@@ -545,6 +543,7 @@ pub async fn rescan_path(
 pub async fn search_scanned_files(
     pool: State<'_, SqlitePool>,
     vdb: State<'_, VectorDb>,
+    config: State<'_, SharedConfig>,
     query: String,
 ) -> Result<Vec<ScannedFileMatch>, String> {
     // Fast path: if no enabled paths exist, skip embedding entirely.
@@ -559,7 +558,7 @@ pub async fn search_scanned_files(
         return Ok(vec![]);
     }
 
-    let model = get_embedding_model_pub(pool.inner()).await;
+    let model = config.read().unwrap().embedding_model.clone();
     let embedding = crate::vector::embed(
         &format!("search_query: {query}"),
         &model,

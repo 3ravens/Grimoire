@@ -32,8 +32,41 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, State};
+use tauri::Manager;
 use futures::StreamExt;
 use rayon::prelude::*;
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::time::Instant;
+use crate::config::SharedConfig;
+
+fn resolve_wiki_perf_log_path(app: &AppHandle) -> Option<PathBuf> {
+    if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
+        let candidate = PathBuf::from(local_appdata)
+            .join("com.tauri.dev")
+            .join("logs")
+            .join("wiki-index-perf.log");
+        if candidate.parent().is_some() {
+            return Some(candidate);
+        }
+    }
+
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let candidate = PathBuf::from(appdata)
+            .join("com.tauri.dev")
+            .join("logs")
+            .join("wiki-index-perf.log");
+        if candidate.parent().is_some() {
+            return Some(candidate);
+        }
+    }
+
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|p| p.join("logs").join("wiki-index-perf.log"))
+}
 
 // ---------------------------------------------------------------------------
 // Shared structs
@@ -94,13 +127,18 @@ struct BundleRow {
 fn html_to_text(html: &str) -> String {
     use scraper::{Html, Selector};
 
+    static SKIP_SELECTOR: OnceLock<Selector> = OnceLock::new();
+    static BODY_SELECTOR: OnceLock<Selector> = OnceLock::new();
+
     let document = Html::parse_document(html);
 
     // Skip script, style, and nav elements — they add noise with no information.
-    let skip_sel = Selector::parse("script, style, nav, .toc, #toc").unwrap();
+    let skip_sel = SKIP_SELECTOR
+        .get_or_init(|| Selector::parse("script, style, nav, .toc, #toc").expect("valid skip selector"));
 
     // Collect text nodes that are NOT inside skipped elements.
-    let body_sel = Selector::parse("body").unwrap();
+    let body_sel = BODY_SELECTOR
+        .get_or_init(|| Selector::parse("body").expect("valid body selector"));
     let body = match document.select(&body_sel).next() {
         Some(b) => b,
         None => return String::new(),
@@ -373,12 +411,12 @@ pub async fn download_wikipedia_bundle(
     // Upsert the bundle record in SQLite.
     sqlx::query(
         "INSERT INTO wikipedia_bundles (id, name, flavour, title, article_count, size_bytes, zim_path, installed_at, indexing_state)
-         VALUES (?, ?, 'nopic', ?, ?, ?, ?, ?, 'none')
+         VALUES (?, ?, 'nopic', ?, ?, ?, ?, ?, 'queued')
          ON CONFLICT(id) DO UPDATE SET
              name = excluded.name, title = excluded.title,
              article_count = excluded.article_count,
              size_bytes = excluded.size_bytes, zim_path = excluded.zim_path,
-             installed_at = excluded.installed_at, indexing_state = 'none'",
+             installed_at = excluded.installed_at, indexing_state = 'queued'",
     )
     .bind(&bundle_id)
     .bind(&bundle_name)
@@ -399,9 +437,18 @@ pub async fn download_wikipedia_bundle(
 pub async fn remove_wikipedia_bundle(
     pool: State<'_, SqlitePool>,
     vdb: State<'_, crate::vector::VectorDb>,
+    cancel_map: State<'_, super::CancelMap>,
     bundle_id: String,
     delete_file: bool,
 ) -> Result<(), String> {
+    // Signal cancellation for any in-progress indexing of this bundle.
+    {
+        let map = cancel_map.0.lock().map_err(|e| e.to_string())?;
+        if let Some(flag) = map.get(&bundle_id) {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     // Fetch zim_path before deleting the row if we need to delete the file.
     let zim_path: Option<String> = if delete_file {
         sqlx::query_scalar("SELECT zim_path FROM wikipedia_bundles WHERE id = ?")
@@ -446,14 +493,19 @@ pub async fn remove_wikipedia_bundle(
 /// `{ bundle_id, indexed, total, done, error }` every 100 articles.
 ///
 /// Resumes from the last checkpoint automatically.
-/// Skips: redirects, stubs (<500 chars after HTML stripping), disambiguation pages.
+/// Skips: redirects, HTML meta-refresh soft redirects, stubs (<200 chars after HTML stripping), disambiguation pages.
 #[tauri::command]
 pub async fn index_wikipedia_bundle(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     vdb: State<'_, crate::vector::VectorDb>,
+    cancel_map: State<'_, super::CancelMap>,
+    config: State<'_, SharedConfig>,
     bundle_id: String,
+    reset: Option<bool>,
 ) -> Result<(), String> {
+    crate::vector::reset_embed_batch_telemetry();
+
     // Look up the bundle.
     let bundle: WikiBundle = sqlx::query_as(
         "SELECT id, name, flavour, title, article_count, size_bytes,
@@ -475,6 +527,23 @@ pub async fn index_wikipedia_bundle(
         .await
         .map_err(|e| e.to_string())?;
 
+    // Register a cancel flag so remove_bundle can stop this indexing run.
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let mut map = cancel_map.0.lock().map_err(|e| e.to_string())?;
+        map.insert(bundle_id.clone(), cancel.clone());
+    }
+
+    // If resetting, clear checkpoint and LanceDB entries to start fresh.
+    if reset.unwrap_or(false) {
+        sqlx::query("DELETE FROM wikipedia_index_checkpoint WHERE bundle_id = ?")
+            .bind(&bundle_id)
+            .execute(pool.inner())
+            .await
+            .map_err(|e| e.to_string())?;
+        crate::vector::wikipedia_remove_bundle(&vdb.0, &bundle_id).await?;
+    }
+
     // Load checkpoint (resume offset + previously indexed count).
     let (start_entry, base_indexed): (u32, i64) = sqlx::query_as::<_, (i64, i64)>(
         "SELECT last_indexed_entry, indexed_count FROM wikipedia_index_checkpoint WHERE bundle_id = ?",
@@ -490,6 +559,14 @@ pub async fn index_wikipedia_bundle(
     let vdb_conn  = vdb.0.clone();
     let bundle_id_clone = bundle_id.clone();
     let app_clone = app.clone();
+    let embedding_model = config.read().unwrap().embedding_model.clone();
+    let perf_logging_enabled = config.read().unwrap().wiki_perf_logging;
+    let perf_log_path: Option<PathBuf> = if perf_logging_enabled {
+        resolve_wiki_perf_log_path(&app)
+    } else {
+        None
+    };
+    let cancel_clone = cancel.clone();
 
     let result: Result<(), String> = tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Handle::current();
@@ -499,6 +576,9 @@ pub async fn index_wikipedia_bundle(
             .map_err(|_| format!("Failed to open ZIM file: {zim_path}"))?;
 
         let total_entries = archive.get_all_entrycount();
+        let article_count = bundle.article_count
+            .map(|c| c as u32)
+            .unwrap_or_else(|| archive.get_articlecount());
 
         // Upsert checkpoint row.
         rt.block_on(sqlx::query(
@@ -512,7 +592,7 @@ pub async fn index_wikipedia_bundle(
         .execute(&pool_clone))
         .map_err(|e| e.to_string())?;
 
-        let model = rt.block_on(super::rag::get_embedding_model_pub(&pool_clone));
+        let model = embedding_model;
 
         let mut indexed = base_indexed;
         let mut last_checkpoint_idx = start_entry;
@@ -523,17 +603,31 @@ pub async fn index_wikipedia_bundle(
         //   Phase 3 — batched GPU embedding      (BATCH_SIZE texts per Ollama call)
         //   Phase 4 — bulk LanceDB upsert        (one delete+insert per batch)
         //
-        // SCAN_WINDOW and BATCH_SIZE are tuned for a high-end machine
-        // (16+ GB VRAM, 32 GB RAM, 8+ core CPU). A future adaptive path
-        // will scale these down based on hardware detection at startup.
-        const BATCH_SIZE: usize  = 64;   // texts per Ollama /api/embed call
+        // SCAN_WINDOW is tuned for a high-end machine. BATCH_SIZE and content
+        // length are model-aware: mxbai-embed-large has a 512-token context
+        // window so we use smaller batches and shorter input texts to avoid
+        // Ollama returning HTTP 400 (truncate=true in vector.rs is a safety
+        // net, but pre-truncating here avoids wasted tokens entirely).
+        let batch_size: usize = crate::vector::batch_size_for_model(&model);
+        let content_chars: usize = crate::vector::content_chars_for_model(&model);
         const SCAN_WINDOW: usize = 1024; // ZIM entries read per iteration
+
+        let mut window_idx: u64 = 0;
+        let mut total_read_ms: u128 = 0;
+        let mut total_parse_ms: u128 = 0;
+        let mut total_embed_ms: u128 = 0;
+        let mut total_upsert_ms: u128 = 0;
+        let mut total_checkpoint_emit_ms: u128 = 0;
 
         let mut scan_pos = start_entry;
         while scan_pos < total_entries {
+            if cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err("Indexing cancelled".to_string());
+            }
             let window_end = (scan_pos + SCAN_WINDOW as u32).min(total_entries);
 
             // ── Phase 1: sequential ZIM reads ──────────────────────────────────
+            let phase_read_t0 = Instant::now();
             let raw: Vec<(u32, String, String, Vec<u8>)> =
                 (scan_pos..window_end).filter_map(|idx| {
                     let entry = archive.get_entry_bypath_index(idx).ok()?;
@@ -545,16 +639,19 @@ pub async fn index_wikipedia_bundle(
                     let html = item.get_data().ok()?.data().to_vec();
                     Some((idx, entry.get_path(), entry.get_title(), html))
                 }).collect();
+            let read_ms = phase_read_t0.elapsed().as_millis();
 
             // ── Phase 2: parallel HTML→text parse on all CPU cores ─────────────
-            let articles: Vec<(u32, String, String, String, String)> = raw
+            let phase_parse_t0 = Instant::now();
+            let articles: Vec<(u32, String, String, String)> = raw
                 .into_par_iter()
                 .filter_map(|(idx, path, title, html_bytes)| {
                     // Skip MediaWiki CSS/template/module pages by path prefix.
-                    // In ZIM files these appear as paths starting with "." or "-/"
+                    // In ZIM files these appear as paths starting with "-/"
                     // or containing namespace prefixes like "MediaWiki:", "Module:".
+                    // Paths starting with "." alone (not "./") are internal metadata.
                     let path_lower = path.to_lowercase();
-                    if path.starts_with('.')
+                    if (path.starts_with('.') && !path.starts_with("./"))
                         || path.starts_with("-/")
                         || path_lower.contains("mediawiki:")
                         || path_lower.contains("module:")
@@ -564,12 +661,18 @@ pub async fn index_wikipedia_bundle(
                     {
                         return None;
                     }
-                    let text = html_to_text(&String::from_utf8_lossy(&html_bytes));
-                    if text.chars().count() < 500 { return None; }
-                    // Skip CSS pages: content that is mostly stylesheet definitions.
-                    if text.contains(".mw-parser-output") || text.starts_with(".mw-") || text.contains("/* start https://") {
-                        return None;
+                    // Skip HTML soft-redirect pages (meta refresh, not caught by
+                    // ZIM-level is_redirect). These have no article content.
+                    // Check small pages for the refresh pattern to skip them
+                    // before the expensive html_to_text call.
+                    if html_bytes.len() < 800 {
+                        let s = String::from_utf8_lossy(&html_bytes).to_lowercase();
+                        if s.contains("http-equiv") && s.contains("refresh") {
+                            return None;
+                        }
                     }
+                    let text = html_to_text(&String::from_utf8_lossy(&html_bytes));
+                    if text.chars().count() < 200 { return None; }
                     // Skip disambiguation pages. Wikipedia marks them with
                     // "(disambiguation)" in the title / path. Do NOT check body
                     // text for the word "disambiguation" — nearly every real article
@@ -591,42 +694,67 @@ pub async fn index_wikipedia_bundle(
                     if text_head.contains("may refer to:") {
                         return None;
                     }
-                    let content: String = text.chars().take(1500).collect();
-                    let doc_text = format!("search_document: {title}\n{content}");
-                    Some((idx, format!("{bundle_id_clone}/{path}"), title, content, doc_text))
+                    let content: String = text.chars().take(content_chars).collect();
+                    Some((idx, format!("{bundle_id_clone}/{path}"), title, content))
                 })
                 .collect();
+            let parse_ms = phase_parse_t0.elapsed().as_millis();
 
             // ── Phase 3 + 4: embed in batches, then bulk-upsert to LanceDB ──────
-            for chunk in articles.chunks(BATCH_SIZE) {
+            let mut embed_ms: u128 = 0;
+            let mut upsert_ms: u128 = 0;
+            let mut batch_count: u64 = 0;
+            let mut window_upsert_batch: Vec<(String, String, String, String, Vec<f32>)> = Vec::new();
+            let mut window_indexed_delta: i64 = 0;
+            let mut window_last_checkpoint_idx: u32 = last_checkpoint_idx;
+            for chunk in articles.chunks(batch_size) {
+                batch_count += 1;
                 let doc_texts: Vec<String> =
-                    chunk.iter().map(|(_, _, _, _, dt)| dt.clone()).collect();
+                    chunk
+                        .iter()
+                        .map(|(_, _, title, content)| format!("search_document: {title}\n{content}"))
+                        .collect();
+                let phase_embed_t0 = Instant::now();
                 let embeddings =
                     match rt.block_on(crate::vector::embed_batch(&doc_texts, &model)) {
                         Ok(e) => e,
                         Err(_) => chunk.iter()
-                            .map(|(_, _, _, _, dt)| {
-                                rt.block_on(crate::vector::embed(dt, &model)).unwrap_or_default()
+                            .map(|(_, _, title, content)| {
+                                let doc_text = format!("search_document: {title}\n{content}");
+                                rt.block_on(crate::vector::embed(&doc_text, &model)).unwrap_or_default()
                             })
                             .collect(),
                     };
+                embed_ms += phase_embed_t0.elapsed().as_millis();
 
                 // Collect the valid articles as a single batch for LanceDB.
+                let phase_upsert_t0 = Instant::now();
                 let upsert_batch: Vec<(String, String, String, String, Vec<f32>)> = chunk
                     .iter()
                     .zip(embeddings)
-                    .filter_map(|((arc_idx, article_id, title, content, _), embedding)| {
+                    .filter_map(|((arc_idx, article_id, title, content), embedding)| {
                         if embedding.is_empty() { return None; }
-                        last_checkpoint_idx = *arc_idx;
+                        window_last_checkpoint_idx = *arc_idx;
                         Some((article_id.clone(), bundle_id_clone.clone(), title.clone(), content.clone(), embedding))
                     })
                     .collect();
 
-                indexed += upsert_batch.len() as i64;
-                let _ = rt.block_on(crate::vector::wikipedia_upsert_batch(&vdb_conn, upsert_batch));
+                window_indexed_delta += upsert_batch.len() as i64;
+                window_upsert_batch.extend(upsert_batch);
+                upsert_ms += phase_upsert_t0.elapsed().as_millis();
+            }
+
+            if !window_upsert_batch.is_empty() {
+                let phase_upsert_write_t0 = Instant::now();
+                rt.block_on(crate::vector::wikipedia_append_batch(&vdb_conn, window_upsert_batch))
+                    .map_err(|e| format!("Failed to append wikipedia window batch: {e}"))?;
+                indexed += window_indexed_delta;
+                last_checkpoint_idx = window_last_checkpoint_idx;
+                upsert_ms += phase_upsert_write_t0.elapsed().as_millis();
             }
 
             // ── Checkpoint + progress at each window boundary ──────────────────
+            let phase_checkpoint_t0 = Instant::now();
             if !articles.is_empty() {
                 let _ = rt.block_on(sqlx::query(
                     "UPDATE wikipedia_index_checkpoint
@@ -637,14 +765,79 @@ pub async fn index_wikipedia_bundle(
                 .bind(&bundle_id_clone)
                 .execute(&pool_clone));
             }
+            let checkpoint_ms = phase_checkpoint_t0.elapsed().as_millis();
+
+            let phase_emit_t0 = Instant::now();
+            let (batch_splits, single_fallbacks) = crate::vector::snapshot_embed_batch_telemetry();
             let _ = app_clone.emit("wikipedia:index-progress", serde_json::json!({
                 "bundle_id": bundle_id_clone,
                 "indexed": indexed,
                 "scanned": window_end,
                 "total": total_entries,
+                "article_count": article_count,
+                "batch_splits": batch_splits,
+                "single_fallbacks": single_fallbacks,
+                "timings_ms": {
+                    "read": read_ms,
+                    "parse": parse_ms,
+                    "embed": embed_ms,
+                    "upsert": upsert_ms,
+                    "checkpoint": checkpoint_ms,
+                },
+                "batch_count": batch_count,
                 "done": false,
                 "error": null,
             }));
+            let emit_ms = phase_emit_t0.elapsed().as_millis();
+            let checkpoint_emit_ms = checkpoint_ms + emit_ms;
+
+            window_idx += 1;
+            total_read_ms += read_ms;
+            total_parse_ms += parse_ms;
+            total_embed_ms += embed_ms;
+            total_upsert_ms += upsert_ms;
+            total_checkpoint_emit_ms += checkpoint_emit_ms;
+
+            if perf_logging_enabled && window_idx % 10 == 0 {
+                let avg_read = total_read_ms as f64 / window_idx as f64;
+                let avg_parse = total_parse_ms as f64 / window_idx as f64;
+                let avg_embed = total_embed_ms as f64 / window_idx as f64;
+                let avg_upsert = total_upsert_ms as f64 / window_idx as f64;
+                let avg_checkpoint_emit = total_checkpoint_emit_ms as f64 / window_idx as f64;
+                log::info!(
+                    "[wiki_index_perf] bundle={} windows={} avg_ms read={:.1} parse={:.1} embed={:.1} upsert={:.1} checkpoint_emit={:.1}",
+                    bundle_id_clone,
+                    window_idx,
+                    avg_read,
+                    avg_parse,
+                    avg_embed,
+                    avg_upsert,
+                    avg_checkpoint_emit,
+                );
+
+                if let Some(path) = perf_log_path.as_ref() {
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                    {
+                        let _ = writeln!(
+                            file,
+                            "[wiki_index_perf] bundle={} windows={} avg_ms read={:.1} parse={:.1} embed={:.1} upsert={:.1} checkpoint_emit={:.1}",
+                            bundle_id_clone,
+                            window_idx,
+                            avg_read,
+                            avg_parse,
+                            avg_embed,
+                            avg_upsert,
+                            avg_checkpoint_emit,
+                        );
+                    }
+                }
+            }
 
             scan_pos = window_end;
         }
@@ -653,6 +846,11 @@ pub async fn index_wikipedia_bundle(
     })
     .await
     .map_err(|e| e.to_string())?;
+
+    // Clean up the cancel flag regardless of outcome.
+    if let Ok(mut map) = cancel_map.0.lock() {
+        map.remove(&bundle_id);
+    }
 
     match result {
         Ok(()) => {
@@ -675,8 +873,11 @@ pub async fn index_wikipedia_bundle(
             .await
             .map_err(|e| e.to_string())?;
 
+            let (batch_splits, single_fallbacks) = crate::vector::snapshot_embed_batch_telemetry();
             let _ = app.emit("wikipedia:index-progress", serde_json::json!({
                 "bundle_id": bundle_id,
+                "batch_splits": batch_splits,
+                "single_fallbacks": single_fallbacks,
                 "done": true,
                 "error": null,
             }));
@@ -684,21 +885,32 @@ pub async fn index_wikipedia_bundle(
             Ok(())
         }
         Err(e) => {
-            sqlx::query(
-                "UPDATE wikipedia_bundles SET indexing_state = 'error' WHERE id = ?",
-            )
-            .bind(&bundle_id)
-            .execute(pool.inner())
-            .await
-            .map_err(|err| err.to_string())?;
+            // If cancelled, the bundle has already been removed — don't try to update state.
+            let is_cancelled = e == "Indexing cancelled";
+            if !is_cancelled {
+                sqlx::query(
+                    "UPDATE wikipedia_bundles SET indexing_state = 'error' WHERE id = ?",
+                )
+                .bind(&bundle_id)
+                .execute(pool.inner())
+                .await
+                .map_err(|err| err.to_string())?;
 
-            let _ = app.emit("wikipedia:index-progress", serde_json::json!({
-                "bundle_id": bundle_id,
-                "done": true,
-                "error": e,
-            }));
+                let (batch_splits, single_fallbacks) = crate::vector::snapshot_embed_batch_telemetry();
+                let _ = app.emit("wikipedia:index-progress", serde_json::json!({
+                    "bundle_id": bundle_id,
+                    "batch_splits": batch_splits,
+                    "single_fallbacks": single_fallbacks,
+                    "done": true,
+                    "error": e,
+                }));
+            }
 
-            Err(e)
+            if is_cancelled {
+                Ok(())
+            } else {
+                Err(e)
+            }
         }
     }
 }
@@ -707,24 +919,16 @@ pub async fn index_wikipedia_bundle(
 /// Called by the RAG pipeline in Chat.svelte when wikipedia is enabled.
 #[tauri::command]
 pub async fn search_wikipedia(
-    pool: State<'_, SqlitePool>,
     vdb: State<'_, crate::vector::VectorDb>,
+    config: State<'_, SharedConfig>,
     query: String,
 ) -> Result<Vec<crate::vector::WikiMatch>, String> {
     // Only search if wikipedia is enabled in settings.
-    let enabled: String = sqlx::query_scalar(
-        "SELECT value FROM settings WHERE key = 'wikipedia_enabled' LIMIT 1",
-    )
-    .fetch_optional(pool.inner())
-    .await
-    .map_err(|e| e.to_string())?
-    .unwrap_or_default();
-
-    if enabled != "true" {
+    if !config.read().unwrap().wikipedia_enabled {
         return Ok(vec![]);
     }
 
-    let model = super::rag::get_embedding_model_pub(pool.inner()).await;
+    let model = config.read().unwrap().embedding_model.clone();
     let embedding = super::rag::embed_query(&query, &model).await?;
     crate::vector::wikipedia_search(&vdb.0, embedding, 5).await
 }

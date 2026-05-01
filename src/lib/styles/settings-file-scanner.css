@@ -37,6 +37,12 @@
   border-radius: 3px;
 }
 
+.fs-bulk-status {
+  margin: -12px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .fs-add-buttons {
   display: flex;
   gap: 8px;

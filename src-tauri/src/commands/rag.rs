@@ -16,23 +16,11 @@
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
 use sqlx::SqlitePool;
-use tauri::State;
+use tauri::{Emitter, State};
 use crate::KeyStore;
+use crate::config::SharedConfig;
 use super::{NoteRow, map_note_row};
 
-async fn get_embedding_model(db: &SqlitePool) -> String {
-    sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 'embedding_model' LIMIT 1")
-        .fetch_optional(db)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_else(|| "nomic-embed-text".to_string())
-}
-
-/// Public alias used by `wikipedia.rs` to read the configured embedding model.
-pub(crate) async fn get_embedding_model_pub(db: &SqlitePool) -> String {
-    get_embedding_model(db).await
-}
 
 // ---------------------------------------------------------------------------
 // RAG commands (vector index + semantic search)
@@ -182,6 +170,7 @@ pub(crate) async fn build_properties_suffix(pool: &SqlitePool, note_id: i64) -> 
 pub async fn index_note(
     pool: State<'_, SqlitePool>,
     vdb: State<'_, crate::vector::VectorDb>,
+    config: State<'_, SharedConfig>,
     note_id: i64,
     title: String,
     content: String,
@@ -200,7 +189,7 @@ pub async fn index_note(
         return crate::vector::remove(&vdb.0, note_id).await;
     }
 
-    let model = get_embedding_model(pool.inner()).await;
+    let model = config.read().unwrap().embedding_model.clone();
 
     // Prefix every chunk with the document search prefix expected by nomic-embed-text.
     let doc_texts: Vec<String> = raw_chunks
@@ -254,10 +243,11 @@ pub async fn search_notes(
     pool: State<'_, SqlitePool>,
     keys: State<'_, KeyStore>,
     vdb: State<'_, crate::vector::VectorDb>,
+    config: State<'_, SharedConfig>,
     query: String,
     limit: Option<usize>,
 ) -> Result<Vec<crate::vector::NoteMatch>, String> {
-    let model = get_embedding_model(pool.inner()).await;
+    let model = config.read().unwrap().embedding_model.clone();
     let embedding = embed_query(&query, &model).await?;
     let mut matches = crate::vector::search(
         &vdb.0,
@@ -325,9 +315,11 @@ pub async fn search_notes(
 /// Re-index every note currently in SQLite into LanceDB from scratch.
 #[tauri::command]
 pub async fn reindex_all(
+    app: tauri::AppHandle,
     pool: State<'_, SqlitePool>,
     keys: State<'_, KeyStore>,
     vdb: State<'_, crate::vector::VectorDb>,
+    config: State<'_, SharedConfig>,
 ) -> Result<String, String> {
     let vault_key_absent = keys.vault_key.lock()
         .map(|vk| vk.is_none())
@@ -361,8 +353,10 @@ pub async fn reindex_all(
         locked_rows.into_iter().map(|(id, lk)| (id, lk != 0)).collect()
     };
 
-    let model = get_embedding_model(pool.inner()).await;
+    let model = config.read().unwrap().embedding_model.clone();
+    let total = raw_notes.len();
     let mut count = 0usize;
+    let mut processed = 0usize;
     let mut failed: Vec<String> = Vec::new();
 
     for raw in raw_notes {
@@ -371,6 +365,7 @@ pub async fn reindex_all(
             .unwrap_or(false);
         let note = map_note_row(raw, fl, &keys);
         if note.locked {
+            processed += 1;
             continue;
         }
         super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
@@ -383,6 +378,7 @@ pub async fn reindex_all(
         let sentences = split_sentences(&full_content);
         let raw_chunks = chunk_sentences(sentences, 1, 0);
         if raw_chunks.iter().all(|c| c.trim().is_empty()) {
+            processed += 1;
             continue;
         }
         let mut chunks: Vec<(i32, String, Vec<f32>)> = Vec::new();
@@ -404,6 +400,12 @@ pub async fn reindex_all(
                 count += 1;
             }
         }
+        processed += 1;
+        let _ = app.emit("reindex:progress", serde_json::json!({
+            "indexed": count,
+            "processed": processed,
+            "total": total,
+        }));
     }
 
     let summary = if failed.is_empty() {
@@ -414,15 +416,40 @@ pub async fn reindex_all(
     Ok(summary)
 }
 
+/// Drop the notes vector index so it can be rebuilt with a new embedding model.
+/// The index will be recreated with the correct schema on the next reindex_all.
+#[tauri::command]
+pub async fn clear_notes_index(
+    vdb: State<'_, crate::vector::VectorDb>,
+) -> Result<(), String> {
+    crate::vector::clear_notes_index(&vdb.0).await
+}
+
+/// Drop the Wikipedia vector index so it can be rebuilt with a new embedding model.
+#[tauri::command]
+pub async fn clear_wiki_index(
+    vdb: State<'_, crate::vector::VectorDb>,
+) -> Result<(), String> {
+    crate::vector::clear_wiki_index(&vdb.0).await
+}
+
+/// Drop the scanned-files vector index so it can be rebuilt with a new embedding model.
+#[tauri::command]
+pub async fn clear_scanned_index(
+    vdb: State<'_, crate::vector::VectorDb>,
+) -> Result<(), String> {
+    crate::vector::clear_scanned_index(&vdb.0).await
+}
+
 /// Debug command: returns the top 10 vector search hits with raw distance scores.
 #[cfg(debug_assertions)]
 #[tauri::command]
 pub async fn debug_search(
-    pool: State<'_, SqlitePool>,
     vdb: State<'_, crate::vector::VectorDb>,
+    config: State<'_, SharedConfig>,
     query: String,
 ) -> Result<Vec<crate::vector::RawMatch>, String> {
-    let model = get_embedding_model(pool.inner()).await;
+    let model = config.read().unwrap().embedding_model.clone();
     let embedding = embed_query(&query, &model).await?;
     crate::vector::raw_search(&vdb.0, embedding, 10).await
 }
@@ -431,11 +458,11 @@ pub async fn debug_search(
 #[cfg(debug_assertions)]
 #[tauri::command]
 pub async fn debug_search_wikipedia(
-    pool: State<'_, SqlitePool>,
     vdb: State<'_, crate::vector::VectorDb>,
+    config: State<'_, SharedConfig>,
     query: String,
 ) -> Result<Vec<crate::vector::RawMatch>, String> {
-    let model = get_embedding_model(pool.inner()).await;
+    let model = config.read().unwrap().embedding_model.clone();
     let embedding = embed_query(&query, &model).await?;
     crate::vector::raw_wikipedia_search(&vdb.0, embedding, 10).await
 }
@@ -447,6 +474,7 @@ pub async fn debug_search_wikipedia(
 pub async fn seed_notes(
     pool: State<'_, SqlitePool>,
     vdb: State<'_, crate::vector::VectorDb>,
+    config: State<'_, SharedConfig>,
 ) -> Result<String, String> {
     let seeds: &[(&str, &str)] = &[
         (
@@ -541,7 +569,7 @@ pub async fn seed_notes(
         ),
     ];
 
-    let model = get_embedding_model(pool.inner()).await;
+    let model = config.read().unwrap().embedding_model.clone();
     let mut count = 0usize;
     let mut indexed = 0usize;
     for (title, content) in seeds {

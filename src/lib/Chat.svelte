@@ -18,7 +18,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 <script>
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
-  import { untrack, tick } from 'svelte';
+  import { untrack, tick, onMount } from 'svelte';
   import { FEATURE_GUIDE } from './utils/featureGuide.js';
 
   // ── Props ──────────────────────────────────────────────────────────────────
@@ -75,15 +75,10 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   $effect(() => { const v = localStorage.getItem('grimoire:chat:useFeatureGuide'); if (v !== null) useFeatureGuide = JSON.parse(v); });
 
   // Load chat model from SQLite on mount.
-  $effect(() => {
+  onMount(() => {
     invoke('get_setting', { key: 'chat_model' })
       .then(val => { if (val !== '') model = val; })
       .catch(() => {});
-  });
-
-  // Persist chat model to SQLite when changed.
-  $effect(() => {
-    invoke('set_setting', { key: 'chat_model', value: model }).catch(() => {});
   });
 
   // Reference to the chat textarea so we can focus it after injection.
@@ -715,6 +710,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       bind:value={model}
       placeholder="model"
       title="Ollama model name (e.g. llama3.2)"
+      onchange={() => invoke('set_setting', { key: 'chat_model', value: model }).catch(() => {})}
     />
     <div class="chat-opts-wrap">
       <button

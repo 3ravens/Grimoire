@@ -23,6 +23,13 @@
   font-style: italic;
 }
 
+.wiki-bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
 .wiki-bundle-list,
 .wiki-catalogue {
   display: flex;
@@ -78,6 +85,11 @@
 }
 
 .wiki-bundle-state.state-error {
+  color: var(--danger);
+}
+
+.wiki-bundle-warning {
+  font-size: 11px;
   color: var(--danger);
 }
 

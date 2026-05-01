@@ -19,6 +19,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
 use crate::KeyStore;
+use crate::config::SharedConfig;
 
 // ---------------------------------------------------------------------------
 // FTS index helpers â€” called by notes.rs and rag.rs
@@ -233,6 +234,7 @@ pub async fn combined_search(
     pool: State<'_, SqlitePool>,
     keys: State<'_, KeyStore>,
     vdb: State<'_, crate::vector::VectorDb>,
+    config: State<'_, SharedConfig>,
     query: String,
     limit: Option<usize>,
 ) -> Result<Vec<SearchResult>, String> {
@@ -245,12 +247,7 @@ pub async fn combined_search(
     let fts_fut = fts_search_inner(pool.inner(), &keys, &query, limit * 2);
 
     let semantic_fut = async {
-        let model = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 'embedding_model' LIMIT 1")
-            .fetch_optional(pool.inner())
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "nomic-embed-text".to_string());
+        let model = config.read().unwrap().embedding_model.clone();
         match crate::commands::rag::embed_query(&query, &model).await {
             Ok(vec) => crate::vector::search(&vdb.0, vec, limit * 2).await.ok(),
             Err(_) => None,

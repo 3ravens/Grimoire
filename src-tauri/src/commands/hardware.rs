@@ -15,9 +15,9 @@
 // You should have received a copy of the GNU General Public License
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
-use sqlx::SqlitePool;
 use tauri::State;
 use crate::hardware::{detect, HardwareInfo, LlmCapability};
+use crate::config::SharedConfig;
 
 /// Returned to the frontend — extends HardwareInfo with the persisted override flag.
 #[derive(serde::Serialize)]
@@ -32,37 +32,21 @@ pub struct HardwareReport {
 /// Detect hardware capabilities and return a full report including the
 /// persisted override setting from the database.
 #[tauri::command]
-pub async fn get_hardware_info(db: State<'_, SqlitePool>) -> Result<HardwareReport, String> {
+pub async fn get_hardware_info(config: State<'_, SharedConfig>) -> Result<HardwareReport, String> {
     let info = detect().await;
-
-    let force_enabled: bool = sqlx::query_scalar::<_, String>(
-        "SELECT value FROM settings WHERE key = 'llm_force_enabled' LIMIT 1",
-    )
-    .fetch_optional(db.inner())
-    .await
-    .map_err(|e| e.to_string())?
-    .map(|v| v == "true")
-    .unwrap_or(false);
-
+    let force_enabled = config.read().unwrap().llm_force_enabled;
     Ok(HardwareReport { info, llm_force_enabled: force_enabled })
 }
 
 /// Returns true if LLM features should be active:
 /// either the hardware is capable, or the user has force-enabled.
 #[tauri::command]
-pub async fn get_llm_enabled(db: State<'_, SqlitePool>) -> Result<bool, String> {
+pub async fn get_llm_enabled(config: State<'_, SharedConfig>) -> Result<bool, String> {
     let info = detect().await;
     if info.capability == LlmCapability::Full {
         return Ok(true);
     }
-    let force: bool = sqlx::query_scalar::<_, String>(
-        "SELECT value FROM settings WHERE key = 'llm_force_enabled' LIMIT 1",
-    )
-    .fetch_optional(db.inner())
-    .await
-    .map_err(|e| e.to_string())?
-    .map(|v| v == "true")
-    .unwrap_or(false);
+    let force = config.read().unwrap().llm_force_enabled;
     Ok(force)
 }
 
