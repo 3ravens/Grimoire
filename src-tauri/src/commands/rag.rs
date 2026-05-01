@@ -17,6 +17,8 @@
 
 use sqlx::SqlitePool;
 use tauri::{Emitter, State};
+use crate::{AppError, AppResult};
+use crate::chunking::{split_sentences, chunk_sentences};
 use crate::KeyStore;
 use crate::config::SharedConfig;
 use super::{NoteRow, map_note_row};
@@ -31,102 +33,12 @@ use super::{NoteRow, map_note_row};
 // "search_document: " and queries with "search_query: " for accurate retrieval.
 // Other models may require different prefixes or none at all.
 
-pub(crate) async fn embed_document(text: &str, model: &str) -> Result<Vec<f32>, String> {
-    crate::vector::embed(&format!("search_document: {text}"), model).await
+pub(crate) async fn embed_document(text: &str, model: &str) -> AppResult<Vec<f32>> {
+    crate::vector::embed(&format!("search_document: {text}"), model).await.map_err(|e| AppError::EmbeddingFailed(e))
 }
 
-pub(crate) async fn embed_query(text: &str, model: &str) -> Result<Vec<f32>, String> {
-    crate::vector::embed(&format!("search_query: {text}"), model).await
-}
-
-/// Split a long line into smaller pieces at sentence-ending punctuation.
-/// Only splits where `. `, `! `, or `? ` is followed by an uppercase letter,
-/// which avoids false splits on abbreviations like "e.g. " or "TLS 1.3 ".
-fn split_at_punctuation(text: &str) -> Vec<String> {
-    let mut parts: Vec<String> = Vec::new();
-    let mut buf = String::new();
-    let chars: Vec<char> = text.chars().collect();
-
-    for (i, &ch) in chars.iter().enumerate() {
-        buf.push(ch);
-        if matches!(ch, '.' | '!' | '?') {
-            let next = chars.get(i + 1).copied();
-            let after = chars.get(i + 2).copied();
-            if matches!(next, Some(' ') | Some('\t'))
-                && matches!(after, Some(c) if c.is_uppercase())
-            {
-                let s = buf.trim().to_string();
-                if !s.is_empty() {
-                    parts.push(s);
-                }
-                buf.clear();
-            }
-        }
-    }
-
-    let tail = buf.trim().to_string();
-    if !tail.is_empty() {
-        parts.push(tail);
-    }
-    if parts.is_empty() {
-        parts.push(text.trim().to_string());
-    }
-    parts
-}
-
-/// Split `text` into individual sentences.
-/// First splits on newlines (one idea per line is common in notes), then
-/// further splits long lines at sentence-ending punctuation.
-pub fn split_sentences(text: &str) -> Vec<String> {
-    let mut sentences: Vec<String> = Vec::new();
-
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if line.split_whitespace().count() > 30 {
-            sentences.extend(split_at_punctuation(line));
-        } else {
-            sentences.push(line.to_string());
-        }
-    }
-
-    if sentences.is_empty() {
-        let s = text.trim().to_string();
-        if !s.is_empty() {
-            sentences.push(s);
-        }
-    }
-    sentences
-}
-
-/// Group a flat list of sentences into overlapping chunks.
-/// `per_chunk` is the number of sentences per chunk; `overlap` is how many
-/// sentences the next chunk re-uses from the end of the previous one.
-pub fn chunk_sentences(
-    sentences: Vec<String>,
-    per_chunk: usize,
-    overlap: usize,
-) -> Vec<String> {
-    if sentences.is_empty() {
-        return vec![String::new()];
-    }
-    if sentences.len() <= per_chunk {
-        return vec![sentences.join(" ")];
-    }
-    let step = per_chunk.saturating_sub(overlap).max(1);
-    let mut chunks = Vec::new();
-    let mut start = 0;
-    loop {
-        let end = (start + per_chunk).min(sentences.len());
-        chunks.push(sentences[start..end].join(" "));
-        if end == sentences.len() {
-            break;
-        }
-        start += step;
-    }
-    chunks
+pub(crate) async fn embed_query(text: &str, model: &str) -> AppResult<Vec<f32>> {
+    crate::vector::embed(&format!("search_query: {text}"), model).await.map_err(|e| AppError::EmbeddingFailed(e))
 }
 
 /// Build a "Properties: key=value, …" suffix for a note, to be appended to
@@ -174,7 +86,7 @@ pub async fn index_note(
     note_id: i64,
     title: String,
     content: String,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let props_suffix = build_properties_suffix(pool.inner(), note_id).await;
     let full_content = if props_suffix.is_empty() {
         content
@@ -186,7 +98,7 @@ pub async fn index_note(
     let raw_chunks = chunk_sentences(sentences, 1, 0);
 
     if raw_chunks.iter().all(|c| c.trim().is_empty()) {
-        return crate::vector::remove(&vdb.0, note_id).await;
+        return crate::vector::remove(&vdb.0, note_id).await.map_err(|e| AppError::VectorStore(e));
     }
 
     let model = config.read().unwrap().embedding_model.clone();
@@ -219,7 +131,7 @@ pub async fn index_note(
         .map(|((i, chunk_text), embedding)| (i as i32, chunk_text, embedding))
         .collect();
 
-    crate::vector::upsert(&vdb.0, note_id, &title, chunks).await
+    crate::vector::upsert(&vdb.0, note_id, &title, chunks).await.map_err(|e| AppError::VectorStore(e))
 }
 
 /// Remove a note from the vector index. Called when a note is deleted.
@@ -227,8 +139,8 @@ pub async fn index_note(
 pub async fn remove_note_index(
     vdb: State<'_, crate::vector::VectorDb>,
     note_id: i64,
-) -> Result<(), String> {
-    crate::vector::remove(&vdb.0, note_id).await
+) -> AppResult<()> {
+    crate::vector::remove(&vdb.0, note_id).await.map_err(|e| AppError::VectorStore(e))
 }
 
 /// Embed the query text and return the most semantically similar notes.
@@ -246,7 +158,7 @@ pub async fn search_notes(
     config: State<'_, SharedConfig>,
     query: String,
     limit: Option<usize>,
-) -> Result<Vec<crate::vector::NoteMatch>, String> {
+) -> AppResult<Vec<crate::vector::NoteMatch>> {
     let model = config.read().unwrap().embedding_model.clone();
     let embedding = embed_query(&query, &model).await?;
     let mut matches = crate::vector::search(
@@ -254,7 +166,8 @@ pub async fn search_notes(
         embedding,
         limit.unwrap_or(crate::vector::CHUNK_FETCH_LIMIT),
     )
-    .await?;
+    .await
+    .map_err(|e| AppError::VectorStore(e))?;
 
     if matches.is_empty() {
         return Ok(matches);
@@ -273,7 +186,7 @@ pub async fn search_notes(
     for id in &ids {
         q = q.bind(id);
     }
-    let rows = q.fetch_all(pool.inner()).await.map_err(|e| e.to_string())?;
+    let rows = q.fetch_all(pool.inner()).await?;
 
     // Build a map from note_id → decrypted title, skipping locked notes.
     let mut accessible: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
@@ -320,7 +233,7 @@ pub async fn reindex_all(
     keys: State<'_, KeyStore>,
     vdb: State<'_, crate::vector::VectorDb>,
     config: State<'_, SharedConfig>,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let vault_key_absent = keys.vault_key.lock()
         .map(|vk| vk.is_none())
         .unwrap_or(true);
@@ -342,7 +255,7 @@ pub async fn reindex_all(
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let folder_lock_states: std::collections::HashMap<i64, bool> = {
         let locked_rows: Vec<(i64, i64)> =
@@ -421,24 +334,24 @@ pub async fn reindex_all(
 #[tauri::command]
 pub async fn clear_notes_index(
     vdb: State<'_, crate::vector::VectorDb>,
-) -> Result<(), String> {
-    crate::vector::clear_notes_index(&vdb.0).await
+) -> AppResult<()> {
+    crate::vector::clear_notes_index(&vdb.0).await.map_err(|e| AppError::VectorStore(e))
 }
 
 /// Drop the Wikipedia vector index so it can be rebuilt with a new embedding model.
 #[tauri::command]
 pub async fn clear_wiki_index(
     vdb: State<'_, crate::vector::VectorDb>,
-) -> Result<(), String> {
-    crate::vector::clear_wiki_index(&vdb.0).await
+) -> AppResult<()> {
+    crate::vector::clear_wiki_index(&vdb.0).await.map_err(|e| AppError::VectorStore(e))
 }
 
 /// Drop the scanned-files vector index so it can be rebuilt with a new embedding model.
 #[tauri::command]
 pub async fn clear_scanned_index(
     vdb: State<'_, crate::vector::VectorDb>,
-) -> Result<(), String> {
-    crate::vector::clear_scanned_index(&vdb.0).await
+) -> AppResult<()> {
+    crate::vector::clear_scanned_index(&vdb.0).await.map_err(|e| AppError::VectorStore(e))
 }
 
 /// Debug command: returns the top 10 vector search hits with raw distance scores.
@@ -448,10 +361,10 @@ pub async fn debug_search(
     vdb: State<'_, crate::vector::VectorDb>,
     config: State<'_, SharedConfig>,
     query: String,
-) -> Result<Vec<crate::vector::RawMatch>, String> {
+) -> AppResult<Vec<crate::vector::RawMatch>> {
     let model = config.read().unwrap().embedding_model.clone();
     let embedding = embed_query(&query, &model).await?;
-    crate::vector::raw_search(&vdb.0, embedding, 10).await
+    crate::vector::raw_search(&vdb.0, embedding, 10).await.map_err(|e| AppError::VectorStore(e))
 }
 
 /// Debug command: returns top Wikipedia search hits with raw distance scores, no filtering.
@@ -461,10 +374,10 @@ pub async fn debug_search_wikipedia(
     vdb: State<'_, crate::vector::VectorDb>,
     config: State<'_, SharedConfig>,
     query: String,
-) -> Result<Vec<crate::vector::RawMatch>, String> {
+) -> AppResult<Vec<crate::vector::RawMatch>> {
     let model = config.read().unwrap().embedding_model.clone();
     let embedding = embed_query(&query, &model).await?;
-    crate::vector::raw_wikipedia_search(&vdb.0, embedding, 10).await
+    crate::vector::raw_wikipedia_search(&vdb.0, embedding, 10).await.map_err(|e| AppError::VectorStore(e))
 }
 
 /// Insert a set of varied seed notes and index them all.
@@ -475,7 +388,7 @@ pub async fn seed_notes(
     pool: State<'_, SqlitePool>,
     vdb: State<'_, crate::vector::VectorDb>,
     config: State<'_, SharedConfig>,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let seeds: &[(&str, &str)] = &[
         (
             "Rust ownership and borrowing",
@@ -581,7 +494,7 @@ pub async fn seed_notes(
         .bind(content)
         .fetch_one(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
         count += 1;
 
         // Embedding is best-effort: seeding should work even without Ollama
@@ -616,14 +529,14 @@ pub async fn seed_notes(
 /// property, and a set of notes spread across the Status columns.
 /// Called at the end of seed_notes; extracted for readability.
 #[cfg(debug_assertions)]
-async fn seed_kanban_folder(pool: &SqlitePool) -> Result<(), String> {
+async fn seed_kanban_folder(pool: &SqlitePool) -> AppResult<()> {
     // Create the folder.
     let folder_id: i64 = sqlx::query_scalar(
         "INSERT INTO folders (name) VALUES ('Kanban Demo') RETURNING id",
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     // Create "Status" select property (position 0).
     let status_options = r#"["Todo","In Progress","Review","Done"]"#;
@@ -635,7 +548,7 @@ async fn seed_kanban_folder(pool: &SqlitePool) -> Result<(), String> {
     .bind(status_options)
     .fetch_one(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     // Create "Priority" select property (position 1).
     let priority_options = r#"["Low","Medium","High"]"#;
@@ -647,7 +560,7 @@ async fn seed_kanban_folder(pool: &SqlitePool) -> Result<(), String> {
     .bind(priority_options)
     .fetch_one(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     // Notes: (title, content, status, priority)
     let notes: &[(&str, &str, &str, &str)] = &[
@@ -717,7 +630,7 @@ async fn seed_kanban_folder(pool: &SqlitePool) -> Result<(), String> {
         .bind(folder_id)
         .fetch_one(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
         // Set Status property.
         sqlx::query(
@@ -729,7 +642,7 @@ async fn seed_kanban_folder(pool: &SqlitePool) -> Result<(), String> {
         .bind(status)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
         // Set Priority property.
         sqlx::query(
@@ -741,7 +654,7 @@ async fn seed_kanban_folder(pool: &SqlitePool) -> Result<(), String> {
         .bind(priority)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
     }
 
     Ok(())

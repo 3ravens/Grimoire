@@ -20,6 +20,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
 use crate::KeyStore;
+use crate::AppResult;
 use super::{NoteRow, Note, map_note_row, resolve_key};
 
 // ---------------------------------------------------------------------------
@@ -80,7 +81,7 @@ struct DateCount {
 #[tauri::command]
 pub async fn get_activity_heatmap(
     pool: State<'_, SqlitePool>,
-) -> Result<Vec<ActivityDay>, String> {
+) -> AppResult<Vec<ActivityDay>> {
     let created: Vec<DateCount> = sqlx::query_as(
         "SELECT date(created_at, 'unixepoch') AS date, COUNT(*) AS cnt
          FROM notes
@@ -90,7 +91,7 @@ pub async fn get_activity_heatmap(
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let modified: Vec<DateCount> = sqlx::query_as(
         "SELECT date(updated_at, 'unixepoch') AS date, COUNT(*) AS cnt
@@ -102,7 +103,7 @@ pub async fn get_activity_heatmap(
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let mut map: HashMap<String, ActivityDay> = HashMap::new();
 
@@ -140,7 +141,7 @@ pub async fn get_notes_for_day(
     pool: State<'_, SqlitePool>,
     keys: State<'_, KeyStore>,
     date_str: String,
-) -> Result<Vec<Note>, String> {
+) -> AppResult<Vec<Note>> {
     let rows: Vec<NoteRow> = sqlx::query_as(
         "SELECT id, title, content, folder_id, created_at, updated_at
          FROM notes
@@ -150,7 +151,7 @@ pub async fn get_notes_for_day(
     .bind(&date_str)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let folder_lock_states: HashMap<i64, bool> = {
         let locked_rows: Vec<(i64, i64)> = sqlx::query_as("SELECT id, locked FROM folders")
@@ -192,7 +193,7 @@ pub async fn get_or_create_daily_note(
     keys: State<'_, KeyStore>,
     date_str: String,
     date_format: Option<String>,
-) -> Result<Note, String> {
+) -> AppResult<Note> {
     let vault_key = resolve_key(None, &keys);
     let fmt = date_format.as_deref().unwrap_or("DD-MM-YYYY");
     // Title stored in the note (e.g. "06-04-2026" for DD-MM-YYYY).
@@ -204,7 +205,7 @@ pub async fn get_or_create_daily_note(
         sqlx::query_as("SELECT id, name FROM folders WHERE parent_id IS NULL")
             .fetch_all(pool.inner())
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
 
     let daily_folder_id = folder_rows.iter().find(|(_, enc_name)| {
         let name = if let Some(key) = vault_key {
@@ -231,7 +232,7 @@ pub async fn get_or_create_daily_note(
         .bind(&stored_name)
         .fetch_one(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
         id
     };
 
@@ -244,7 +245,7 @@ pub async fn get_or_create_daily_note(
     .bind(folder_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let existing = note_rows.into_iter().find(|row| {
         let title = if let Some(key) = vault_key {
@@ -276,7 +277,7 @@ pub async fn get_or_create_daily_note(
     .bind(folder_id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let note = map_note_row(row, false, &keys);
     super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
@@ -293,12 +294,12 @@ pub async fn create_daily_note(
     pool: State<'_, SqlitePool>,
     keys: State<'_, KeyStore>,
     date_format: Option<String>,
-) -> Result<Note, String> {
+) -> AppResult<Note> {
     // Get today's date in ISO format from SQLite (UTC).
     let (iso_date,): (String,) = sqlx::query_as("SELECT date('now')")
         .fetch_one(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let vault_key = resolve_key(None, &keys);
     let fmt = date_format.as_deref().unwrap_or("DD-MM-YYYY");
@@ -310,7 +311,7 @@ pub async fn create_daily_note(
         sqlx::query_as("SELECT id, name FROM folders WHERE parent_id IS NULL")
             .fetch_all(pool.inner())
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
 
     let daily_folder_id = folder_rows.iter().find(|(_, enc_name)| {
         let name = if let Some(key) = vault_key {
@@ -337,7 +338,7 @@ pub async fn create_daily_note(
         .bind(&stored_name)
         .fetch_one(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
         id
     };
 
@@ -350,7 +351,7 @@ pub async fn create_daily_note(
     .bind(folder_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let existing_titles: Vec<String> = note_rows.iter().map(|row| {
         if let Some(key) = vault_key {
@@ -393,7 +394,7 @@ pub async fn create_daily_note(
     .bind(folder_id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let note = map_note_row(row, false, &keys);
     super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;

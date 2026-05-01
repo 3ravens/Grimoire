@@ -23,17 +23,18 @@
 use sqlx::SqlitePool;
 use tauri::State;
 use crate::config::SharedConfig;
+use crate::AppResult;
 
 /// Read a setting value by key. Returns an empty string if the key is absent.
 #[tauri::command]
-pub async fn get_setting(key: String, db: State<'_, SqlitePool>) -> Result<String, String> {
+pub async fn get_setting(key: String, db: State<'_, SqlitePool>) -> AppResult<String> {
     let value = sqlx::query_scalar::<_, String>(
         "SELECT value FROM settings WHERE key = ?1 LIMIT 1",
     )
     .bind(&key)
     .fetch_optional(db.inner())
     .await
-    .map_err(|e| e.to_string())?
+    ?
     .unwrap_or_default();
 
     Ok(value)
@@ -41,14 +42,14 @@ pub async fn get_setting(key: String, db: State<'_, SqlitePool>) -> Result<Strin
 
 /// Write (upsert) a setting value.
 #[tauri::command]
-pub async fn set_setting(key: String, value: String, db: State<'_, SqlitePool>, config: State<'_, SharedConfig>) -> Result<(), String> {
+pub async fn set_setting(key: String, value: String, db: State<'_, SqlitePool>, config: State<'_, SharedConfig>) -> AppResult<()> {
     log::info!("[set_setting] key={key}");
     sqlx::query("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
         .bind(&key)
         .bind(&value)
         .execute(db.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     config.write().unwrap().apply_change(&key, &value);
 

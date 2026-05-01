@@ -18,6 +18,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::State;
+use crate::{AppError, AppResult};
 use super::properties::{get_property_defs, PropertyDef};
 
 // ---------------------------------------------------------------------------
@@ -108,13 +109,13 @@ fn builtin_templates() -> Vec<Template> {
 
 /// Return all templates: built-ins first, then user-created ones from SQLite.
 #[tauri::command]
-pub async fn list_templates(pool: State<'_, SqlitePool>) -> Result<Vec<Template>, String> {
+pub async fn list_templates(pool: State<'_, SqlitePool>) -> AppResult<Vec<Template>> {
     let rows = sqlx::query_as::<_, TemplateRow>(
         "SELECT id, name, title, content, properties FROM templates ORDER BY name ASC",
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let mut result = builtin_templates();
     result.extend(rows.into_iter().map(|r| {
@@ -140,9 +141,9 @@ pub async fn create_template(
     title: String,
     content: String,
     properties: Vec<TemplatePropertySpec>,
-) -> Result<Template, String> {
+) -> AppResult<Template> {
     let props_json = serde_json::to_string(&properties)
-        .map_err(|e| format!("Failed to serialize properties: {e}"))?;
+        .map_err(|e| AppError::InvalidInput(format!("Failed to serialize properties: {e}")))?;
 
     let row = sqlx::query_as::<_, TemplateRow>(
         "INSERT INTO templates (name, title, content, properties) VALUES (?, ?, ?, ?)
@@ -154,7 +155,7 @@ pub async fn create_template(
     .bind(&props_json)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let props = row.parse_properties();
     Ok(Template {
@@ -177,13 +178,13 @@ pub async fn update_template(
     title: String,
     content: String,
     properties: Vec<TemplatePropertySpec>,
-) -> Result<Template, String> {
+) -> AppResult<Template> {
     if id <= 0 {
-        return Err("Built-in templates cannot be edited.".to_string());
+        return Err(AppError::InvalidInput("Built-in templates cannot be edited.".to_string()));
     }
 
     let props_json = serde_json::to_string(&properties)
-        .map_err(|e| format!("Failed to serialize properties: {e}"))?;
+        .map_err(|e| AppError::InvalidInput(format!("Failed to serialize properties: {e}")))?;
 
     let row = sqlx::query_as::<_, TemplateRow>(
         "UPDATE templates SET name = ?, title = ?, content = ?, properties = ? WHERE id = ?
@@ -196,7 +197,7 @@ pub async fn update_template(
     .bind(id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let props = row.parse_properties();
     Ok(Template {
@@ -212,16 +213,16 @@ pub async fn update_template(
 /// Delete a user-created template by id.
 /// Returns an error if `id` is negative (built-in templates cannot be deleted).
 #[tauri::command]
-pub async fn delete_template(pool: State<'_, SqlitePool>, id: i64) -> Result<(), String> {
+pub async fn delete_template(pool: State<'_, SqlitePool>, id: i64) -> AppResult<()> {
     if id <= 0 {
-        return Err("Built-in templates cannot be deleted.".to_string());
+        return Err(AppError::InvalidInput("Built-in templates cannot be deleted.".to_string()));
     }
 
     sqlx::query("DELETE FROM templates WHERE id = ?")
         .bind(id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     Ok(())
 }
@@ -239,7 +240,7 @@ pub async fn apply_template_to_note(
     note_id: i64,
     folder_id: i64,
     template_id: i64,
-) -> Result<Vec<PropertyDef>, String> {
+) -> AppResult<Vec<PropertyDef>> {
     // Built-in templates (negative IDs) carry no property specs — nothing to do.
     if template_id <= 0 {
         return get_property_defs(pool, folder_id).await;
@@ -251,7 +252,7 @@ pub async fn apply_template_to_note(
     .bind(template_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let specs = row.map(|r| r.parse_properties()).unwrap_or_default();
 
@@ -285,7 +286,7 @@ pub async fn apply_template_to_note(
         .bind(template_id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
         // Find the def id (just inserted or pre-existing).
         let def_id: i64 = sqlx::query_scalar(
@@ -295,7 +296,7 @@ pub async fn apply_template_to_note(
         .bind(&spec.name)
         .fetch_one(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
         // If the def existed before tracking was introduced (template_id IS NULL),
         // stamp it now — retroactively linking it to this template.
@@ -306,7 +307,7 @@ pub async fn apply_template_to_note(
         .bind(def_id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
         // Seed an empty note_properties row so this note "owns" the property.
         sqlx::query(
@@ -316,7 +317,7 @@ pub async fn apply_template_to_note(
         .bind(def_id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
     }
 
     // Stamp the note so future auto-syncs can find it.
@@ -325,7 +326,7 @@ pub async fn apply_template_to_note(
         .bind(note_id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     get_property_defs(pool, folder_id).await
 }
@@ -348,7 +349,7 @@ pub async fn apply_template_to_note(
 pub async fn sync_template_to_notes(
     pool: State<'_, SqlitePool>,
     template_id: i64,
-) -> Result<String, String> {
+) -> AppResult<String> {
     if template_id <= 0 {
         return Ok("Built-in templates cannot be synced.".to_string());
     }
@@ -360,7 +361,7 @@ pub async fn sync_template_to_notes(
     .bind(template_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let specs = match row {
         Some(r) => r.parse_properties(),
@@ -374,7 +375,7 @@ pub async fn sync_template_to_notes(
     .bind(template_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let mut total_folders = 0i64;
     let mut total_notes = 0i64;
@@ -410,9 +411,9 @@ pub async fn apply_template_to_folder(
     pool: State<'_, SqlitePool>,
     template_id: i64,
     folder_id: i64,
-) -> Result<String, String> {
+) -> AppResult<String> {
     if template_id <= 0 {
-        return Err("Built-in templates cannot be synced to a folder.".to_string());
+        return Err(AppError::InvalidInput("Built-in templates cannot be synced to a folder.".to_string()));
     }
 
     let row: Option<TemplateRow> = sqlx::query_as(
@@ -421,11 +422,11 @@ pub async fn apply_template_to_folder(
     .bind(template_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let specs = match row {
         Some(r) => r.parse_properties(),
-        None => return Err("Template not found.".to_string()),
+        None => return Err(AppError::NotFound("Template not found.".to_string())),
     };
 
     let seeded = sync_specs_to_folder(pool.inner(), &specs, folder_id, template_id).await?;
@@ -438,7 +439,7 @@ pub async fn apply_template_to_folder(
     .bind(folder_id)
     .execute(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     Ok(format!("Applied template to folder. {} note(s) updated.", seeded))
 }
@@ -453,7 +454,7 @@ async fn sync_specs_to_folder(
     specs: &[TemplatePropertySpec],
     folder_id: i64,
     template_id: i64,
-) -> Result<i64, String> {
+) -> AppResult<i64> {
     let mut seeded_total: i64 = 0;
 
     for spec in specs {
@@ -469,7 +470,7 @@ async fn sync_specs_to_folder(
         .bind(&spec.name)
         .fetch_optional(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
         let def_id: i64 = if let Some((id, _)) = existing {
             // Def exists — update its options (e.g. new select options added to the template)
@@ -483,7 +484,7 @@ async fn sync_specs_to_folder(
             .bind(id)
             .execute(pool)
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
             id
         } else {
             // Def is new — insert it at the end of this folder's column list.
@@ -508,14 +509,14 @@ async fn sync_specs_to_folder(
             .bind(template_id)
             .execute(pool)
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
 
             sqlx::query_scalar("SELECT id FROM property_defs WHERE folder_id = ? AND name = ?")
                 .bind(folder_id)
                 .bind(&spec.name)
                 .fetch_one(pool)
                 .await
-                .map_err(|e| e.to_string())?
+                ?
         };
 
         // Seed empty note_properties rows for every note in this folder that
@@ -534,7 +535,7 @@ async fn sync_specs_to_folder(
         .bind(def_id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
         seeded_total += result.rows_affected() as i64;
     }

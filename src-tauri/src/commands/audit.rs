@@ -20,6 +20,7 @@
 use sqlx::SqlitePool;
 use tauri::State;
 use crate::audit::AuditEntry;
+use crate::AppResult;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -69,7 +70,7 @@ pub async fn get_audit_log(
     page_size: Option<i64>,
     action_filter: Option<String>,
     search: Option<String>,
-) -> Result<Vec<AuditEntry>, String> {
+) -> AppResult<Vec<AuditEntry>> {
     let page      = page.unwrap_or(1).max(1);
     let page_size = page_size.unwrap_or(25).clamp(1, 100);
     let offset    = (page - 1) * page_size;
@@ -100,7 +101,7 @@ pub async fn get_audit_log(
         .bind(offset)
         .fetch_all(pool.inner())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(Into::into)
 }
 
 /// Count the total number of entries matching the same filters as `get_audit_log`.
@@ -110,7 +111,7 @@ pub async fn get_audit_log_count(
     pool: State<'_, SqlitePool>,
     action_filter: Option<String>,
     search: Option<String>,
-) -> Result<i64, String> {
+) -> AppResult<i64> {
     let action_in = action_group_to_in(action_filter.as_deref());
 
     let like_pat: Option<String> = search
@@ -130,16 +131,16 @@ pub async fn get_audit_log_count(
         .bind(like_pat.as_deref())
         .fetch_one(pool.inner())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(Into::into)
 }
 
 /// Permanently delete all audit log entries.
 /// This action is irreversible — the frontend must ask for confirmation first.
 #[tauri::command]
-pub async fn clear_audit_log(pool: State<'_, SqlitePool>) -> Result<(), String> {
+pub async fn clear_audit_log(pool: State<'_, SqlitePool>) -> AppResult<()> {
     sqlx::query("DELETE FROM audit_log")
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
     Ok(())
 }

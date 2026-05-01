@@ -115,5 +115,5 @@
   </button>
 {/if}
 <button class="seed-btn" onclick={onReindexAll} disabled={isReindexing}>
-  {isReindexing ? 'Indexing…' : 'Re-index all'}
+  {isReindexing ? 'Indexing…' : 'Re-index all notes'}
 </button>

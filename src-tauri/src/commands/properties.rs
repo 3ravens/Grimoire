@@ -19,6 +19,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
 use crate::KeyStore;
+use crate::{AppError, AppResult};
 use super::{NoteRow, map_note_row};
 
 // ---------------------------------------------------------------------------
@@ -59,7 +60,7 @@ pub struct NoteProperty {
 pub async fn get_property_defs(
     pool: State<'_, SqlitePool>,
     folder_id: i64,
-) -> Result<Vec<PropertyDef>, String> {
+) -> AppResult<Vec<PropertyDef>> {
     let defs = sqlx::query_as::<_, PropertyDef>(
         "SELECT id, folder_id, name, type, options, position
          FROM property_defs
@@ -69,7 +70,7 @@ pub async fn get_property_defs(
     .bind(folder_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
     Ok(defs)
 }
 
@@ -81,10 +82,10 @@ pub async fn create_property_def(
     name: String,
     r#type: String,
     options: Option<String>,
-) -> Result<PropertyDef, String> {
+) -> AppResult<PropertyDef> {
     // Validate type
     if !["text", "number", "date", "boolean", "select"].contains(&r#type.as_str()) {
-        return Err(format!("Invalid property type: {}", r#type));
+        return Err(AppError::InvalidInput(format!("Invalid property type: {}", r#type)));
     }
 
     // Auto-assign position as max+1
@@ -94,7 +95,7 @@ pub async fn create_property_def(
     .bind(folder_id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let position = max_pos.unwrap_or(-1) + 1;
 
@@ -110,7 +111,7 @@ pub async fn create_property_def(
     .bind(position)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     Ok(def)
 }
@@ -123,9 +124,9 @@ pub async fn update_property_def(
     name: String,
     r#type: String,
     options: Option<String>,
-) -> Result<PropertyDef, String> {
+) -> AppResult<PropertyDef> {
     if !["text", "number", "date", "boolean", "select"].contains(&r#type.as_str()) {
-        return Err(format!("Invalid property type: {}", r#type));
+        return Err(AppError::InvalidInput(format!("Invalid property type: {}", r#type)));
     }
 
     let def = sqlx::query_as::<_, PropertyDef>(
@@ -138,19 +139,19 @@ pub async fn update_property_def(
     .bind(id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     Ok(def)
 }
 
 /// Delete a property definition. Cascades to all note_properties rows.
 #[tauri::command]
-pub async fn delete_property_def(pool: State<'_, SqlitePool>, id: i64) -> Result<(), String> {
+pub async fn delete_property_def(pool: State<'_, SqlitePool>, id: i64) -> AppResult<()> {
     sqlx::query("DELETE FROM property_defs WHERE id = ?")
         .bind(id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
     Ok(())
 }
 
@@ -161,7 +162,7 @@ pub async fn reorder_property_def(
     pool: State<'_, SqlitePool>,
     id: i64,
     new_position: i64,
-) -> Result<(), String> {
+) -> AppResult<()> {
     // Get the def's folder_id so we can reorder within that folder.
     let folder_id: i64 = sqlx::query_scalar(
         "SELECT folder_id FROM property_defs WHERE id = ?",
@@ -169,7 +170,7 @@ pub async fn reorder_property_def(
     .bind(id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     // Shift everything at or after the target position up by 1.
     sqlx::query(
@@ -181,7 +182,7 @@ pub async fn reorder_property_def(
     .bind(new_position)
     .execute(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     // Place our def at the target position.
     sqlx::query("UPDATE property_defs SET position = ? WHERE id = ?")
@@ -189,7 +190,7 @@ pub async fn reorder_property_def(
         .bind(id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     Ok(())
 }
@@ -201,7 +202,7 @@ pub async fn reorder_property_def(
 pub async fn get_note_properties(
     pool: State<'_, SqlitePool>,
     note_id: i64,
-) -> Result<Vec<NoteProperty>, String> {
+) -> AppResult<Vec<NoteProperty>> {
     let props = sqlx::query_as::<_, NoteProperty>(
         "SELECT pd.id AS def_id, pd.name, pd.type, pd.options, np.value
          FROM note_properties np
@@ -212,7 +213,7 @@ pub async fn get_note_properties(
     .bind(note_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
     Ok(props)
 }
 
@@ -223,7 +224,7 @@ pub async fn set_note_property(
     note_id: i64,
     def_id: i64,
     value: String,
-) -> Result<(), String> {
+) -> AppResult<()> {
     sqlx::query(
         "INSERT INTO note_properties (note_id, def_id, value) VALUES (?, ?, ?)
          ON CONFLICT(note_id, def_id) DO UPDATE SET value = excluded.value",
@@ -233,7 +234,7 @@ pub async fn set_note_property(
     .bind(&value)
     .execute(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
     Ok(())
 }
 
@@ -255,7 +256,7 @@ pub async fn list_notes_with_properties(
     pool: State<'_, SqlitePool>,
     keys: State<'_, KeyStore>,
     folder_id: i64,
-) -> Result<Vec<NoteWithProperties>, String> {
+) -> AppResult<Vec<NoteWithProperties>> {
     // Fetch notes in the folder.
     let rows = sqlx::query_as::<_, NoteRow>(
         "SELECT id, title, content, folder_id, created_at, updated_at
@@ -264,14 +265,14 @@ pub async fn list_notes_with_properties(
     .bind(folder_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let folder_locked = {
         let v: i64 = sqlx::query_scalar("SELECT locked FROM folders WHERE id = ?")
             .bind(folder_id)
             .fetch_optional(pool.inner())
             .await
-            .map_err(|e| e.to_string())?
+            ?
             .unwrap_or(0);
         v != 0
     };
@@ -295,7 +296,7 @@ pub async fn list_notes_with_properties(
         .bind(folder_id)
         .fetch_all(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
         result.push(NoteWithProperties {
             id: note.id,

@@ -18,6 +18,7 @@
 use sqlx::SqlitePool;
 use tauri::State;
 use crate::KeyStore;
+use crate::{AppError, AppResult};
 use super::{NoteRow, Note, FolderRow, Folder, resolve_key, folder_is_locked, map_note_row, map_folder_row};
 
 // ---------------------------------------------------------------------------
@@ -31,7 +32,7 @@ pub async fn create_note(
     keys: State<'_, KeyStore>,
     title: String,
     folder_id: Option<i64>,
-) -> Result<Note, String> {
+) -> AppResult<Note> {
     let stored_title = if let Some(key) = resolve_key(folder_id, &keys) {
         crate::crypto::encrypt(&key, title.as_bytes())
     } else {
@@ -46,7 +47,7 @@ pub async fn create_note(
     .bind(folder_id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let note = map_note_row(row, false, &keys);
     if !note.locked {
@@ -65,7 +66,7 @@ pub async fn get_note(
     pool: State<'_, SqlitePool>,
     keys: State<'_, KeyStore>,
     id: i64,
-) -> Result<Note, String> {
+) -> AppResult<Note> {
     let row = sqlx::query_as::<_, NoteRow>(
         "SELECT id, title, content, folder_id, created_at, updated_at
          FROM notes WHERE id = ?",
@@ -73,14 +74,14 @@ pub async fn get_note(
     .bind(id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let folder_locked = if let Some(fid) = row.folder_id {
         let v: i64 = sqlx::query_scalar("SELECT locked FROM folders WHERE id = ?")
             .bind(fid)
             .fetch_optional(pool.inner())
             .await
-            .map_err(|e| e.to_string())?
+            ?
             .unwrap_or(0);
         v != 0
     } else {
@@ -104,7 +105,7 @@ pub async fn list_notes(
     keys: State<'_, KeyStore>,
     folder_id: Option<i64>,
     all: Option<bool>,
-) -> Result<Vec<Note>, String> {
+) -> AppResult<Vec<Note>> {
     let rows = if all.unwrap_or(false) {
         sqlx::query_as::<_, NoteRow>(
             "SELECT id, title, content, folder_id, created_at, updated_at
@@ -112,7 +113,7 @@ pub async fn list_notes(
         )
         .fetch_all(pool.inner())
         .await
-        .map_err(|e| e.to_string())?
+        ?
     } else {
         sqlx::query_as::<_, NoteRow>(
             "SELECT id, title, content, folder_id, created_at, updated_at
@@ -121,7 +122,7 @@ pub async fn list_notes(
         .bind(folder_id)
         .fetch_all(pool.inner())
         .await
-        .map_err(|e| e.to_string())?
+        ?
     };
 
     let folder_lock_states: std::collections::HashMap<i64, bool> = {
@@ -154,13 +155,13 @@ pub async fn update_note(
     id: i64,
     title: String,
     content: String,
-) -> Result<Note, String> {
+) -> AppResult<Note> {
     let current: Option<(Option<i64>,)> =
         sqlx::query_as("SELECT folder_id FROM notes WHERE id = ?")
             .bind(id)
             .fetch_optional(pool.inner())
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
 
     let folder_id = current.and_then(|(fid,)| fid);
 
@@ -169,7 +170,7 @@ pub async fn update_note(
             .bind(fid)
             .fetch_optional(pool.inner())
             .await
-            .map_err(|e| e.to_string())?
+            ?
             .unwrap_or(0);
         v != 0
     } else {
@@ -177,7 +178,7 @@ pub async fn update_note(
     };
 
     if folder_id.map(|fid| folder_is_locked(fid, folder_locked, &keys)).unwrap_or(false) {
-        return Err("folder_locked".to_string());
+        return Err(AppError::Auth("folder_locked".to_string()));
     }
 
     let (stored_title, stored_content) = if let Some(key) = resolve_key(folder_id, &keys) {
@@ -200,7 +201,7 @@ pub async fn update_note(
     .bind(id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let note = map_note_row(row, folder_locked, &keys);
     if !note.locked {
@@ -220,7 +221,7 @@ pub async fn move_note(
     keys: State<'_, KeyStore>,
     id: i64,
     folder_id: Option<i64>,
-) -> Result<Note, String> {
+) -> AppResult<Note> {
     let row = sqlx::query_as::<_, NoteRow>(
         "UPDATE notes
          SET folder_id = ?, updated_at = unixepoch()
@@ -231,7 +232,7 @@ pub async fn move_note(
     .bind(id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let note = map_note_row(row, false, &keys);
     let _ = crate::audit::log_event(
@@ -248,14 +249,14 @@ pub async fn rename_note(
     keys: State<'_, KeyStore>,
     id: i64,
     name: String,
-) -> Result<Note, String> {
+) -> AppResult<Note> {
     // Fetch the current folder so we know whether to encrypt.
     let current: Option<(Option<i64>,)> =
         sqlx::query_as("SELECT folder_id FROM notes WHERE id = ?")
             .bind(id)
             .fetch_optional(pool.inner())
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
 
     let folder_id = current.and_then(|(fid,)| fid);
     let stored_title = if let Some(key) = resolve_key(folder_id, &keys) {
@@ -272,7 +273,7 @@ pub async fn rename_note(
     .bind(id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let note = map_note_row(row, false, &keys);
     super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
@@ -285,12 +286,12 @@ pub async fn rename_note(
 
 /// Delete a note. Returns nothing on success.
 #[tauri::command]
-pub async fn delete_note(pool: State<'_, SqlitePool>, id: i64) -> Result<(), String> {
+pub async fn delete_note(pool: State<'_, SqlitePool>, id: i64) -> AppResult<()> {
     sqlx::query("DELETE FROM notes WHERE id = ?")
         .bind(id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     super::search::fts_delete(pool.inner(), id).await;
     let _ = crate::audit::log_event(
@@ -307,7 +308,7 @@ pub async fn duplicate_note(
     pool: State<'_, SqlitePool>,
     keys: State<'_, KeyStore>,
     id: i64,
-) -> Result<Note, String> {
+) -> AppResult<Note> {
     // Fetch the raw row first so we can decrypt it.
     let src_row = sqlx::query_as::<_, NoteRow>(
         "SELECT id, title, content, folder_id, created_at, updated_at FROM notes WHERE id = ?",
@@ -315,7 +316,7 @@ pub async fn duplicate_note(
     .bind(id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let folder_id = src_row.folder_id;
 
@@ -325,7 +326,7 @@ pub async fn duplicate_note(
             .bind(fid)
             .fetch_optional(pool.inner())
             .await
-            .map_err(|e| e.to_string())?
+            ?
             .unwrap_or(0);
         v != 0
     } else {
@@ -333,7 +334,7 @@ pub async fn duplicate_note(
     };
 
     if folder_id.map(|fid| folder_is_locked(fid, folder_locked, &keys)).unwrap_or(false) {
-        return Err("note_locked".to_string());
+        return Err(AppError::Auth("note_locked".to_string()));
     }
 
     // Decrypt source title and content.
@@ -362,7 +363,7 @@ pub async fn duplicate_note(
     .bind(folder_id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let note = map_note_row(row, false, &keys);
     if !note.locked {
@@ -386,7 +387,7 @@ pub async fn create_folder(
     keys: State<'_, KeyStore>,
     name: String,
     parent_id: Option<i64>,
-) -> Result<Folder, String> {
+) -> AppResult<Folder> {
     let stored_name = if let Some(key) = resolve_key(None, &keys) {
         crate::crypto::encrypt(&key, name.as_bytes())
     } else {
@@ -401,7 +402,7 @@ pub async fn create_folder(
     .bind(parent_id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let folder = map_folder_row(row, &keys);
     let _ = crate::audit::log_event(
@@ -416,13 +417,13 @@ pub async fn create_folder(
 pub async fn list_folders(
     pool: State<'_, SqlitePool>,
     keys: State<'_, KeyStore>,
-) -> Result<Vec<Folder>, String> {
+) -> AppResult<Vec<Folder>> {
     let rows = sqlx::query_as::<_, FolderRow>(
         "SELECT id, name, parent_id, created_at, locked FROM folders ORDER BY name ASC",
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     Ok(rows.into_iter().map(|r| map_folder_row(r, &keys)).collect())
 }
@@ -434,7 +435,7 @@ pub async fn rename_folder(
     keys: State<'_, KeyStore>,
     id: i64,
     name: String,
-) -> Result<Folder, String> {
+) -> AppResult<Folder> {
     let stored_name = if let Some(key) = resolve_key(None, &keys) {
         crate::crypto::encrypt(&key, name.as_bytes())
     } else {
@@ -449,7 +450,7 @@ pub async fn rename_folder(
     .bind(id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let folder = map_folder_row(row, &keys);
     let _ = crate::audit::log_event(
@@ -462,12 +463,12 @@ pub async fn rename_folder(
 /// Delete a folder. Child folders and notes are handled by ON DELETE CASCADE
 /// and ON DELETE SET NULL respectively (defined in the migration).
 #[tauri::command]
-pub async fn delete_folder(pool: State<'_, SqlitePool>, id: i64) -> Result<(), String> {
+pub async fn delete_folder(pool: State<'_, SqlitePool>, id: i64) -> AppResult<()> {
     sqlx::query("DELETE FROM folders WHERE id = ?")
         .bind(id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let _ = crate::audit::log_event(
         pool.inner(), "folder_delete", Some("folder"),
@@ -484,11 +485,11 @@ pub async fn move_folder(
     pool: State<'_, SqlitePool>,
     id: i64,
     new_parent_id: Option<i64>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     // A folder cannot be moved into itself or into one of its own descendants.
     if let Some(target) = new_parent_id {
         if target == id {
-            return Err("A folder cannot be its own parent".to_string());
+            return Err(AppError::InvalidInput("A folder cannot be its own parent".to_string()));
         }
         // Walk the ancestor chain of `target` upward; if we ever reach `id` then
         // the proposed parent is a descendant — reject it.
@@ -504,10 +505,10 @@ pub async fn move_folder(
         .bind(id)
         .fetch_all(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
         if descendant_ids.iter().any(|(did,)| *did == target) {
-            return Err("Cannot move a folder into one of its own descendants".to_string());
+            return Err(AppError::InvalidInput("Cannot move a folder into one of its own descendants".to_string()));
         }
     }
 
@@ -516,7 +517,7 @@ pub async fn move_folder(
         .bind(id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     Ok(())
 }
@@ -534,7 +535,7 @@ pub async fn export_notes(
     pool: State<'_, SqlitePool>,
     keys: State<'_, KeyStore>,
     dest_dir: String,
-) -> Result<u32, String> {
+) -> AppResult<u32> {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -544,7 +545,7 @@ pub async fn export_notes(
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     // Build a map from folder ID to its display name (decrypted).
     let folder_names: HashMap<i64, String> = folder_rows
@@ -561,7 +562,7 @@ pub async fn export_notes(
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let dest = PathBuf::from(&dest_dir);
 
@@ -589,7 +590,7 @@ pub async fn export_notes(
                 .bind(fid)
                 .fetch_optional(pool.inner())
                 .await
-                .map_err(|e| e.to_string())?
+                ?
                 .unwrap_or(0);
             super::folder_is_locked(fid, locked_col != 0, &keys)
         } else {
@@ -617,7 +618,7 @@ pub async fn export_notes(
         };
 
         std::fs::create_dir_all(&out_dir)
-            .map_err(|e| format!("Could not create directory {}: {e}", out_dir.display()))?;
+            .map_err(|e| AppError::Io(format!("Could not create directory {}: {e}", out_dir.display())))?;
 
         // Build the output file path, sanitising the title.
         let safe_title = sanitise_path_component(&note.title);
@@ -634,7 +635,7 @@ pub async fn export_notes(
         }
 
         std::fs::write(&file_path, &note.content)
-            .map_err(|e| format!("Could not write {}: {e}", file_path.display()))?;
+            .map_err(|e| AppError::Io(format!("Could not write {}: {e}", file_path.display())))?;
 
         exported += 1;
     }

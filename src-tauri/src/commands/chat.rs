@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use futures::StreamExt;
 use sqlx::SqlitePool;
 use tauri::State;
+use crate::{AppError, AppResult};
 
 // ---------------------------------------------------------------------------
 // Chat (Ollama)
@@ -103,7 +104,7 @@ pub async fn chat(
     top_k: i32,
     repeat_penalty: f32,
     num_ctx: i32,
-) -> Result<(), String> {
+) -> AppResult<()> {
     use tauri::Emitter;
 
     // Capture the last user message for the audit log before the messages vec is moved.
@@ -129,12 +130,12 @@ pub async fn chat(
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("Could not reach Ollama — is it running? ({e})"))?;
+        .map_err(|e| AppError::OllamaUnavailable(format!("Could not reach Ollama — is it running? ({e})")))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Ollama returned {status}: {body}"));
+        return Err(AppError::OllamaUnavailable(format!("Ollama returned {status}: {body}")));
     }
 
     // Ollama streams NDJSON: one JSON object per line, terminated by a final
@@ -143,8 +144,8 @@ pub async fn chat(
     let mut line_buf = String::new();
 
     while let Some(chunk) = stream.next().await {
-        let bytes = chunk.map_err(|e| format!("Stream read error: {e}"))?;
-        let text = std::str::from_utf8(&bytes).map_err(|e| format!("UTF-8 error: {e}"))?;
+        let bytes = chunk.map_err(|e| AppError::OllamaUnavailable(format!("Stream read error: {e}")))?;
+        let text = std::str::from_utf8(&bytes).map_err(|e| AppError::OllamaUnavailable(format!("UTF-8 error: {e}")))?;
 
         for ch in text.chars() {
             if ch == '\n' {
@@ -153,11 +154,11 @@ pub async fn chat(
                 if line.is_empty() { continue; }
 
                 let parsed: OllamaStreamChunk = serde_json::from_str(&line)
-                    .map_err(|e| format!("Unexpected Ollama chunk: {e}\nLine: {line}"))?;
+                    .map_err(|e| AppError::OllamaUnavailable(format!("Unexpected Ollama chunk: {e}\nLine: {line}")))?;
 
                 if !parsed.done && !parsed.message.content.is_empty() {
                     app.emit("chat:token", &parsed.message.content)
-                        .map_err(|e| format!("Event emit error: {e}"))?;
+                        .map_err(|e| AppError::OllamaUnavailable(format!("Event emit error: {e}")))?;
                 }
 
                 if parsed.done {
@@ -192,7 +193,7 @@ pub async fn suggest_note_improvement(
     top_k: i32,
     repeat_penalty: f32,
     num_ctx: i32,
-) -> Result<(), String> {
+) -> AppResult<()> {
     use tauri::Emitter;
 
     let _ = crate::audit::log_event(
@@ -225,20 +226,20 @@ pub async fn suggest_note_improvement(
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("Could not reach Ollama — is it running? ({e})"))?;
+        .map_err(|e| AppError::OllamaUnavailable(format!("Could not reach Ollama — is it running? ({e})")))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Ollama returned {status}: {body}"));
+        return Err(AppError::OllamaUnavailable(format!("Ollama returned {status}: {body}")));
     }
 
     let mut stream = response.bytes_stream();
     let mut line_buf = String::new();
 
     while let Some(chunk) = stream.next().await {
-        let bytes = chunk.map_err(|e| format!("Stream read error: {e}"))?;
-        let text = std::str::from_utf8(&bytes).map_err(|e| format!("UTF-8 error: {e}"))?;
+        let bytes = chunk.map_err(|e| AppError::OllamaUnavailable(format!("Stream read error: {e}")))?;
+        let text = std::str::from_utf8(&bytes).map_err(|e| AppError::OllamaUnavailable(format!("UTF-8 error: {e}")))?;
 
         for ch in text.chars() {
             if ch == '\n' {
@@ -247,11 +248,11 @@ pub async fn suggest_note_improvement(
                 if line.is_empty() { continue; }
 
                 let parsed: OllamaStreamChunk = serde_json::from_str(&line)
-                    .map_err(|e| format!("Unexpected Ollama chunk: {e}\nLine: {line}"))?;
+                    .map_err(|e| AppError::OllamaUnavailable(format!("Unexpected Ollama chunk: {e}\nLine: {line}")))?;
 
                 if !parsed.done && !parsed.message.content.is_empty() {
                     app.emit("note:improve-token", &parsed.message.content)
-                        .map_err(|e| format!("Event emit error: {e}"))?;
+                        .map_err(|e| AppError::OllamaUnavailable(format!("Event emit error: {e}")))?;
                 }
 
                 if parsed.done {
@@ -279,7 +280,7 @@ pub async fn suggest_hunk_refinement(
     top_k: i32,
     repeat_penalty: f32,
     num_ctx: i32,
-) -> Result<(), String> {
+) -> AppResult<()> {
     use tauri::Emitter;
 
     let user_content = format!(
@@ -306,20 +307,20 @@ pub async fn suggest_hunk_refinement(
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("Could not reach Ollama — is it running? ({e})"))?;
+        .map_err(|e| AppError::OllamaUnavailable(format!("Could not reach Ollama — is it running? ({e})")))?;
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
-        return Err(format!("Ollama returned {status}: {body}"));
+        return Err(AppError::OllamaUnavailable(format!("Ollama returned {status}: {body}")));
     }
 
     let mut stream = response.bytes_stream();
     let mut line_buf = String::new();
 
     while let Some(chunk) = stream.next().await {
-        let bytes = chunk.map_err(|e| format!("Stream read error: {e}"))?;
-        let text = std::str::from_utf8(&bytes).map_err(|e| format!("UTF-8 error: {e}"))?;
+        let bytes = chunk.map_err(|e| AppError::OllamaUnavailable(format!("Stream read error: {e}")))?;
+        let text = std::str::from_utf8(&bytes).map_err(|e| AppError::OllamaUnavailable(format!("UTF-8 error: {e}")))?;
 
         for ch in text.chars() {
             if ch == '\n' {
@@ -328,11 +329,11 @@ pub async fn suggest_hunk_refinement(
                 if line.is_empty() { continue; }
 
                 let parsed: OllamaStreamChunk = serde_json::from_str(&line)
-                    .map_err(|e| format!("Unexpected Ollama chunk: {e}\nLine: {line}"))?;
+                    .map_err(|e| AppError::OllamaUnavailable(format!("Unexpected Ollama chunk: {e}\nLine: {line}")))?;
 
                 if !parsed.done && !parsed.message.content.is_empty() {
                     app.emit("note:refine-hunk-token", &parsed.message.content)
-                        .map_err(|e| format!("Event emit error: {e}"))?;
+                        .map_err(|e| AppError::OllamaUnavailable(format!("Event emit error: {e}")))?;
                 }
 
                 if parsed.done {

@@ -17,12 +17,16 @@
 
 mod audit;
 mod auth;
+mod chunking;
 mod commands;
 mod config;
 mod crypto;
 mod db;
+pub mod error;
 mod hardware;
 mod vector;
+
+pub use error::{AppError, AppResult};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};

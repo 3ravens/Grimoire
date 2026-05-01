@@ -19,6 +19,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
 use crate::KeyStore;
+use crate::{AppError, AppResult};
 use super::{Note, NoteRow, LinkedNote, GraphNode, GraphEdge, map_note_row};
 
 // ---------------------------------------------------------------------------
@@ -82,12 +83,12 @@ fn parse_wiki_links(content: &str) -> Vec<String> {
 
 /// Persist the parsed tags for a note. Replaces all existing note→tag rows,
 /// but leaves the `tags` table rows in place (tags are shared across notes).
-async fn sync_tags(pool: &SqlitePool, note_id: i64, tags: &[String]) -> Result<(), String> {
+async fn sync_tags(pool: &SqlitePool, note_id: i64, tags: &[String]) -> AppResult<()> {
     sqlx::query("DELETE FROM note_tags WHERE note_id = ?")
         .bind(note_id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     for tag in tags {
         // Ensure the tag name exists in the tags table.
@@ -95,20 +96,20 @@ async fn sync_tags(pool: &SqlitePool, note_id: i64, tags: &[String]) -> Result<(
             .bind(tag)
             .execute(pool)
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
 
         let tag_id: i64 = sqlx::query_scalar("SELECT id FROM tags WHERE name = ?")
             .bind(tag)
             .fetch_one(pool)
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
 
         sqlx::query("INSERT OR IGNORE INTO note_tags (note_id, tag_id) VALUES (?, ?)")
             .bind(note_id)
             .bind(tag_id)
             .execute(pool)
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
     }
     Ok(())
 }
@@ -120,12 +121,12 @@ async fn sync_links(
     pool: &SqlitePool,
     note_id: i64,
     link_titles: &[String],
-) -> Result<(), String> {
+) -> AppResult<()> {
     sqlx::query("DELETE FROM note_links WHERE source_id = ?")
         .bind(note_id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     for title in link_titles {
         let target: Option<i64> =
@@ -133,7 +134,7 @@ async fn sync_links(
                 .bind(title)
                 .fetch_optional(pool)
                 .await
-                .map_err(|e| e.to_string())?;
+                ?;
 
         if let Some(target_id) = target {
             if target_id != note_id {
@@ -144,7 +145,7 @@ async fn sync_links(
                 .bind(target_id)
                 .execute(pool)
                 .await
-                .map_err(|e| e.to_string())?;
+                ?;
             }
         }
     }
@@ -167,7 +168,7 @@ pub async fn sync_note_relations(
     pool: State<'_, SqlitePool>,
     note_id: i64,
     content: String,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let tags = parse_tags(&content);
     let links = parse_wiki_links(&content);
     sync_tags(pool.inner(), note_id, &tags).await?;
@@ -180,7 +181,7 @@ pub async fn sync_note_relations(
 pub async fn get_note_tags(
     pool: State<'_, SqlitePool>,
     note_id: i64,
-) -> Result<Vec<String>, String> {
+) -> AppResult<Vec<String>> {
     let tags: Vec<String> = sqlx::query_scalar(
         "SELECT t.name FROM tags t
          JOIN note_tags nt ON nt.tag_id = t.id
@@ -190,7 +191,7 @@ pub async fn get_note_tags(
     .bind(note_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
     Ok(tags)
 }
 
@@ -199,7 +200,7 @@ pub async fn get_note_tags(
 pub async fn get_note_links(
     pool: State<'_, SqlitePool>,
     note_id: i64,
-) -> Result<Vec<LinkedNote>, String> {
+) -> AppResult<Vec<LinkedNote>> {
     let links = sqlx::query_as::<_, LinkedNote>(
         "SELECT n.id, n.title FROM notes n
          JOIN note_links nl ON nl.target_id = n.id
@@ -209,7 +210,7 @@ pub async fn get_note_links(
     .bind(note_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
     Ok(links)
 }
 
@@ -218,7 +219,7 @@ pub async fn get_note_links(
 pub async fn get_backlinks(
     pool: State<'_, SqlitePool>,
     note_id: i64,
-) -> Result<Vec<LinkedNote>, String> {
+) -> AppResult<Vec<LinkedNote>> {
     let links = sqlx::query_as::<_, LinkedNote>(
         "SELECT n.id, n.title FROM notes n
          JOIN note_links nl ON nl.source_id = n.id
@@ -228,7 +229,7 @@ pub async fn get_backlinks(
     .bind(note_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
     Ok(links)
 }
 
@@ -238,7 +239,7 @@ pub async fn list_notes_by_tag(
     pool: State<'_, SqlitePool>,
     keys: State<'_, KeyStore>,
     tag: String,
-) -> Result<Vec<Note>, String> {
+) -> AppResult<Vec<Note>> {
     // Use a struct that can hold the extra `folder_locked` column from the join.
     #[derive(sqlx::FromRow)]
     struct NoteRowWithLock {
@@ -263,7 +264,7 @@ pub async fn list_notes_by_tag(
     .bind(tag.to_lowercase())
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let notes = rows
         .into_iter()
@@ -291,7 +292,7 @@ pub async fn list_notes_by_tag(
 #[tauri::command]
 pub async fn list_all_tags(
     pool: State<'_, SqlitePool>,
-) -> Result<Vec<TagCount>, String> {
+) -> AppResult<Vec<TagCount>> {
     let tags = sqlx::query_as::<_, TagCount>(
         "SELECT t.name, COUNT(nt.note_id) AS count
          FROM tags t
@@ -301,7 +302,7 @@ pub async fn list_all_tags(
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
     Ok(tags)
 }
 
@@ -310,20 +311,20 @@ pub async fn list_all_tags(
 #[tauri::command]
 pub async fn get_graph_data(
     pool: State<'_, SqlitePool>,
-) -> Result<(Vec<GraphNode>, Vec<GraphEdge>), String> {
+) -> AppResult<(Vec<GraphNode>, Vec<GraphEdge>)> {
     let nodes = sqlx::query_as::<_, GraphNode>(
         "SELECT id, title FROM notes ORDER BY id ASC",
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let edges = sqlx::query_as::<_, GraphEdge>(
         "SELECT source_id AS source, target_id AS target FROM note_links",
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     Ok((nodes, edges))
 }
@@ -339,7 +340,7 @@ pub async fn get_unlinked_mentions(
     pool: State<'_, SqlitePool>,
     note_id: i64,
     title: String,
-) -> Result<Vec<LinkedNote>, String> {
+) -> AppResult<Vec<LinkedNote>> {
     // Plain-text pattern: title appears in content but NOT as [[title]].
     // We do a LIKE pre-filter in SQL (cheap) and post-filter in Rust for the
     // wiki-link exclusion — this avoids complex SQL escaping of bracket chars.
@@ -369,7 +370,7 @@ pub async fn get_unlinked_mentions(
     .bind(note_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let wiki_link = format!("[[{}]]", title);
 
@@ -401,13 +402,13 @@ pub async fn convert_mention_to_link(
     pool: State<'_, SqlitePool>,
     note_id: i64,
     title: String,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let content: String = sqlx::query_scalar("SELECT content FROM notes WHERE id = ?")
         .bind(note_id)
         .fetch_optional(pool.inner())
         .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("Note {note_id} not found"))?;
+        ?
+        .ok_or_else(|| AppError::NotFound(format!("Note {note_id} not found")))?;
 
     let wiki_link = format!("[[{title}]]");
 
@@ -431,7 +432,7 @@ pub async fn convert_mention_to_link(
         .bind(note_id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     // Re-sync wiki-links so the new [[title]] link appears in note_links immediately.
     let links = parse_wiki_links(&updated);

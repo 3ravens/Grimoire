@@ -16,6 +16,7 @@
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
 use tauri::State;
+use crate::{AppResult};
 use crate::hardware::{detect, HardwareInfo, LlmCapability};
 use crate::config::SharedConfig;
 
@@ -32,7 +33,7 @@ pub struct HardwareReport {
 /// Detect hardware capabilities and return a full report including the
 /// persisted override setting from the database.
 #[tauri::command]
-pub async fn get_hardware_info(config: State<'_, SharedConfig>) -> Result<HardwareReport, String> {
+pub async fn get_hardware_info(config: State<'_, SharedConfig>) -> AppResult<HardwareReport> {
     let info = detect().await;
     let force_enabled = config.read().unwrap().llm_force_enabled;
     Ok(HardwareReport { info, llm_force_enabled: force_enabled })
@@ -41,7 +42,7 @@ pub async fn get_hardware_info(config: State<'_, SharedConfig>) -> Result<Hardwa
 /// Returns true if LLM features should be active:
 /// either the hardware is capable, or the user has force-enabled.
 #[tauri::command]
-pub async fn get_llm_enabled(config: State<'_, SharedConfig>) -> Result<bool, String> {
+pub async fn get_llm_enabled(config: State<'_, SharedConfig>) -> AppResult<bool> {
     let info = detect().await;
     if info.capability == LlmCapability::Full {
         return Ok(true);
@@ -64,7 +65,7 @@ pub struct RunningModel {
 /// Return the list of models currently loaded in Ollama.
 /// Returns an empty Vec when Ollama is not running or reports no models.
 #[tauri::command]
-pub async fn get_running_models() -> Result<Vec<RunningModel>, String> {
+pub async fn get_running_models() -> AppResult<Vec<RunningModel>> {
     #[derive(serde::Deserialize)]
     struct OllamaModel {
         name: String,
@@ -79,14 +80,14 @@ pub async fn get_running_models() -> Result<Vec<RunningModel>, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| crate::AppError::OllamaUnavailable(e.to_string()))?;
 
     let resp = match client.get("http://localhost:11434/api/ps").send().await {
         Ok(r) => r,
         Err(_) => return Ok(Vec::new()), // Ollama not running — not an error
     };
 
-    let ps: PsResp = resp.json().await.map_err(|e| e.to_string())?;
+    let ps: PsResp = resp.json().await.map_err(|e| crate::AppError::OllamaUnavailable(e.to_string()))?;
 
     let models = ps.models.into_iter().map(|m| {
         let vram_mb = if m.size_vram > 0 { Some(m.size_vram / (1024 * 1024)) } else { None };

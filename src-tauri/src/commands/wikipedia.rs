@@ -39,6 +39,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Instant;
+use crate::{AppError, AppResult};
 use crate::config::SharedConfig;
 
 fn resolve_wiki_perf_log_path(app: &AppHandle) -> Option<PathBuf> {
@@ -191,9 +192,9 @@ fn html_to_text(html: &str) -> String {
 /// Parse the Kiwix OPDS Atom XML catalogue and return all nopic wikipedia entries.
 /// The catalogue endpoint always returns Atom XML regardless of Accept header:
 ///   https://library.kiwix.org/catalog/v2/entries?lang=eng&category=wikipedia&count=500
-fn parse_catalogue(xml: &str) -> Result<Vec<CatalogueEntry>, String> {
+fn parse_catalogue(xml: &str) -> AppResult<Vec<CatalogueEntry>> {
     let doc = roxmltree::Document::parse(xml)
-        .map_err(|e| format!("Failed to parse catalogue XML: {e}"))?;
+        .map_err(|e| AppError::InvalidInput(format!("Failed to parse catalogue XML: {e}")))?;
 
     let root = doc.root_element();
     let atom_ns = "http://www.w3.org/2005/Atom";
@@ -270,21 +271,21 @@ fn parse_catalogue(xml: &str) -> Result<Vec<CatalogueEntry>, String> {
 /// Fetch the Kiwix OPDS catalogue and return all nopic wikipedia entries.
 /// This is the only command that makes an outbound network request.
 #[tauri::command]
-pub async fn fetch_wikipedia_catalogue() -> Result<Vec<CatalogueEntry>, String> {
+pub async fn fetch_wikipedia_catalogue() -> AppResult<Vec<CatalogueEntry>> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
-        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+        .map_err(|e| AppError::Io(format!("Failed to build HTTP client: {e}")))?;
 
     let url = "https://library.kiwix.org/catalog/v2/entries?lang=eng&category=wikipedia&count=500";
     let body = client
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch catalogue: {e}"))?
+        .map_err(|e| AppError::Io(format!("Failed to fetch catalogue: {e}")))?
         .text()
         .await
-        .map_err(|e| format!("Failed to read catalogue response: {e}"))?;
+        .map_err(|e| AppError::Io(format!("Failed to read catalogue response: {e}")))?;
 
     parse_catalogue(&body)
 }
@@ -293,7 +294,7 @@ pub async fn fetch_wikipedia_catalogue() -> Result<Vec<CatalogueEntry>, String> 
 #[tauri::command]
 pub async fn list_wikipedia_bundles(
     pool: State<'_, SqlitePool>,
-) -> Result<Vec<WikiBundle>, String> {
+) -> AppResult<Vec<WikiBundle>> {
     sqlx::query_as::<_, WikiBundle>(
         "SELECT id, name, flavour, title, article_count, size_bytes,
                 zim_path, installed_at, last_synced, indexing_state
@@ -301,7 +302,7 @@ pub async fn list_wikipedia_bundles(
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())
+    .map_err(Into::into)
 }
 
 /// Reset a bundle's indexing_state. Used by the frontend to clear stuck 'indexing'
@@ -311,17 +312,17 @@ pub async fn set_bundle_indexing_state(
     pool: State<'_, SqlitePool>,
     bundle_id: String,
     state: String,
-) -> Result<(), String> {
+) -> AppResult<()> {
     // Only allow safe state values.
     if !matches!(state.as_str(), "none" | "queued" | "done" | "error") {
-        return Err(format!("Invalid state: {state}"));
+        return Err(AppError::InvalidInput(format!("Invalid state: {state}")));
     }
     sqlx::query("UPDATE wikipedia_bundles SET indexing_state = ? WHERE id = ?")
         .bind(&state)
         .bind(&bundle_id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
     Ok(())
 }
 
@@ -341,13 +342,13 @@ pub async fn download_wikipedia_bundle(
     dest_dir: String,
     expected_size_bytes: Option<i64>,
     article_count: Option<i64>,
-) -> Result<String, String> {
+) -> AppResult<String> {
     use tokio::io::AsyncWriteExt;
 
     // Validate dest_dir is an existing directory to prevent path traversal.
     let dir = std::path::Path::new(&dest_dir);
     if !dir.is_dir() {
-        return Err(format!("Destination directory does not exist: {dest_dir}"));
+        return Err(AppError::InvalidInput(format!("Destination directory does not exist: {dest_dir}")));
     }
 
     // Derive filename from the URL.
@@ -355,44 +356,44 @@ pub async fn download_wikipedia_bundle(
         .split('/')
         .last()
         .filter(|s| s.ends_with(".zim"))
-        .ok_or("Download URL does not end with a .zim filename")?;
+        .ok_or_else(|| AppError::InvalidInput("Download URL does not end with a .zim filename".to_string()))?;
 
     let zim_path = dir.join(filename);
     let zim_path_str = zim_path
         .to_str()
-        .ok_or("Destination path contains non-UTF8 characters")?
+        .ok_or_else(|| AppError::InvalidInput("Destination path contains non-UTF8 characters".to_string()))?
         .to_string();
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3600))
         .build()
-        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+        .map_err(|e| AppError::Io(format!("Failed to build HTTP client: {e}")))?;
 
     let resp = client
         .get(&download_url)
         .send()
         .await
-        .map_err(|e| format!("Download failed: {e}"))?;
+        .map_err(|e| AppError::Io(format!("Download failed: {e}")))?;
 
     if !resp.status().is_success() {
-        return Err(format!("Download returned HTTP {}", resp.status()));
+        return Err(AppError::Io(format!("Download returned HTTP {}", resp.status())));
     }
 
     let total = resp.content_length().map(|l| l as i64).or(expected_size_bytes);
 
     let mut file = tokio::fs::File::create(&zim_path)
         .await
-        .map_err(|e| format!("Failed to create file {zim_path_str}: {e}"))?;
+        .map_err(|e| AppError::Io(format!("Failed to create file {zim_path_str}: {e}")))?;
 
     let mut downloaded: i64 = 0;
     let mut last_emit: i64 = 0;
     let mut stream = resp.bytes_stream();
 
     while let Some(chunk) = stream.next().await {
-        let bytes = chunk.map_err(|e| format!("Download stream error: {e}"))?;
+        let bytes = chunk.map_err(|e| AppError::Io(format!("Download stream error: {e}")))?;
         file.write_all(&bytes)
             .await
-            .map_err(|e| format!("Failed to write to file: {e}"))?;
+            .map_err(|e| AppError::Io(format!("Failed to write to file: {e}")))?;
         downloaded += bytes.len() as i64;
         if downloaded - last_emit >= 512 * 1024 {
             last_emit = downloaded;
@@ -404,7 +405,7 @@ pub async fn download_wikipedia_bundle(
         }
     }
 
-    file.flush().await.map_err(|e| format!("Failed to flush file: {e}"))?;
+    file.flush().await.map_err(|e| AppError::Io(format!("Failed to flush file: {e}")))?;
 
     let now = chrono_now();
 
@@ -427,7 +428,7 @@ pub async fn download_wikipedia_bundle(
     .bind(&now)
     .execute(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     Ok(zim_path_str)
 }
@@ -440,10 +441,10 @@ pub async fn remove_wikipedia_bundle(
     cancel_map: State<'_, super::CancelMap>,
     bundle_id: String,
     delete_file: bool,
-) -> Result<(), String> {
+) -> AppResult<()> {
     // Signal cancellation for any in-progress indexing of this bundle.
     {
-        let map = cancel_map.0.lock().map_err(|e| e.to_string())?;
+        let map = cancel_map.0.lock().map_err(|e| AppError::InvalidInput(e.to_string()))?;
         if let Some(flag) = map.get(&bundle_id) {
             flag.store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -455,7 +456,7 @@ pub async fn remove_wikipedia_bundle(
             .bind(&bundle_id)
             .fetch_optional(pool.inner())
             .await
-            .map_err(|e| e.to_string())?
+            ?
             .flatten()
     } else {
         None
@@ -466,17 +467,17 @@ pub async fn remove_wikipedia_bundle(
         .bind(&bundle_id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     // Delete bundle rows (cascade deletes checkpoint).
     sqlx::query("DELETE FROM wikipedia_bundles WHERE id = ?")
         .bind(&bundle_id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     // Remove from LanceDB.
-    crate::vector::wikipedia_remove_bundle(&vdb.0, &bundle_id).await?;
+    crate::vector::wikipedia_remove_bundle(&vdb.0, &bundle_id).await.map_err(|e| AppError::VectorStore(e))?;
 
     // Optionally delete the .zim file from disk.
     if delete_file {
@@ -503,7 +504,7 @@ pub async fn index_wikipedia_bundle(
     config: State<'_, SharedConfig>,
     bundle_id: String,
     reset: Option<bool>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     crate::vector::reset_embed_batch_telemetry();
 
     // Look up the bundle.
@@ -515,22 +516,22 @@ pub async fn index_wikipedia_bundle(
     .bind(&bundle_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| format!("Bundle not found: {bundle_id}"))?;
+    ?
+    .ok_or_else(|| AppError::NotFound(format!("Bundle not found: {bundle_id}")))?;
 
-    let zim_path = bundle.zim_path.ok_or("Bundle has no zim_path")?;
+    let zim_path = bundle.zim_path.ok_or_else(|| AppError::NotFound("Bundle has no zim_path".to_string()))?;
 
     // Mark as indexing.
     sqlx::query("UPDATE wikipedia_bundles SET indexing_state = 'indexing' WHERE id = ?")
         .bind(&bundle_id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     // Register a cancel flag so remove_bundle can stop this indexing run.
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
-        let mut map = cancel_map.0.lock().map_err(|e| e.to_string())?;
+        let mut map = cancel_map.0.lock().map_err(|e| AppError::InvalidInput(e.to_string()))?;
         map.insert(bundle_id.clone(), cancel.clone());
     }
 
@@ -540,8 +541,8 @@ pub async fn index_wikipedia_bundle(
             .bind(&bundle_id)
             .execute(pool.inner())
             .await
-            .map_err(|e| e.to_string())?;
-        crate::vector::wikipedia_remove_bundle(&vdb.0, &bundle_id).await?;
+            ?;
+        crate::vector::wikipedia_remove_bundle(&vdb.0, &bundle_id).await.map_err(|e| AppError::VectorStore(e))?;
     }
 
     // Load checkpoint (resume offset + previously indexed count).
@@ -551,7 +552,7 @@ pub async fn index_wikipedia_bundle(
     .bind(&bundle_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| e.to_string())?
+    ?
     .map(|(e, c)| (e as u32, c))
     .unwrap_or((0, 0));
 
@@ -568,12 +569,12 @@ pub async fn index_wikipedia_bundle(
     };
     let cancel_clone = cancel.clone();
 
-    let result: Result<(), String> = tokio::task::spawn_blocking(move || {
+    let result: AppResult<()> = tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Handle::current();
 
         use zim_rs::archive::Archive;
         let archive = Archive::new(&zim_path)
-            .map_err(|_| format!("Failed to open ZIM file: {zim_path}"))?;
+            .map_err(|_| AppError::Io(format!("Failed to open ZIM file: {zim_path}")))?;
 
         let total_entries = archive.get_all_entrycount();
         let article_count = bundle.article_count
@@ -590,7 +591,7 @@ pub async fn index_wikipedia_bundle(
         .bind(start_entry as i64)
         .bind(total_entries as i64)
         .execute(&pool_clone))
-        .map_err(|e| e.to_string())?;
+        ?;
 
         let model = embedding_model;
 
@@ -622,7 +623,7 @@ pub async fn index_wikipedia_bundle(
         let mut scan_pos = start_entry;
         while scan_pos < total_entries {
             if cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err("Indexing cancelled".to_string());
+                return Err(AppError::InvalidInput("Indexing cancelled".to_string()));
             }
             let window_end = (scan_pos + SCAN_WINDOW as u32).min(total_entries);
 
@@ -747,7 +748,7 @@ pub async fn index_wikipedia_bundle(
             if !window_upsert_batch.is_empty() {
                 let phase_upsert_write_t0 = Instant::now();
                 rt.block_on(crate::vector::wikipedia_append_batch(&vdb_conn, window_upsert_batch))
-                    .map_err(|e| format!("Failed to append wikipedia window batch: {e}"))?;
+                    .map_err(|e| AppError::VectorStore(format!("Failed to append wikipedia window batch: {e}")))?;
                 indexed += window_indexed_delta;
                 last_checkpoint_idx = window_last_checkpoint_idx;
                 upsert_ms += phase_upsert_write_t0.elapsed().as_millis();
@@ -845,7 +846,7 @@ pub async fn index_wikipedia_bundle(
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| AppError::Io(format!("Task panicked: {e}")))?;
 
     // Clean up the cancel flag regardless of outcome.
     if let Ok(mut map) = cancel_map.0.lock() {
@@ -862,7 +863,7 @@ pub async fn index_wikipedia_bundle(
             .bind(&bundle_id)
             .execute(pool.inner())
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
 
             sqlx::query(
                 "UPDATE wikipedia_index_checkpoint SET completed_at = ? WHERE bundle_id = ?",
@@ -871,7 +872,7 @@ pub async fn index_wikipedia_bundle(
             .bind(&bundle_id)
             .execute(pool.inner())
             .await
-            .map_err(|e| e.to_string())?;
+            ?;
 
             let (batch_splits, single_fallbacks) = crate::vector::snapshot_embed_batch_telemetry();
             let _ = app.emit("wikipedia:index-progress", serde_json::json!({
@@ -886,7 +887,7 @@ pub async fn index_wikipedia_bundle(
         }
         Err(e) => {
             // If cancelled, the bundle has already been removed — don't try to update state.
-            let is_cancelled = e == "Indexing cancelled";
+            let is_cancelled = matches!(&e, AppError::InvalidInput(m) if m == "Indexing cancelled");
             if !is_cancelled {
                 sqlx::query(
                     "UPDATE wikipedia_bundles SET indexing_state = 'error' WHERE id = ?",
@@ -894,7 +895,7 @@ pub async fn index_wikipedia_bundle(
                 .bind(&bundle_id)
                 .execute(pool.inner())
                 .await
-                .map_err(|err| err.to_string())?;
+                ?;
 
                 let (batch_splits, single_fallbacks) = crate::vector::snapshot_embed_batch_telemetry();
                 let _ = app.emit("wikipedia:index-progress", serde_json::json!({
@@ -902,7 +903,7 @@ pub async fn index_wikipedia_bundle(
                     "batch_splits": batch_splits,
                     "single_fallbacks": single_fallbacks,
                     "done": true,
-                    "error": e,
+                    "error": e.to_string(),
                 }));
             }
 
@@ -922,7 +923,7 @@ pub async fn search_wikipedia(
     vdb: State<'_, crate::vector::VectorDb>,
     config: State<'_, SharedConfig>,
     query: String,
-) -> Result<Vec<crate::vector::WikiMatch>, String> {
+) -> AppResult<Vec<crate::vector::WikiMatch>> {
     // Only search if wikipedia is enabled in settings.
     if !config.read().unwrap().wikipedia_enabled {
         return Ok(vec![]);
@@ -930,7 +931,7 @@ pub async fn search_wikipedia(
 
     let model = config.read().unwrap().embedding_model.clone();
     let embedding = super::rag::embed_query(&query, &model).await?;
-    crate::vector::wikipedia_search(&vdb.0, embedding, 5).await
+    crate::vector::wikipedia_search(&vdb.0, embedding, 5).await.map_err(|e| AppError::VectorStore(e))
 }
 
 /// Read a single article from a ZIM bundle by its entry path.
@@ -940,16 +941,16 @@ pub async fn read_wikipedia_article(
     pool: State<'_, SqlitePool>,
     bundle_id: String,
     article_path: String,
-) -> Result<serde_json::Value, String> {
+) -> AppResult<serde_json::Value> {
     let zim_path: String = sqlx::query_scalar(
         "SELECT zim_path FROM wikipedia_bundles WHERE id = ?",
     )
     .bind(&bundle_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| e.to_string())?
+    ?
     .flatten()
-    .ok_or_else(|| format!("Bundle not found or has no file: {bundle_id}"))?;
+    .ok_or_else(|| AppError::NotFound(format!("Bundle not found or has no file: {bundle_id}")))?;
 
     let path_clone = article_path.clone();
     let result = tokio::task::spawn_blocking(move || {
@@ -976,9 +977,9 @@ pub async fn read_wikipedia_article(
         }))
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| AppError::Io(format!("Task panicked: {e}")))?;
 
-    let result = result?;
+    let result = result.map_err(|e| AppError::NotFound(e))?;
     let title = result.get("title").and_then(|t| t.as_str()).map(|s| s.to_string());
     let _ = crate::audit::log_event(
         pool.inner(), "wikipedia_read", Some("wikipedia"),
@@ -1114,16 +1115,16 @@ pub async fn read_wikipedia_article_html(
     pool: State<'_, SqlitePool>,
     bundle_id: String,
     article_path: String,
-) -> Result<serde_json::Value, String> {
+) -> AppResult<serde_json::Value> {
     let zim_path: String = sqlx::query_scalar(
         "SELECT zim_path FROM wikipedia_bundles WHERE id = ?",
     )
     .bind(&bundle_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| e.to_string())?
+    ?
     .flatten()
-    .ok_or_else(|| format!("Bundle not found or has no file: {bundle_id}"))?;
+    .ok_or_else(|| AppError::NotFound(format!("Bundle not found or has no file: {bundle_id}")))?;
 
     let path_clone = article_path.clone();
 
@@ -1173,29 +1174,27 @@ pub async fn read_wikipedia_article_html(
         }))
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| AppError::Io(format!("Task panicked: {e}")))?;
 
-    result
+    let result = result.map_err(|e| AppError::NotFound(e))?;
+    Ok(result)
 }
-
-/// Serve a Wikipedia article image as a `data:<mime>;base64,…` string.
-/// The image bytes are read directly from the ZIM file.
 /// Returns an empty string if the image is not found (non-fatal).
 #[tauri::command]
 pub async fn serve_wikipedia_image(
     pool: State<'_, SqlitePool>,
     bundle_id: String,
     image_path: String,
-) -> Result<String, String> {
+) -> AppResult<String> {
     let zim_path: String = sqlx::query_scalar(
         "SELECT zim_path FROM wikipedia_bundles WHERE id = ?",
     )
     .bind(&bundle_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| e.to_string())?
+    ?
     .flatten()
-    .ok_or_else(|| format!("Bundle not found: {bundle_id}"))?;
+    .ok_or_else(|| AppError::NotFound(format!("Bundle not found: {bundle_id}")))?;
 
     tokio::task::spawn_blocking(move || {
         use zim_rs::archive::Archive;
@@ -1223,10 +1222,11 @@ pub async fn serve_wikipedia_image(
         }
 
         // Image not found – return empty string so broken images are invisible
-        Ok(String::new())
+        Ok::<_, String>(String::new())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Io(format!("Task panicked: {e}")))?
+    .map_err(|e| AppError::Io(e))
 }
 
 /// Check whether a Wikipedia article path resolves to any installed bundle.
@@ -1241,7 +1241,7 @@ pub async fn resolve_wikipedia_link(
     pool: State<'_, SqlitePool>,
     current_bundle_id: String,
     article_path: String,
-) -> Result<Option<serde_json::Value>, String> {
+) -> AppResult<Option<serde_json::Value>> {
     // Fetch all installed bundles, current bundle first to short-circuit early.
     let bundles: Vec<BundleRow> = sqlx::query_as(
         "SELECT id, name, title, zim_path
@@ -1252,7 +1252,7 @@ pub async fn resolve_wikipedia_link(
     .bind(&current_bundle_id)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     for bundle in &bundles {
         let zim_path = match &bundle.zim_path {
@@ -1296,7 +1296,7 @@ pub async fn resolve_wikipedia_link(
             None
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| AppError::Io(format!("Task panicked: {e}")))?;
 
         if let Some((bid, apath, title, btitle)) = found {
             return Ok(Some(serde_json::json!({
@@ -1319,7 +1319,7 @@ pub async fn suggest_wikipedia_articles(
     pool: State<'_, SqlitePool>,
     bundle_id: String,
     query: String,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> AppResult<Vec<serde_json::Value>> {
     if query.trim().is_empty() {
         return Ok(vec![]);
     }
@@ -1330,9 +1330,9 @@ pub async fn suggest_wikipedia_articles(
     .bind(&bundle_id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| e.to_string())?
+    ?
     .flatten()
-    .ok_or_else(|| format!("Bundle not found: {bundle_id}"))?;
+    .ok_or_else(|| AppError::NotFound(format!("Bundle not found: {bundle_id}")))?;
 
     tokio::task::spawn_blocking(move || {
         use zim_rs::archive::Archive;
@@ -1420,7 +1420,8 @@ pub async fn suggest_wikipedia_articles(
         Ok::<_, String>(suggestions)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| AppError::Io(format!("Task panicked: {e}")))?
+    .map_err(|e| AppError::Io(e))
 }
 
 // ---------------------------------------------------------------------------
@@ -1433,7 +1434,7 @@ pub async fn load_wikipedia_highlights(
     pool: State<'_, SqlitePool>,
     bundle_id: String,
     article_path: String,
-) -> Result<Vec<WikiHighlight>, String> {
+) -> AppResult<Vec<WikiHighlight>> {
     sqlx::query_as::<_, WikiHighlight>(
         "SELECT id, highlighted_text, context_before, context_after, status
          FROM wikipedia_highlights
@@ -1444,7 +1445,7 @@ pub async fn load_wikipedia_highlights(
     .bind(&article_path)
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())
+    .map_err(Into::into)
 }
 
 /// Save a new highlight for a Wikipedia article. Returns the new highlight ID.
@@ -1456,7 +1457,7 @@ pub async fn save_wikipedia_highlight(
     highlighted_text: String,
     context_before: String,
     context_after: String,
-) -> Result<i64, String> {
+) -> AppResult<i64> {
     let now = chrono_now();
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO wikipedia_highlights
@@ -1472,7 +1473,7 @@ pub async fn save_wikipedia_highlight(
     .bind(&now)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     Ok(id)
 }
@@ -1482,12 +1483,12 @@ pub async fn save_wikipedia_highlight(
 pub async fn delete_wikipedia_highlight(
     pool: State<'_, SqlitePool>,
     id: i64,
-) -> Result<(), String> {
+) -> AppResult<()> {
     sqlx::query("DELETE FROM wikipedia_highlights WHERE id = ?")
         .bind(id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
     Ok(())
 }
 
@@ -1499,18 +1500,19 @@ pub async fn delete_wikipedia_highlight(
 /// report that lets us evaluate whether the `zim` crate is usable.
 /// This command is debug-only — it is not registered in release builds.
 #[tauri::command]
-pub async fn test_zim_parse(zim_path: String) -> Result<serde_json::Value, String> {
+pub async fn test_zim_parse(zim_path: String) -> AppResult<serde_json::Value> {
     // ZIM parsing is blocking I/O + CPU; keep it off the async executor.
-    tokio::task::spawn_blocking(move || run_zim_poc(&zim_path))
+    let result = tokio::task::spawn_blocking(move || run_zim_poc(&zim_path))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| AppError::Io(format!("Task panicked: {e}")))??;
+    Ok(result)
 }
 
-fn run_zim_poc(zim_path: &str) -> Result<serde_json::Value, String> {
+fn run_zim_poc(zim_path: &str) -> AppResult<serde_json::Value> {
     use zim_rs::archive::Archive;
 
     let archive = Archive::new(zim_path)
-        .map_err(|_| format!("Failed to open ZIM file: {zim_path}"))?;
+        .map_err(|_| AppError::Io(format!("Failed to open ZIM file: {zim_path}")))?;
 
     let total_entries = archive.get_all_entrycount();
     let article_count_header = archive.get_articlecount();
@@ -1518,7 +1520,7 @@ fn run_zim_poc(zim_path: &str) -> Result<serde_json::Value, String> {
 
     let range = archive
         .iter_efficient()
-        .map_err(|_| "Failed to create efficient iterator".to_string())?;
+        .map_err(|_| AppError::Io("Failed to create efficient iterator".to_string()))?;
 
     let mut article_count = 0usize;
     let mut redirect_count = 0usize;

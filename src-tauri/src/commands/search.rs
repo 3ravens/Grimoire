@@ -18,6 +18,7 @@
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
+use crate::AppResult;
 use crate::KeyStore;
 use crate::config::SharedConfig;
 
@@ -129,7 +130,7 @@ async fn fts_search_inner(
     keys: &KeyStore,
     query: &str,
     limit: usize,
-) -> Result<Vec<FtsResult>, String> {
+) -> AppResult<Vec<FtsResult>> {
     let fts_query = build_fts_query(query);
     if fts_query.is_empty() {
         return Ok(vec![]);
@@ -154,7 +155,7 @@ async fn fts_search_inner(
     .bind((limit * 3) as i64)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     // Secondary filter: exclude notes in folders that are currently locked.
     // FTS should not contain these (fts_upsert skips locked notes), but we
@@ -186,7 +187,7 @@ pub async fn fts_search(
     keys: State<'_, KeyStore>,
     query: String,
     limit: Option<usize>,
-) -> Result<Vec<FtsResult>, String> {
+) -> AppResult<Vec<FtsResult>> {
     let query = query.trim().to_string();
     if query.is_empty() {
         return Ok(vec![]);
@@ -237,7 +238,7 @@ pub async fn combined_search(
     config: State<'_, SharedConfig>,
     query: String,
     limit: Option<usize>,
-) -> Result<Vec<SearchResult>, String> {
+) -> AppResult<Vec<SearchResult>> {
     let limit = limit.unwrap_or(10);
     let query = query.trim().to_string();
     if query.is_empty() {

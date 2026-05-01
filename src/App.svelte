@@ -561,7 +561,23 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   // ── Helpers ─────────────────────────────────────────────────────────────────────
 
   function showError(e) {
-    errorMsg = String(e);
+    const kind = e?.kind;
+    const msg  = e?.message ?? String(e);
+
+    if (kind === 'OllamaUnavailable') {
+      errorMsg = `${msg} — Make sure Ollama is running: ollama serve`;
+    } else if (kind === 'EmbeddingFailed') {
+      errorMsg = `${msg} — Check that your embedding model is pulled (ollama pull <model>)`;
+    } else if (kind === 'NotFound') {
+      errorMsg = `Not found: ${msg}`;
+    } else if (kind === 'Auth') {
+      errorMsg = `Authentication error: ${msg}`;
+    } else if (kind) {
+      errorMsg = msg;
+    } else {
+      errorMsg = String(e);
+    }
+
     setTimeout(() => (errorMsg = ''), 4000);
   }
 

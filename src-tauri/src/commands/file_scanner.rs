@@ -26,9 +26,10 @@ use tauri::{AppHandle, Emitter, State};
 use serde::Serialize;
 use pdf_extract;
 
+use crate::{AppError, AppResult};
 use crate::vector::{VectorDb, ScannedFileMatch};
 use crate::config::SharedConfig;
-use super::rag::{split_sentences, chunk_sentences};
+use crate::chunking::{split_sentences, chunk_sentences};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -65,17 +66,17 @@ fn mime_for_path(path: &std::path::Path) -> Option<&'static str> {
 /// For PDFs, text is extracted from the PDF structure via pdf-extract.
 /// For plain text / Markdown, the file is read as UTF-8.
 /// Returns an error if the file cannot be read or, for PDFs, yields no text.
-fn read_file_text(path: &std::path::Path) -> Result<String, String> {
+fn read_file_text(path: &std::path::Path) -> AppResult<String> {
     match path.extension().and_then(|e| e.to_str()) {
         Some("pdf") => {
-            let text = pdf_extract::extract_text(path).map_err(|e| e.to_string())?;
+            let text = pdf_extract::extract_text(path).map_err(|e| AppError::Io(e.to_string()))?;
             if text.trim().is_empty() {
-                Err("No text could be extracted from this PDF. It may be a scanned image without embedded text.".to_string())
+                Err(AppError::Io("No text could be extracted from this PDF. It may be a scanned image without embedded text.".to_string()))
             } else {
                 Ok(text)
             }
         }
-        _ => std::fs::read_to_string(path).map_err(|e| e.to_string()),
+        _ => std::fs::read_to_string(path).map_err(Into::into),
     }
 }
 
@@ -136,7 +137,7 @@ async fn index_path(
     path: &str,
     kind: &str,
     model: &str,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let files = collect_files(path, kind);
     let total = files.len();
     let mut scanned = 0usize;
@@ -253,7 +254,7 @@ async fn index_path(
         .bind(mtime)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
         // Emit progress every file.
         let _ = app.emit("filescanner:progress", serde_json::json!({
@@ -279,7 +280,7 @@ async fn index_path(
     .bind(path_id)
     .execute(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     // Emit done event.
     let _ = app.emit("filescanner:progress", serde_json::json!({
@@ -301,14 +302,14 @@ async fn index_path(
 #[tauri::command]
 pub async fn get_scanned_paths(
     pool: State<'_, SqlitePool>,
-) -> Result<Vec<ScannedPath>, String> {
+) -> AppResult<Vec<ScannedPath>> {
     sqlx::query_as::<_, ScannedPath>(
         "SELECT id, path, kind, added_at, last_scanned_at, enabled, file_count, error_msg
          FROM scanned_paths ORDER BY added_at DESC",
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())
+    .map_err(Into::into)
 }
 
 /// Add a new path (file or folder) to the file scanner and immediately index it.
@@ -324,28 +325,28 @@ pub async fn add_scanned_path(
     config: State<'_, SharedConfig>,
     path: String,
     kind: String,
-) -> Result<ScannedPath, String> {
+) -> AppResult<ScannedPath> {
     if kind != "file" && kind != "folder" {
-        return Err(format!("Invalid kind '{kind}': must be 'file' or 'folder'"));
+        return Err(AppError::InvalidInput(format!("Invalid kind '{kind}': must be 'file' or 'folder'")));
     }
 
     let p = std::path::Path::new(&path);
     if !p.exists() {
-        return Err(format!("Path does not exist: {path}"));
+        return Err(AppError::InvalidInput(format!("Path does not exist: {path}")));
     }
     if kind == "file" && !p.is_file() {
-        return Err(format!("Expected a file but got a directory: {path}"));
+        return Err(AppError::InvalidInput(format!("Expected a file but got a directory: {path}")));
     }
     if kind == "folder" && !p.is_dir() {
-        return Err(format!("Expected a folder but got a file: {path}"));
+        return Err(AppError::InvalidInput(format!("Expected a folder but got a file: {path}")));
     }
 
     // Guard: reject individual files with unsupported extensions.
     if kind == "file" && mime_for_path(p).is_none() {
         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("none");
-        return Err(format!(
+        return Err(AppError::InvalidInput(format!(
             "Unsupported file type '.{ext}'. Only .txt, .md, and .pdf files are supported."
-        ));
+        )));
     }
 
     // Guard: reject paths inside the vault directory.
@@ -353,10 +354,7 @@ pub async fn add_scanned_path(
     if !vault_path_raw.is_empty() {
         let vault_p = std::path::Path::new(&vault_path_raw);
         if p.starts_with(vault_p) {
-            return Err(
-                "Cannot scan a path inside the vault — vault files are already indexed separately."
-                    .to_string(),
-            );
+            return Err(AppError::InvalidInput("Cannot scan a path inside the vault — vault files are already indexed separately.".to_string()));
         }
     }
 
@@ -377,9 +375,9 @@ pub async fn add_scanned_path(
     .await
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
-            format!("This path is already in the file scanner: {path}")
+            AppError::InvalidInput(format!("This path is already in the file scanner: {path}"))
         } else {
-            e.to_string()
+            AppError::Database(e.to_string())
         }
     })?;
 
@@ -395,10 +393,11 @@ pub async fn add_scanned_path(
     tauri::async_runtime::spawn(async move {
         if let Err(e) = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path_clone, &kind_clone, &model_clone).await {
             // Persist the error so the UI can surface it.
+            let e_str = e.to_string();
             let _ = sqlx::query(
                 "UPDATE scanned_paths SET error_msg = ? WHERE id = ?",
             )
-            .bind(&e)
+            .bind(&e_str)
             .bind(id)
             .execute(&pool_err)
             .await;
@@ -408,7 +407,7 @@ pub async fn add_scanned_path(
                 "scanned": 0,
                 "total": 0,
                 "done": true,
-                "error": e,
+                "error": e_str,
             }));
         }
     });
@@ -421,7 +420,7 @@ pub async fn add_scanned_path(
     .bind(id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())
+    .map_err(Into::into)
 }
 
 /// Remove a scanned path and all its indexed data.
@@ -430,7 +429,7 @@ pub async fn remove_scanned_path(
     pool: State<'_, SqlitePool>,
     vdb: State<'_, VectorDb>,
     id: i64,
-) -> Result<(), String> {
+) -> AppResult<()> {
     // Fetch path details before deletion.
     let row: Option<(String, String)> = sqlx::query_as(
         "SELECT path, kind FROM scanned_paths WHERE id = ?",
@@ -438,7 +437,7 @@ pub async fn remove_scanned_path(
     .bind(id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     if let Some((path, kind)) = row {
         // Remove all LanceDB vectors for files under this path.
@@ -449,9 +448,9 @@ pub async fn remove_scanned_path(
             } else {
                 format!("{path}{}", std::path::MAIN_SEPARATOR)
             };
-            crate::vector::scanned_file_remove_prefix(&vdb.0, &prefix).await?;
+            crate::vector::scanned_file_remove_prefix(&vdb.0, &prefix).await.map_err(|e| AppError::VectorStore(e))?;
         } else {
-            crate::vector::scanned_file_remove(&vdb.0, &path).await?;
+            crate::vector::scanned_file_remove(&vdb.0, &path).await.map_err(|e| AppError::VectorStore(e))?;
         }
     }
 
@@ -460,7 +459,7 @@ pub async fn remove_scanned_path(
         .bind(id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     Ok(())
 }
@@ -472,13 +471,13 @@ pub async fn toggle_scanned_path(
     pool: State<'_, SqlitePool>,
     id: i64,
     enabled: bool,
-) -> Result<(), String> {
+) -> AppResult<()> {
     sqlx::query("UPDATE scanned_paths SET enabled = ? WHERE id = ?")
         .bind(enabled)
         .bind(id)
         .execute(pool.inner())
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
     Ok(())
 }
 
@@ -491,16 +490,16 @@ pub async fn rescan_path(
     vdb: State<'_, VectorDb>,
     config: State<'_, SharedConfig>,
     id: i64,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let row: Option<(String, String)> = sqlx::query_as(
         "SELECT path, kind FROM scanned_paths WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
-    let (path, kind) = row.ok_or_else(|| format!("Scanned path {id} not found"))?;
+    let (path, kind) = row.ok_or_else(|| AppError::NotFound(format!("Scanned path {id} not found")))?;
 
     let _ = crate::audit::log_event(
         pool.inner(), "file_scan", Some("file"),
@@ -515,10 +514,11 @@ pub async fn rescan_path(
 
     tauri::async_runtime::spawn(async move {
         if let Err(e) = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path, &kind, &model_clone).await {
+            let e_str = e.to_string();
             let _ = sqlx::query(
                 "UPDATE scanned_paths SET error_msg = ? WHERE id = ?",
             )
-            .bind(&e)
+            .bind(&e_str)
             .bind(id)
             .execute(&pool_err)
             .await;
@@ -528,7 +528,7 @@ pub async fn rescan_path(
                 "scanned": 0,
                 "total": 0,
                 "done": true,
-                "error": e,
+                "error": e_str,
             }));
         }
     });
@@ -545,14 +545,14 @@ pub async fn search_scanned_files(
     vdb: State<'_, VectorDb>,
     config: State<'_, SharedConfig>,
     query: String,
-) -> Result<Vec<ScannedFileMatch>, String> {
+) -> AppResult<Vec<ScannedFileMatch>> {
     // Fast path: if no enabled paths exist, skip embedding entirely.
     let enabled_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM scanned_paths WHERE enabled = 1",
     )
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     if enabled_count == 0 {
         return Ok(vec![]);
@@ -563,9 +563,10 @@ pub async fn search_scanned_files(
         &format!("search_query: {query}"),
         &model,
     )
-    .await?;
+    .await
+    .map_err(|e| AppError::EmbeddingFailed(e))?;
 
-    let all_matches = crate::vector::scanned_file_search(&vdb.0, embedding, 60).await?;
+    let all_matches = crate::vector::scanned_file_search(&vdb.0, embedding, 60).await.map_err(|e| AppError::VectorStore(e))?;
 
     if all_matches.is_empty() {
         return Ok(vec![]);
@@ -578,7 +579,7 @@ pub async fn search_scanned_files(
     )
     .fetch_all(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     let filtered: Vec<ScannedFileMatch> = all_matches
         .into_iter()
@@ -613,15 +614,15 @@ pub async fn import_file_as_note(
     pool: State<'_, SqlitePool>,
     file_path: String,
     folder_id: Option<i64>,
-) -> Result<super::Note, String> {
+) -> AppResult<super::Note> {
     // Only supported types are allowed.
     let p = std::path::Path::new(&file_path);
     if mime_for_path(p).is_none() {
         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("none");
-        return Err(format!("Unsupported file type '.{ext}'"));
+        return Err(AppError::InvalidInput(format!("Unsupported file type '.{ext}'")));
     }
 
-    let content = read_file_text(p).map_err(|e| e.to_string())?;
+    let content = read_file_text(p)?;
 
     // Derive a title from the filename stem.
     let title = p
@@ -639,7 +640,7 @@ pub async fn import_file_as_note(
     .bind(folder_id)
     .fetch_one(pool.inner())
     .await
-    .map_err(|e| e.to_string())?;
+    ?;
 
     // Update FTS index so the note is immediately searchable.
     super::search::fts_upsert(pool.inner(), row.id, &title, &content).await;
