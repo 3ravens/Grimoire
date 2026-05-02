@@ -96,7 +96,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         columnOrders = {};
       }
     } catch (e) {
-      errorMsg = String(e);
+      errorMsg = e?.message ?? String(e);
     } finally {
       loading = false;
     }
@@ -106,7 +106,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     try {
       notes = await invoke('list_notes_with_properties', { folderId });
     } catch (e) {
-      errorMsg = String(e);
+      errorMsg = e?.message ?? String(e);
     }
   }
 
@@ -259,7 +259,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       await invoke('set_note_property', { noteId, defId: groupByDefId, value: newValue });
       await refreshNotes();
     } catch (e) {
-      errorMsg = String(e);
+      errorMsg = e?.message ?? String(e);
     }
   }
 
@@ -331,7 +331,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       invoke('remove_note_index', { noteId: id }).catch(() => {});
       await refreshNotes();
     } catch (e) {
-      errorMsg = String(e);
+      errorMsg = e?.message ?? String(e);
     }
   }
 
@@ -368,7 +368,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       }
       await refreshNotes();
     } catch (e) {
-      errorMsg = String(e);
+      errorMsg = e?.message ?? String(e);
     }
   }
 

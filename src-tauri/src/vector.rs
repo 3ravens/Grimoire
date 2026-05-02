@@ -196,7 +196,8 @@ pub async fn embed(text: &str, model: &str) -> Result<Vec<f32>, String> {
 
     #[derive(Deserialize)]
     struct Resp {
-        embedding: Vec<f32>,
+        embedding: Option<Vec<f32>>,
+        error: Option<String>,
     }
 
     // 120-second timeout — embedding a single chunk should never take this long.
@@ -227,7 +228,15 @@ pub async fn embed(text: &str, model: &str) -> Result<Vec<f32>, String> {
             let resp: Resp = serde_json::from_str(&text_body)
                 .map_err(|e| format!("Unexpected embed response: {e}\nBody: {text_body}"))?;
 
-            if resp.embedding.is_empty() {
+            if let Some(err) = resp.error {
+                return Err(format!("Ollama embedding error: {err}"));
+            }
+
+            let embedding = resp.embedding.ok_or_else(|| {
+                format!("Embed response missing embedding\nBody: {text_body}")
+            })?;
+
+            if embedding.is_empty() {
                 return Err("Empty embedding response from Ollama".to_string());
             }
 
@@ -235,11 +244,11 @@ pub async fn embed(text: &str, model: &str) -> Result<Vec<f32>, String> {
             // task prefixes (search_document:, search_query:) can return vectors with
             // varying norms (observed: 1.0–20+). Normalizing here ensures consistent
             // L2² distances in the range [0, 4] regardless of model or configuration.
-            let norm: f32 = resp.embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
             if norm < 0.1 {
                 return Err(format!("Degenerate embedding vector (norm={norm:.4}) — Ollama inference likely crashed"));
             }
-            let normalized: Vec<f32> = resp.embedding.iter().map(|x| x / norm).collect();
+            let normalized: Vec<f32> = embedding.iter().map(|x| x / norm).collect();
 
             Ok(normalized)
         }.await;

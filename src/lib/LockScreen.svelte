@@ -38,7 +38,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         password = '';
       }
     } catch (e) {
-      error = String(e);
+      error = e?.message ?? String(e);
     } finally {
       loading = false;
     }

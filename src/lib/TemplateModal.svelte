@@ -86,7 +86,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         }));
       await onSave(name.trim(), title.trim(), content, properties);
     } catch (e) {
-      error = String(e);
+      error = e?.message ?? String(e);
     } finally {
       loading = false;
     }

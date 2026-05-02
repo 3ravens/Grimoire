@@ -80,7 +80,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       }));
       loading = false;
     } catch (e) {
-      if (query.trim() === current) { errorMsg = String(e); loading = false; }
+      if (query.trim() === current) { errorMsg = e?.message ?? String(e); loading = false; }
       return;
     }
 

@@ -35,7 +35,7 @@
       zimResult = result;
       zimStatus = 'done';
     } catch (e) {
-      zimError  = String(e);
+      zimError  = e?.message ?? String(e);
       zimStatus = 'error';
     }
   }

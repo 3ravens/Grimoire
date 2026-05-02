@@ -12,7 +12,7 @@
       const count = await invoke('export_notes', { destDir: dir });
       exportStatus = `done:${count}`;
     } catch (e) {
-      exportStatus = `error:${e}`;
+      exportStatus = `error:${e?.message ?? e}`;
     }
   }
 </script>

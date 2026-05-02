@@ -37,7 +37,7 @@
       ]);
       hwError = '';
     } catch (e) {
-      hwError = String(e);
+      hwError = e?.message ?? String(e);
     } finally {
       hwLoading = false;
     }
@@ -58,7 +58,7 @@
         invoke('get_running_models'),
       ])
         .then(([r, models]) => { hw = r; runningModels = models; hwError = ''; })
-        .catch(e => { hwError = String(e); })
+        .catch(e => { hwError = e?.message ?? String(e); })
         .finally(() => { hwLoading = false; });
     }
 

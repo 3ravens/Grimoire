@@ -30,6 +30,17 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   // llmEnabled: false disables the chat UI and shows a hardware warning banner.
   let { activeNote = null, pendingInsert = null, keepInMemory = false, llmEnabled = true, wikipediaEnabled = false, onClose = null, onContextMenu = null, onInsertIntoNote = null, onOpenWikipediaArticle = null, activeView = null, activeViewFolderId = null, activeViewLabel = '', activeViewFilters = {} } = $props();
 
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  /** Format a Tauri AppError `{kind, message}` object into a human-readable string.
+   *  Appends an actionable hint for known error kinds. */
+  function fmtAppError(e) {
+    const msg = e?.message ?? String(e);
+    if (e?.kind === 'OllamaUnavailable') return `${msg} — Make sure Ollama is running: ollama serve`;
+    if (e?.kind === 'EmbeddingFailed')   return `${msg} — Check that your embedding model is pulled (ollama pull <model>)`;
+    return msg;
+  }
+
   // ── State ──────────────────────────────────────────────────────────────────
 
   // ── Chat input placeholder ──────────────────────────────────────────────────
@@ -325,7 +336,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       try {
         matches = await invoke('search_notes', { query: ragQuery });
       } catch (e) {
-        notesError = `Note search failed: ${e}`;
+        notesError = `Note search failed: ${fmtAppError(e)}`;
       }
       if (matches.length > 0) {
         const byTitle = {};
@@ -524,7 +535,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
           && messages[messages.length - 1].content === '') {
         messages = messages.slice(0, -1);
       }
-      error = String(e);
+      error = fmtAppError(e);
     } finally {
       isLoading = false;
     }
@@ -579,7 +590,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
           && messages[messages.length - 1].content === '') {
         messages = messages.slice(0, -1);
       }
-      error = String(e);
+      error = fmtAppError(e);
     } finally {
       isLoading = false;
     }

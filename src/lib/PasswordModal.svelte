@@ -62,7 +62,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       }
       // On success (true or undefined), the parent dismisses the modal.
     } catch (e) {
-      error = String(e);
+      error = e?.message ?? String(e);
     } finally {
       loading = false;
     }

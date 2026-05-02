@@ -25,6 +25,7 @@ use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, State};
 use serde::Serialize;
 use pdf_extract;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use crate::{AppError, AppResult};
 use crate::vector::{VectorDb, ScannedFileMatch};
@@ -137,6 +138,7 @@ async fn index_path(
     path: &str,
     kind: &str,
     model: &str,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> AppResult<()> {
     let files = collect_files(path, kind);
     let total = files.len();
@@ -152,6 +154,10 @@ async fn index_path(
     }));
 
     for (file_path, mime) in &files {
+        if cancel.as_ref().is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err(AppError::InvalidInput("Indexing cancelled".to_string()));
+        }
+
         scanned += 1;
 
         // Read file content.
@@ -322,6 +328,7 @@ pub async fn add_scanned_path(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     vdb: State<'_, VectorDb>,
+    cancel_map: State<'_, super::FileScanCancelMap>,
     config: State<'_, SharedConfig>,
     path: String,
     kind: String,
@@ -387,11 +394,45 @@ pub async fn add_scanned_path(
     let vdb_clone  = vdb.0.clone();
     let path_clone = path.clone();
     let kind_clone = kind.clone();
+    let cancel_map_clone = cancel_map.0.clone();
     let model_clone = config.read().unwrap().embedding_model.clone();
     let pool_err   = pool.inner().clone();
 
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = cancel_map.0.lock().map_err(|e| AppError::InvalidInput(e.to_string()))?;
+        map.insert(id, cancel.clone());
+    }
+
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path_clone, &kind_clone, &model_clone).await {
+        let result = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path_clone, &kind_clone, &model_clone, Some(cancel)).await;
+
+        if let Ok(mut map) = cancel_map_clone.lock() {
+            map.remove(&id);
+        }
+
+        if let Err(e) = result {
+            let is_cancelled = matches!(&e, AppError::InvalidInput(m) if m == "Indexing cancelled");
+
+            if is_cancelled {
+                let _ = sqlx::query(
+                    "UPDATE scanned_paths SET error_msg = NULL WHERE id = ?",
+                )
+                .bind(id)
+                .execute(&pool_err)
+                .await;
+
+                let _ = app_clone.emit("filescanner:progress", serde_json::json!({
+                    "path_id": id,
+                    "scanned": 0,
+                    "total": 0,
+                    "done": true,
+                    "error": null,
+                }));
+
+                return;
+            }
+
             // Persist the error so the UI can surface it.
             let e_str = e.to_string();
             let _ = sqlx::query(
@@ -488,6 +529,7 @@ pub async fn rescan_path(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     vdb: State<'_, VectorDb>,
+    cancel_map: State<'_, super::FileScanCancelMap>,
     config: State<'_, SharedConfig>,
     id: i64,
 ) -> AppResult<()> {
@@ -509,11 +551,45 @@ pub async fn rescan_path(
     let app_clone  = app.clone();
     let pool_clone = pool.inner().clone();
     let vdb_clone  = vdb.0.clone();
+    let cancel_map_clone = cancel_map.0.clone();
     let model_clone = config.read().unwrap().embedding_model.clone();
     let pool_err   = pool.inner().clone();
 
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = cancel_map.0.lock().map_err(|e| AppError::InvalidInput(e.to_string()))?;
+        map.insert(id, cancel.clone());
+    }
+
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path, &kind, &model_clone).await {
+        let result = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path, &kind, &model_clone, Some(cancel)).await;
+
+        if let Ok(mut map) = cancel_map_clone.lock() {
+            map.remove(&id);
+        }
+
+        if let Err(e) = result {
+            let is_cancelled = matches!(&e, AppError::InvalidInput(m) if m == "Indexing cancelled");
+
+            if is_cancelled {
+                let _ = sqlx::query(
+                    "UPDATE scanned_paths SET error_msg = NULL WHERE id = ?",
+                )
+                .bind(id)
+                .execute(&pool_err)
+                .await;
+
+                let _ = app_clone.emit("filescanner:progress", serde_json::json!({
+                    "path_id": id,
+                    "scanned": 0,
+                    "total": 0,
+                    "done": true,
+                    "error": null,
+                }));
+
+                return;
+            }
+
             let e_str = e.to_string();
             let _ = sqlx::query(
                 "UPDATE scanned_paths SET error_msg = ? WHERE id = ?",
@@ -532,6 +608,40 @@ pub async fn rescan_path(
             }));
         }
     });
+
+    Ok(())
+}
+
+/// Request cancellation for an in-progress file-scanner indexing run.
+/// Safe to call even when no scan is currently running for the path.
+#[tauri::command]
+pub async fn cancel_scanned_path_index(
+    pool: State<'_, SqlitePool>,
+    cancel_map: State<'_, super::FileScanCancelMap>,
+    id: i64,
+) -> AppResult<()> {
+    {
+        let map = cancel_map.0.lock().map_err(|e| AppError::InvalidInput(e.to_string()))?;
+        if let Some(flag) = map.get(&id) {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    let row_exists: Option<i64> = sqlx::query_scalar("SELECT id FROM scanned_paths WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool.inner())
+        .await
+        ?;
+
+    if row_exists.is_none() {
+        return Err(AppError::NotFound(format!("Scanned path {id} not found")));
+    }
+
+    sqlx::query("UPDATE scanned_paths SET error_msg = NULL WHERE id = ?")
+        .bind(id)
+        .execute(pool.inner())
+        .await
+        ?;
 
     Ok(())
 }

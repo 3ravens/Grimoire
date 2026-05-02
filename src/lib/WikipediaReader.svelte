@@ -119,7 +119,7 @@
         }
       }
     } catch (e) {
-      loadError = String(e);
+      loadError = e?.message ?? String(e);
     } finally {
       isLoading = false;
     }

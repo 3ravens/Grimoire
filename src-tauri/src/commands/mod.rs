@@ -30,6 +30,16 @@ impl CancelMap {
     }
 }
 
+/// Shared map of cancellation flags for in-progress file scanner indexing,
+/// keyed by scanned_paths.id. Set to true to request cancellation.
+pub struct FileScanCancelMap(pub Arc<Mutex<HashMap<i64, Arc<AtomicBool>>>>);
+
+impl FileScanCancelMap {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(HashMap::new())))
+    }
+}
+
 pub mod audit;
 pub mod bookmarks;
 pub mod calendar;

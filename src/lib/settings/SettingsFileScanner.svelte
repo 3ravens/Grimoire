@@ -81,7 +81,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       const row = await invoke('add_scanned_path', { path: filePath, kind: 'file' });
       paths = [row, ...paths];
     } catch (e) {
-      alert(String(e));
+      alert(e?.message ?? String(e));
     }
   }
 
@@ -93,7 +93,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       const row = await invoke('add_scanned_path', { path: folderPath, kind: 'folder' });
       paths = [row, ...paths];
     } catch (e) {
-      alert(`Could not add folder: ${e}`);
+      alert(`Could not add folder: ${e?.message ?? e}`);
     }
   }
 
@@ -106,7 +106,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       delete next[id];
       progress = next;
     } catch (e) {
-      alert(`Could not remove path: ${e}`);
+      alert(`Could not remove path: ${e?.message ?? e}`);
     }
   }
 
@@ -115,7 +115,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       await invoke('toggle_scanned_path', { id, enabled });
       paths = paths.map(p => p.id === id ? { ...p, enabled } : p);
     } catch (e) {
-      alert(`Could not toggle path: ${e}`);
+      alert(`Could not toggle path: ${e?.message ?? e}`);
     }
   }
 
@@ -125,7 +125,18 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     try {
       await invoke('rescan_path', { id });
     } catch (e) {
-      alert(`Could not rescan path: ${e}`);
+      alert(`Could not rescan path: ${e?.message ?? e}`);
+    }
+  }
+
+  async function stopScan(id) {
+    try {
+      await invoke('cancel_scanned_path_index', { id });
+      const existing = progress[id] ?? { scanned: 0, total: 0, done: true, error: null };
+      progress = { ...progress, [id]: { ...existing, done: true, error: null } };
+      await loadPaths();
+    } catch (e) {
+      alert(`Could not stop scan: ${e?.message ?? e}`);
     }
   }
 
@@ -146,7 +157,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     }
 
     const starts = await Promise.all(
-      ids.map((id) => invoke('rescan_path', { id }).then(() => null).catch((e) => String(e)))
+      ids.map((id) => invoke('rescan_path', { id }).then(() => null).catch((e) => e?.message ?? String(e)))
     );
     const failed = starts.filter(Boolean).length;
     const started = ids.length - failed;
@@ -168,7 +179,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       // Signal the main app to refresh its note list and offer navigation.
       window.dispatchEvent(new CustomEvent('grimoire:note-imported', { detail: { noteId: note.id } }));
     } catch (e) {
-      alert(`Could not import file as note: ${e}`);
+      alert(`Could not import file as note: ${e?.message ?? e}`);
     } finally {
       importingNoteId = null;
     }
@@ -286,6 +297,14 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                 {importingNoteId === p.id ? 'Importing…' : 'Turn into note'}
               </button>
             {/if}
+            <button
+              class="fs-action-btn"
+              onclick={() => stopScan(p.id)}
+              disabled={!scanning}
+              title="Stop the current indexing run for this path"
+            >
+              Stop
+            </button>
             <button
               class="fs-action-btn"
               onclick={() => rescan(p.id)}

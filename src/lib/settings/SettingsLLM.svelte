@@ -65,7 +65,14 @@
       initialEmbeddingModel = embeddingModel;
       reindexStatus = 'done';
     } catch (e) {
-      reindexError = String(e);
+      const msg = e?.message ?? String(e);
+      if (e?.kind === 'OllamaUnavailable') {
+        reindexError = `${msg} — Make sure Ollama is running: ollama serve`;
+      } else if (e?.kind === 'EmbeddingFailed') {
+        reindexError = `${msg} — Check that your embedding model is pulled (ollama pull <model>)`;
+      } else {
+        reindexError = msg;
+      }
       reindexStatus = 'error';
     } finally {
       unlisten?.();

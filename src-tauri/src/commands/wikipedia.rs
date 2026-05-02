@@ -326,6 +326,33 @@ pub async fn set_bundle_indexing_state(
     Ok(())
 }
 
+/// Request cancellation for an in-progress bundle indexing run.
+///
+/// This is idempotent: if no in-flight task is registered, the command still
+/// updates the persisted state so the UI can recover from stale "indexing"
+/// markers after crashes/restarts.
+#[tauri::command]
+pub async fn cancel_wikipedia_indexing(
+    pool: State<'_, SqlitePool>,
+    cancel_map: State<'_, super::CancelMap>,
+    bundle_id: String,
+) -> AppResult<()> {
+    {
+        let map = cancel_map.0.lock().map_err(|e| AppError::InvalidInput(e.to_string()))?;
+        if let Some(flag) = map.get(&bundle_id) {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    sqlx::query("UPDATE wikipedia_bundles SET indexing_state = 'queued' WHERE id = ?")
+        .bind(&bundle_id)
+        .execute(pool.inner())
+        .await
+        ?;
+
+    Ok(())
+}
+
 /// Download a ZIM bundle from `download_url` to `dest_dir/filename`.
 /// Streams the response body to disk. Emits `wikipedia:download-progress` events
 /// with `{ bundle_id, downloaded_bytes, total_bytes }` every 512 KB.
@@ -888,7 +915,24 @@ pub async fn index_wikipedia_bundle(
         Err(e) => {
             // If cancelled, the bundle has already been removed — don't try to update state.
             let is_cancelled = matches!(&e, AppError::InvalidInput(m) if m == "Indexing cancelled");
-            if !is_cancelled {
+            if is_cancelled {
+                sqlx::query(
+                    "UPDATE wikipedia_bundles SET indexing_state = 'queued' WHERE id = ?",
+                )
+                .bind(&bundle_id)
+                .execute(pool.inner())
+                .await
+                ?;
+
+                let (batch_splits, single_fallbacks) = crate::vector::snapshot_embed_batch_telemetry();
+                let _ = app.emit("wikipedia:index-progress", serde_json::json!({
+                    "bundle_id": bundle_id,
+                    "batch_splits": batch_splits,
+                    "single_fallbacks": single_fallbacks,
+                    "done": true,
+                    "error": null,
+                }));
+            } else {
                 sqlx::query(
                     "UPDATE wikipedia_bundles SET indexing_state = 'error' WHERE id = ?",
                 )

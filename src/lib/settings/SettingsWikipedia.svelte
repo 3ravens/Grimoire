@@ -252,7 +252,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     try {
       catalogueItems = await invoke('fetch_wikipedia_catalogue');
     } catch (e) {
-      catalogueError = String(e);
+      catalogueError = e?.message ?? String(e);
     } finally {
       loadingCatalogue = false;
     }
@@ -288,7 +288,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         await startIndexing(bundle);
       }
     } catch (e) {
-      catalogueError = `Download failed: ${e}`;
+      catalogueError = `Download failed: ${e?.message ?? e}`;
     }
   }
 
@@ -303,6 +303,19 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     } catch (e) {
       // Progress event with error will have already arrived via the event listener.
       return false;
+    }
+  }
+
+  async function stopIndexing(bundle) {
+    try {
+      await invoke('cancel_wikipedia_indexing', { bundleId: bundle.id });
+      // Mark local progress as finished immediately; backend emits a final
+      // done event as well, but this keeps the UI responsive.
+      const existing = progress[bundle.id] || {};
+      progress = { ...progress, [bundle.id]: { ...existing, done: true, error: null } };
+      await loadBundles();
+    } catch (e) {
+      catalogueError = e?.message ?? String(e);
     }
   }
 
@@ -417,6 +430,10 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
           {#if bundle.indexing_state !== 'indexing' && !(p && !p.done)}
             <button class="wiki-btn" onclick={() => startIndexing(bundle, bundle.indexing_state === 'done' || bundle.indexing_state === 'error')}>
               {bundle.indexing_state === 'done' ? 'Re-index' : 'Index'}
+            </button>
+          {:else}
+            <button class="wiki-btn" onclick={() => stopIndexing(bundle)}>
+              Stop
             </button>
           {/if}
           <button class="wiki-btn wiki-btn-danger" onclick={() => confirmRemove(bundle)}>Remove</button>

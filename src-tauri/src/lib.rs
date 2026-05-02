@@ -86,6 +86,7 @@ pub fn run() {
                 });
 
                 app_handle.manage(commands::CancelMap::new());
+                app_handle.manage(commands::FileScanCancelMap::new());
             });
 
             Ok(())
@@ -169,6 +170,7 @@ pub fn run() {
         commands::fetch_wikipedia_catalogue,
         commands::list_wikipedia_bundles,
         commands::set_bundle_indexing_state,
+        commands::cancel_wikipedia_indexing,
         commands::download_wikipedia_bundle,
         commands::remove_wikipedia_bundle,
         commands::index_wikipedia_bundle,
@@ -186,6 +188,7 @@ pub fn run() {
         commands::remove_scanned_path,
         commands::toggle_scanned_path,
         commands::rescan_path,
+        commands::cancel_scanned_path_index,
         commands::search_scanned_files,
         commands::import_file_as_note,
         commands::get_audit_log,
