@@ -15,6 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
+mod access_filter;
 mod audit;
 mod auth;
 mod chunking;
@@ -27,6 +28,7 @@ mod hardware;
 mod note_store;
 mod vector;
 
+pub use access_filter::AccessFilter;
 pub use error::{AppError, AppResult};
 pub use note_store::EncryptedNoteStore;
 

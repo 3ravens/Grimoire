@@ -20,6 +20,7 @@ use sqlx::SqlitePool;
 use tauri::State;
 use crate::AppResult;
 use crate::KeyStore;
+use crate::AccessFilter;
 use crate::config::SharedConfig;
 
 // ---------------------------------------------------------------------------
@@ -74,31 +75,6 @@ fn build_fts_query(raw: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-// ---------------------------------------------------------------------------
-// Locked-folder exclusion helper
-// ---------------------------------------------------------------------------
-
-/// Returns the set of folder IDs that are password-protected AND have no
-/// session key currently held (i.e. they appear locked to this session).
-async fn locked_folder_ids(pool: &SqlitePool, keys: &KeyStore) -> Vec<i64> {
-    let unlocked_ids: Vec<i64> = keys
-        .folder_keys
-        .lock()
-        .map(|fk| fk.keys().copied().collect())
-        .unwrap_or_default();
-
-    let all_locked: Vec<i64> =
-        sqlx::query_scalar("SELECT id FROM folders WHERE locked = 1")
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
-
-    all_locked
-        .into_iter()
-        .filter(|id| !unlocked_ids.contains(id))
-        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -160,15 +136,11 @@ async fn fts_search_inner(
     // Secondary filter: exclude notes in folders that are currently locked.
     // FTS should not contain these (fts_upsert skips locked notes), but we
     // guard here in case of a race or stale entry.
-    let locked = locked_folder_ids(pool, keys).await;
+    let filter = AccessFilter::load(pool, keys).await;
 
     let results = raw
         .into_iter()
-        .filter(|r| {
-            r.folder_id
-                .map(|fid| !locked.contains(&fid))
-                .unwrap_or(true)
-        })
+        .filter(|r| filter.is_accessible(r.folder_id))
         .take(limit)
         .collect();
 

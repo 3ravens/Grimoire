@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 use sqlx::SqlitePool;
-use crate::{KeyStore, AppError, AppResult};
+use crate::{AccessFilter, KeyStore, AppError, AppResult};
 use crate::commands::{NoteRow, FolderRow, Note, Folder};
 
 /// A thin storage abstraction over SQLite and the session key store.
@@ -157,15 +157,6 @@ impl<'a> EncryptedNoteStore<'a> {
         }
     }
 
-    /// Fetch all folder lock states in one query and return a lookup map.
-    async fn folder_lock_states(&self) -> HashMap<i64, bool> {
-        let locked_rows: Vec<(i64, i64)> = sqlx::query_as("SELECT id, locked FROM folders")
-            .fetch_all(self.pool)
-            .await
-            .unwrap_or_default();
-        locked_rows.into_iter().map(|(id, lk)| (id, lk != 0)).collect()
-    }
-
     // -------------------------------------------------------------------------
     // Notes
     // -------------------------------------------------------------------------
@@ -213,12 +204,10 @@ impl<'a> EncryptedNoteStore<'a> {
             .await?
         };
 
-        let lock_states = self.folder_lock_states().await;
+        let filter = AccessFilter::load(self.pool, self.keys).await;
 
         Ok(rows.into_iter().map(|row| {
-            let fl = row.folder_id
-                .and_then(|fid| lock_states.get(&fid).copied())
-                .unwrap_or(false);
+            let fl = !filter.is_accessible(row.folder_id);
             self.to_note(row, fl)
         }).collect())
     }
@@ -236,12 +225,10 @@ impl<'a> EncryptedNoteStore<'a> {
         .fetch_all(self.pool)
         .await?;
 
-        let lock_states = self.folder_lock_states().await;
+        let filter = AccessFilter::load(self.pool, self.keys).await;
 
         Ok(rows.into_iter().map(|row| {
-            let fl = row.folder_id
-                .and_then(|fid| lock_states.get(&fid).copied())
-                .unwrap_or(false);
+            let fl = !filter.is_accessible(row.folder_id);
             self.to_note(row, fl)
         }).collect())
     }
@@ -262,12 +249,10 @@ impl<'a> EncryptedNoteStore<'a> {
         .fetch_all(self.pool)
         .await?;
 
-        let lock_states = self.folder_lock_states().await;
+        let filter = AccessFilter::load(self.pool, self.keys).await;
 
         Ok(rows.into_iter().map(|row| {
-            let fl = row.folder_id
-                .and_then(|fid| lock_states.get(&fid).copied())
-                .unwrap_or(false);
+            let fl = !filter.is_accessible(row.folder_id);
             self.to_note(row, fl)
         }).collect())
     }
@@ -506,25 +491,21 @@ impl<'a> EncryptedNoteStore<'a> {
 
         let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
         let sql = format!(
-            "SELECT n.id, n.title, n.folder_id, COALESCE(f.locked, 0) AS folder_locked
+            "SELECT n.id, n.title, n.folder_id
              FROM notes n
-             LEFT JOIN folders f ON f.id = n.folder_id
              WHERE n.id IN ({placeholders})"
         );
 
-        let mut q = sqlx::query_as::<_, (i64, String, Option<i64>, i64)>(&sql);
+        let mut q = sqlx::query_as::<_, (i64, String, Option<i64>)>(&sql);
         for id in ids {
             q = q.bind(id);
         }
         let rows = q.fetch_all(self.pool).await?;
 
+        let filter = AccessFilter::load(self.pool, self.keys).await;
         let mut map = HashMap::new();
-        for (id, raw_title, folder_id, folder_locked_col) in rows {
-            let locked = folder_locked_col != 0
-                && folder_id
-                    .map(|fid| self.folder_locked(fid, true))
-                    .unwrap_or(false);
-            if locked {
+        for (id, raw_title, folder_id) in rows {
+            if !filter.is_accessible(folder_id) {
                 continue;
             }
 
