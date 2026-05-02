@@ -20,7 +20,7 @@ use sqlx::SqlitePool;
 use tauri::State;
 use crate::KeyStore;
 use crate::{AppError, AppResult};
-use super::{NoteRow, map_note_row};
+use crate::EncryptedNoteStore;
 
 // ---------------------------------------------------------------------------
 // Note properties / databases
@@ -257,30 +257,12 @@ pub async fn list_notes_with_properties(
     keys: State<'_, KeyStore>,
     folder_id: i64,
 ) -> AppResult<Vec<NoteWithProperties>> {
-    // Fetch notes in the folder.
-    let rows = sqlx::query_as::<_, NoteRow>(
-        "SELECT id, title, content, folder_id, created_at, updated_at
-         FROM notes WHERE folder_id = ? ORDER BY updated_at DESC",
-    )
-    .bind(folder_id)
-    .fetch_all(pool.inner())
-    .await
-    ?;
-
-    let folder_locked = {
-        let v: i64 = sqlx::query_scalar("SELECT locked FROM folders WHERE id = ?")
-            .bind(folder_id)
-            .fetch_optional(pool.inner())
-            .await
-            ?
-            .unwrap_or(0);
-        v != 0
-    };
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let notes = store.list_notes(Some(folder_id), false).await?;
 
     // Build per-note property values.
     let mut result = Vec::new();
-    for row in rows {
-        let note = map_note_row(row, folder_locked, &keys);
+    for note in notes {
         if note.locked {
             continue;
         }

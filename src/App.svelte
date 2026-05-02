@@ -1580,6 +1580,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         onEditTemplate={(t) => (tmpl.editingTemplate = t)}
         onDeleteTemplate={(id) => tmpl.deleteTemplate(id, showError)}
         onConfirmInlineRename={confirmInlineRename}
+        onRenameFolder={(folder) => { inlineRenaming = { id: folder.id, type: 'folder', value: folder.name }; }}
         onMoveNote={moveNote}
         onMoveFolder={loadFolders}
       />

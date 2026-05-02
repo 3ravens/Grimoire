@@ -17,11 +17,11 @@
 
 use sqlx::SqlitePool;
 use tauri::{Emitter, State};
-use crate::{AppError, AppResult};
+use crate::{AppError, AppResult, EncryptedNoteStore};
+use super::NoteRow;
 use crate::chunking::{split_sentences, chunk_sentences};
 use crate::KeyStore;
 use crate::config::SharedConfig;
-use super::{NoteRow, map_note_row};
 
 
 // ---------------------------------------------------------------------------
@@ -173,43 +173,10 @@ pub async fn search_notes(
         return Ok(matches);
     }
 
-    // Batch-fetch the current title and lock state for all returned note IDs.
+    // Cross-reference LanceDB hits with SQLite: filter locked folders, refresh titles.
     let ids: Vec<i64> = matches.iter().map(|m| m.note_id).collect();
-    let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-    let sql = format!(
-        "SELECT n.id, n.title, n.folder_id, COALESCE(f.locked, 0) AS folder_locked
-         FROM notes n
-         LEFT JOIN folders f ON f.id = n.folder_id
-         WHERE n.id IN ({placeholders})"
-    );
-    let mut q = sqlx::query_as::<_, (i64, String, Option<i64>, i64)>(&sql);
-    for id in &ids {
-        q = q.bind(id);
-    }
-    let rows = q.fetch_all(pool.inner()).await?;
-
-    // Build a map from note_id → decrypted title, skipping locked notes.
-    let mut accessible: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
-    for (id, raw_title, folder_id, folder_locked_col) in rows {
-        // Skip notes in currently-locked folders.
-        let locked = folder_locked_col != 0
-            && folder_id
-                .map(|fid| super::folder_is_locked(fid, true, &keys))
-                .unwrap_or(false);
-        if locked {
-            continue;
-        }
-
-        // Decrypt the title if an active key is available for this note.
-        let title = if let Some(key) = super::resolve_key(folder_id, &keys) {
-            crate::crypto::decrypt(&key, &raw_title)
-                .and_then(|b| String::from_utf8(b).map_err(|e| e.to_string()))
-                .unwrap_or(raw_title)
-        } else {
-            raw_title
-        };
-        accessible.insert(id, title);
-    }
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let accessible = store.accessible_note_titles(&ids).await?;
 
     // Drop locked/missing results; update titles with current decrypted values.
     matches.retain(|m| accessible.contains_key(&m.note_id));
@@ -250,33 +217,16 @@ pub async fn reindex_all(
         }
     }
 
-    let raw_notes = sqlx::query_as::<_, NoteRow>(
-        "SELECT id, title, content, folder_id, created_at, updated_at FROM notes",
-    )
-    .fetch_all(pool.inner())
-    .await
-    ?;
-
-    let folder_lock_states: std::collections::HashMap<i64, bool> = {
-        let locked_rows: Vec<(i64, i64)> =
-            sqlx::query_as("SELECT id, locked FROM folders")
-                .fetch_all(pool.inner())
-                .await
-                .unwrap_or_default();
-        locked_rows.into_iter().map(|(id, lk)| (id, lk != 0)).collect()
-    };
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let notes = store.list_notes(None, true).await?;
 
     let model = config.read().unwrap().embedding_model.clone();
-    let total = raw_notes.len();
+    let total = notes.len();
     let mut count = 0usize;
     let mut processed = 0usize;
     let mut failed: Vec<String> = Vec::new();
 
-    for raw in raw_notes {
-        let fl = raw.folder_id
-            .and_then(|fid| folder_lock_states.get(&fid).copied())
-            .unwrap_or(false);
-        let note = map_note_row(raw, fl, &keys);
+    for note in notes {
         if note.locked {
             processed += 1;
             continue;

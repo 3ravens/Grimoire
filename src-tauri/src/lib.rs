@@ -24,9 +24,11 @@ mod crypto;
 mod db;
 pub mod error;
 mod hardware;
+mod note_store;
 mod vector;
 
 pub use error::{AppError, AppResult};
+pub use note_store::EncryptedNoteStore;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};

@@ -19,8 +19,8 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
 use crate::KeyStore;
-use crate::{AppError, AppResult};
-use super::{Note, NoteRow, LinkedNote, GraphNode, GraphEdge, map_note_row};
+use crate::{AppError, AppResult, EncryptedNoteStore};
+use super::{Note, LinkedNote, GraphNode, GraphEdge};
 
 // ---------------------------------------------------------------------------
 // Tags and wiki-links
@@ -240,51 +240,8 @@ pub async fn list_notes_by_tag(
     keys: State<'_, KeyStore>,
     tag: String,
 ) -> AppResult<Vec<Note>> {
-    // Use a struct that can hold the extra `folder_locked` column from the join.
-    #[derive(sqlx::FromRow)]
-    struct NoteRowWithLock {
-        id: i64,
-        title: String,
-        content: String,
-        folder_id: Option<i64>,
-        created_at: i64,
-        updated_at: i64,
-        folder_locked: i64,
-    }
-    let rows = sqlx::query_as::<_, NoteRowWithLock>(
-        "SELECT n.id, n.title, n.content, n.folder_id, n.created_at, n.updated_at,
-                COALESCE(f.locked, 0) AS folder_locked
-         FROM notes n
-         LEFT JOIN folders f ON f.id = n.folder_id
-         JOIN note_tags nt ON nt.note_id = n.id
-         JOIN tags t ON t.id = nt.tag_id
-         WHERE t.name = ?
-         ORDER BY n.updated_at DESC",
-    )
-    .bind(tag.to_lowercase())
-    .fetch_all(pool.inner())
-    .await
-    ?;
-
-    let notes = rows
-        .into_iter()
-        .map(|r| {
-            let folder_locked = r.folder_locked != 0;
-            map_note_row(
-                NoteRow {
-                    id: r.id,
-                    title: r.title,
-                    content: r.content,
-                    folder_id: r.folder_id,
-                    created_at: r.created_at,
-                    updated_at: r.updated_at,
-                },
-                folder_locked,
-                &keys,
-            )
-        })
-        .collect();
-    Ok(notes)
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    store.notes_for_tag(&tag.to_lowercase()).await
 }
 
 /// Return all tags with a count of how many notes use each one, sorted by

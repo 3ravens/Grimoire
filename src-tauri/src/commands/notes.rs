@@ -15,11 +15,13 @@
 // You should have received a copy of the GNU General Public License
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
+use std::path::PathBuf;
+use std::collections::HashMap;
 use sqlx::SqlitePool;
 use tauri::State;
 use crate::KeyStore;
-use crate::{AppError, AppResult};
-use super::{NoteRow, Note, FolderRow, Folder, resolve_key, folder_is_locked, map_note_row, map_folder_row};
+use crate::{AppError, AppResult, EncryptedNoteStore};
+use super::{Note, Folder};
 
 // ---------------------------------------------------------------------------
 // Note commands
@@ -33,23 +35,8 @@ pub async fn create_note(
     title: String,
     folder_id: Option<i64>,
 ) -> AppResult<Note> {
-    let stored_title = if let Some(key) = resolve_key(folder_id, &keys) {
-        crate::crypto::encrypt(&key, title.as_bytes())
-    } else {
-        title
-    };
-
-    let row = sqlx::query_as::<_, NoteRow>(
-        "INSERT INTO notes (title, folder_id) VALUES (?, ?)
-         RETURNING id, title, content, folder_id, created_at, updated_at",
-    )
-    .bind(&stored_title)
-    .bind(folder_id)
-    .fetch_one(pool.inner())
-    .await
-    ?;
-
-    let note = map_note_row(row, false, &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let note = store.create_note(&title, folder_id).await?;
     if !note.locked {
         super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
     }
@@ -67,28 +54,8 @@ pub async fn get_note(
     keys: State<'_, KeyStore>,
     id: i64,
 ) -> AppResult<Note> {
-    let row = sqlx::query_as::<_, NoteRow>(
-        "SELECT id, title, content, folder_id, created_at, updated_at
-         FROM notes WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_one(pool.inner())
-    .await
-    ?;
-
-    let folder_locked = if let Some(fid) = row.folder_id {
-        let v: i64 = sqlx::query_scalar("SELECT locked FROM folders WHERE id = ?")
-            .bind(fid)
-            .fetch_optional(pool.inner())
-            .await
-            ?
-            .unwrap_or(0);
-        v != 0
-    } else {
-        false
-    };
-
-    let note = map_note_row(row, folder_locked, &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let note = store.get_note(id).await?;
     let _ = crate::audit::log_event(
         pool.inner(), "note_open", Some("note"),
         Some(note.id), Some(&note.title), None,
@@ -106,45 +73,8 @@ pub async fn list_notes(
     folder_id: Option<i64>,
     all: Option<bool>,
 ) -> AppResult<Vec<Note>> {
-    let rows = if all.unwrap_or(false) {
-        sqlx::query_as::<_, NoteRow>(
-            "SELECT id, title, content, folder_id, created_at, updated_at
-             FROM notes ORDER BY updated_at DESC",
-        )
-        .fetch_all(pool.inner())
-        .await
-        ?
-    } else {
-        sqlx::query_as::<_, NoteRow>(
-            "SELECT id, title, content, folder_id, created_at, updated_at
-             FROM notes WHERE folder_id IS ? ORDER BY updated_at DESC",
-        )
-        .bind(folder_id)
-        .fetch_all(pool.inner())
-        .await
-        ?
-    };
-
-    let folder_lock_states: std::collections::HashMap<i64, bool> = {
-        let locked_rows: Vec<(i64, i64)> =
-            sqlx::query_as("SELECT id, locked FROM folders")
-                .fetch_all(pool.inner())
-                .await
-                .unwrap_or_default();
-        locked_rows.into_iter().map(|(id, lk)| (id, lk != 0)).collect()
-    };
-
-    let notes = rows
-        .into_iter()
-        .map(|row| {
-            let fl = row.folder_id
-                .and_then(|fid| folder_lock_states.get(&fid).copied())
-                .unwrap_or(false);
-            map_note_row(row, fl, &keys)
-        })
-        .collect();
-
-    Ok(notes)
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    store.list_notes(folder_id, all.unwrap_or(false)).await
 }
 
 /// Update a note's title and content. Bumps updated_at to the current time.
@@ -156,54 +86,8 @@ pub async fn update_note(
     title: String,
     content: String,
 ) -> AppResult<Note> {
-    let current: Option<(Option<i64>,)> =
-        sqlx::query_as("SELECT folder_id FROM notes WHERE id = ?")
-            .bind(id)
-            .fetch_optional(pool.inner())
-            .await
-            ?;
-
-    let folder_id = current.and_then(|(fid,)| fid);
-
-    let folder_locked = if let Some(fid) = folder_id {
-        let v: i64 = sqlx::query_scalar("SELECT locked FROM folders WHERE id = ?")
-            .bind(fid)
-            .fetch_optional(pool.inner())
-            .await
-            ?
-            .unwrap_or(0);
-        v != 0
-    } else {
-        false
-    };
-
-    if folder_id.map(|fid| folder_is_locked(fid, folder_locked, &keys)).unwrap_or(false) {
-        return Err(AppError::Auth("folder_locked".to_string()));
-    }
-
-    let (stored_title, stored_content) = if let Some(key) = resolve_key(folder_id, &keys) {
-        (
-            crate::crypto::encrypt(&key, title.as_bytes()),
-            crate::crypto::encrypt(&key, content.as_bytes()),
-        )
-    } else {
-        (title, content)
-    };
-
-    let row = sqlx::query_as::<_, NoteRow>(
-        "UPDATE notes
-         SET title = ?, content = ?, updated_at = unixepoch()
-         WHERE id = ?
-         RETURNING id, title, content, folder_id, created_at, updated_at",
-    )
-    .bind(&stored_title)
-    .bind(&stored_content)
-    .bind(id)
-    .fetch_one(pool.inner())
-    .await
-    ?;
-
-    let note = map_note_row(row, folder_locked, &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let note = store.update_note(id, &title, &content).await?;
     if !note.locked {
         super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
     }
@@ -222,19 +106,8 @@ pub async fn move_note(
     id: i64,
     folder_id: Option<i64>,
 ) -> AppResult<Note> {
-    let row = sqlx::query_as::<_, NoteRow>(
-        "UPDATE notes
-         SET folder_id = ?, updated_at = unixepoch()
-         WHERE id = ?
-         RETURNING id, title, content, folder_id, created_at, updated_at",
-    )
-    .bind(folder_id)
-    .bind(id)
-    .fetch_one(pool.inner())
-    .await
-    ?;
-
-    let note = map_note_row(row, false, &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let note = store.move_note(id, folder_id).await?;
     let _ = crate::audit::log_event(
         pool.inner(), "note_update", Some("note"),
         Some(note.id), Some(&note.title), Some("moved"),
@@ -250,32 +123,8 @@ pub async fn rename_note(
     id: i64,
     name: String,
 ) -> AppResult<Note> {
-    // Fetch the current folder so we know whether to encrypt.
-    let current: Option<(Option<i64>,)> =
-        sqlx::query_as("SELECT folder_id FROM notes WHERE id = ?")
-            .bind(id)
-            .fetch_optional(pool.inner())
-            .await
-            ?;
-
-    let folder_id = current.and_then(|(fid,)| fid);
-    let stored_title = if let Some(key) = resolve_key(folder_id, &keys) {
-        crate::crypto::encrypt(&key, name.as_bytes())
-    } else {
-        name
-    };
-
-    let row = sqlx::query_as::<_, NoteRow>(
-        "UPDATE notes SET title = ?, updated_at = unixepoch() WHERE id = ?
-         RETURNING id, title, content, folder_id, created_at, updated_at",
-    )
-    .bind(&stored_title)
-    .bind(id)
-    .fetch_one(pool.inner())
-    .await
-    ?;
-
-    let note = map_note_row(row, false, &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let note = store.rename_note(id, &name).await?;
     super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
     let _ = crate::audit::log_event(
         pool.inner(), "note_update", Some("note"),
@@ -309,63 +158,8 @@ pub async fn duplicate_note(
     keys: State<'_, KeyStore>,
     id: i64,
 ) -> AppResult<Note> {
-    // Fetch the raw row first so we can decrypt it.
-    let src_row = sqlx::query_as::<_, NoteRow>(
-        "SELECT id, title, content, folder_id, created_at, updated_at FROM notes WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_one(pool.inner())
-    .await
-    ?;
-
-    let folder_id = src_row.folder_id;
-
-    // Check if the folder is locked — refuse if so.
-    let folder_locked = if let Some(fid) = folder_id {
-        let v: i64 = sqlx::query_scalar("SELECT locked FROM folders WHERE id = ?")
-            .bind(fid)
-            .fetch_optional(pool.inner())
-            .await
-            ?
-            .unwrap_or(0);
-        v != 0
-    } else {
-        false
-    };
-
-    if folder_id.map(|fid| folder_is_locked(fid, folder_locked, &keys)).unwrap_or(false) {
-        return Err(AppError::Auth("note_locked".to_string()));
-    }
-
-    // Decrypt source title and content.
-    let source = map_note_row(src_row, folder_locked, &keys);
-
-    let new_title = format!("{} (copy)", source.title);
-    let new_content = source.content;
-
-    // Re-encrypt for the destination folder.
-    let (stored_title, stored_content) = if let Some(key) = resolve_key(folder_id, &keys) {
-        (
-            crate::crypto::encrypt(&key, new_title.as_bytes()),
-            crate::crypto::encrypt(&key, new_content.as_bytes()),
-        )
-    } else {
-        (new_title.clone(), new_content.clone())
-    };
-
-    let row = sqlx::query_as::<_, NoteRow>(
-        "INSERT INTO notes (title, content, folder_id)
-         VALUES (?, ?, ?)
-         RETURNING id, title, content, folder_id, created_at, updated_at",
-    )
-    .bind(&stored_title)
-    .bind(&stored_content)
-    .bind(folder_id)
-    .fetch_one(pool.inner())
-    .await
-    ?;
-
-    let note = map_note_row(row, false, &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let note = store.duplicate_note(id).await?;
     if !note.locked {
         super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
     }
@@ -388,23 +182,8 @@ pub async fn create_folder(
     name: String,
     parent_id: Option<i64>,
 ) -> AppResult<Folder> {
-    let stored_name = if let Some(key) = resolve_key(None, &keys) {
-        crate::crypto::encrypt(&key, name.as_bytes())
-    } else {
-        name
-    };
-
-    let row = sqlx::query_as::<_, FolderRow>(
-        "INSERT INTO folders (name, parent_id) VALUES (?, ?)
-         RETURNING id, name, parent_id, created_at, locked",
-    )
-    .bind(&stored_name)
-    .bind(parent_id)
-    .fetch_one(pool.inner())
-    .await
-    ?;
-
-    let folder = map_folder_row(row, &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let folder = store.create_folder(&name, parent_id).await?;
     let _ = crate::audit::log_event(
         pool.inner(), "folder_create", Some("folder"),
         Some(folder.id), Some(&folder.name), None,
@@ -418,14 +197,8 @@ pub async fn list_folders(
     pool: State<'_, SqlitePool>,
     keys: State<'_, KeyStore>,
 ) -> AppResult<Vec<Folder>> {
-    let rows = sqlx::query_as::<_, FolderRow>(
-        "SELECT id, name, parent_id, created_at, locked FROM folders ORDER BY name ASC",
-    )
-    .fetch_all(pool.inner())
-    .await
-    ?;
-
-    Ok(rows.into_iter().map(|r| map_folder_row(r, &keys)).collect())
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    store.list_folders().await
 }
 
 /// Rename a folder.
@@ -436,23 +209,8 @@ pub async fn rename_folder(
     id: i64,
     name: String,
 ) -> AppResult<Folder> {
-    let stored_name = if let Some(key) = resolve_key(None, &keys) {
-        crate::crypto::encrypt(&key, name.as_bytes())
-    } else {
-        name
-    };
-
-    let row = sqlx::query_as::<_, FolderRow>(
-        "UPDATE folders SET name = ? WHERE id = ?
-         RETURNING id, name, parent_id, created_at, locked",
-    )
-    .bind(&stored_name)
-    .bind(id)
-    .fetch_one(pool.inner())
-    .await
-    ?;
-
-    let folder = map_folder_row(row, &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let folder = store.rename_folder(id, &name).await?;
     let _ = crate::audit::log_event(
         pool.inner(), "folder_rename", Some("folder"),
         Some(folder.id), Some(&folder.name), None,
@@ -536,33 +294,16 @@ pub async fn export_notes(
     keys: State<'_, KeyStore>,
     dest_dir: String,
 ) -> AppResult<u32> {
-    use std::collections::HashMap;
-    use std::path::PathBuf;
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
 
-    // Load all folders so we can resolve folder_id → path segment.
-    let folder_rows = sqlx::query_as::<_, FolderRow>(
-        "SELECT id, name, parent_id, created_at, locked FROM folders",
-    )
-    .fetch_all(pool.inner())
-    .await
-    ?;
-
-    // Build a map from folder ID to its display name (decrypted).
-    let folder_names: HashMap<i64, String> = folder_rows
+    // Build a map from folder ID to its display name (already decrypted).
+    let folder_names: HashMap<i64, String> = store.list_folders().await?
         .into_iter()
-        .map(|row| {
-            let mapped = map_folder_row(row, &keys);
-            (mapped.id, if mapped.locked { String::new() } else { mapped.name })
-        })
+        .map(|f| (f.id, if f.locked { String::new() } else { f.name }))
         .collect();
 
-    // Load all notes.
-    let note_rows = sqlx::query_as::<_, NoteRow>(
-        "SELECT id, title, content, folder_id, created_at, updated_at FROM notes ORDER BY id ASC",
-    )
-    .fetch_all(pool.inner())
-    .await
-    ?;
+    // Fetch all notes; locked ones surface with note.locked = true.
+    let all_notes = store.list_notes(None, true).await?;
 
     let dest = PathBuf::from(&dest_dir);
 
@@ -583,25 +324,10 @@ pub async fn export_notes(
     let dest = export_root;
     let mut exported: u32 = 0;
 
-    for row in note_rows {
-        // Determine whether the note is locked.
-        let is_locked = if let Some(fid) = row.folder_id {
-            let locked_col: i64 = sqlx::query_scalar("SELECT locked FROM folders WHERE id = ?")
-                .bind(fid)
-                .fetch_optional(pool.inner())
-                .await
-                ?
-                .unwrap_or(0);
-            super::folder_is_locked(fid, locked_col != 0, &keys)
-        } else {
-            false
-        };
-
-        if is_locked {
+    for note in all_notes {
+        if note.locked {
             continue; // skip — no key available
         }
-
-        let note = map_note_row(row, false, &keys);
 
         // Resolve the output directory for this note.
         let out_dir = if let Some(fid) = note.folder_id {

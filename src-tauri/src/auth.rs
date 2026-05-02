@@ -35,6 +35,28 @@ use crate::{
 };
 
 // ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Return the IDs of all folders in the subtree rooted at `folder_id`,
+/// including `folder_id` itself.
+async fn folder_subtree_ids(pool: &SqlitePool, folder_id: i64) -> Result<Vec<i64>, String> {
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        "WITH RECURSIVE sub(id) AS (
+             SELECT id FROM folders WHERE id = ?
+             UNION ALL
+             SELECT f.id FROM folders f JOIN sub ON f.parent_id = sub.id
+         )
+         SELECT id FROM sub",
+    )
+    .bind(folder_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().map(|(id,)| id).collect())
+}
+
+// ---------------------------------------------------------------------------
 // Vault commands
 // ---------------------------------------------------------------------------
 
@@ -378,43 +400,45 @@ pub async fn set_folder_password(
     use base64::Engine;
     let salt_b64 = base64::engine::general_purpose::STANDARD.encode(&salt);
 
-    // Encrypt notes in this folder.
-    let note_rows: Vec<(i64, String, String)> =
-        sqlx::query_as("SELECT id, title, content FROM notes WHERE folder_id = ?")
-            .bind(folder_id)
-            .fetch_all(pool.inner())
-            .await
-            .map_err(|e| e.to_string())?;
+    // Collect all folders in the subtree (root + descendants).
+    let subtree_ids = folder_subtree_ids(pool.inner(), folder_id).await?;
 
-    for (id, title, content) in &note_rows {
-        let enc_title = crypto::encrypt(&new_key, title.as_bytes());
-        let enc_content = crypto::encrypt(&new_key, content.as_bytes());
-        sqlx::query("UPDATE notes SET title = ?, content = ? WHERE id = ?")
-            .bind(&enc_title)
-            .bind(&enc_content)
-            .bind(id)
-            .execute(pool.inner())
-            .await
-            .map_err(|e| e.to_string())?;
-    }
+    // Encrypt notes in every folder in the subtree.
+    for &fid in &subtree_ids {
+        let note_rows: Vec<(i64, String, String)> =
+            sqlx::query_as("SELECT id, title, content FROM notes WHERE folder_id = ?")
+                .bind(fid)
+                .fetch_all(pool.inner())
+                .await
+                .map_err(|e| e.to_string())?;
 
-    // Update folder row.
-    sqlx::query(
-        "UPDATE folders SET locked = 1, salt = ?, sentinel = ? WHERE id = ?",
-    )
-    .bind(&salt_b64)
-    .bind(&sentinel)
-    .bind(folder_id)
-    .execute(pool.inner())
-    .await
-    .map_err(|e| e.to_string())?;
+        for (id, title, content) in &note_rows {
+            let enc_title = crypto::encrypt(&new_key, title.as_bytes());
+            let enc_content = crypto::encrypt(&new_key, content.as_bytes());
+            sqlx::query("UPDATE notes SET title = ?, content = ? WHERE id = ?")
+                .bind(&enc_title)
+                .bind(&enc_content)
+                .bind(id)
+                .execute(pool.inner())
+                .await
+                .map_err(|e| e.to_string())?;
+        }
 
-    // Do NOT store the key in session memory — setting a password locks the folder
-    // immediately. The user must call unlock_folder to access it in this session.
+        // Mark folder as locked with the same salt + sentinel.
+        sqlx::query(
+            "UPDATE folders SET locked = 1, salt = ?, sentinel = ? WHERE id = ?",
+        )
+        .bind(&salt_b64)
+        .bind(&sentinel)
+        .bind(fid)
+        .execute(pool.inner())
+        .await
+        .map_err(|e| e.to_string())?;
 
-    // Remove notes from LanceDB.
-    for (id, _, _) in &note_rows {
-        crate::vector::remove(&vdb.0, *id).await?;
+        // Remove notes from LanceDB.
+        for (id, _, _) in &note_rows {
+            crate::vector::remove(&vdb.0, *id).await?;
+        }
     }
 
     new_key.zeroize();
@@ -451,46 +475,54 @@ pub async fn remove_folder_password(
     }
 
     // Decrypt notes.
-    let note_rows: Vec<(i64, String, String)> =
-        sqlx::query_as("SELECT id, title, content FROM notes WHERE folder_id = ?")
-            .bind(folder_id)
-            .fetch_all(pool.inner())
-            .await
-            .map_err(|e| e.to_string())?;
+    let subtree_ids = folder_subtree_ids(pool.inner(), folder_id).await?;
 
-    for (id, enc_title, enc_content) in note_rows {
-        let plain_title = match crypto::decrypt(&key, &enc_title) {
-            Ok(b) => String::from_utf8(b).map_err(|e| e.to_string())?,
-            Err(_) => enc_title,
-        };
-        let plain_content = match crypto::decrypt(&key, &enc_content) {
-            Ok(b) => String::from_utf8(b).map_err(|e| e.to_string())?,
-            Err(_) => enc_content,
-        };
-        sqlx::query("UPDATE notes SET title = ?, content = ? WHERE id = ?")
-            .bind(&plain_title)
-            .bind(&plain_content)
-            .bind(id)
-            .execute(pool.inner())
-            .await
-            .map_err(|e| e.to_string())?;
+    for &fid in &subtree_ids {
+        let note_rows: Vec<(i64, String, String)> =
+            sqlx::query_as("SELECT id, title, content FROM notes WHERE folder_id = ?")
+                .bind(fid)
+                .fetch_all(pool.inner())
+                .await
+                .map_err(|e| e.to_string())?;
+
+        for (id, enc_title, enc_content) in note_rows {
+            let plain_title = match crypto::decrypt(&key, &enc_title) {
+                Ok(b) => String::from_utf8(b).map_err(|e| e.to_string())?,
+                Err(_) => enc_title,
+            };
+            let plain_content = match crypto::decrypt(&key, &enc_content) {
+                Ok(b) => String::from_utf8(b).map_err(|e| e.to_string())?,
+                Err(_) => enc_content,
+            };
+            sqlx::query("UPDATE notes SET title = ?, content = ? WHERE id = ?")
+                .bind(&plain_title)
+                .bind(&plain_content)
+                .bind(id)
+                .execute(pool.inner())
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+
+        // Clear folder lock columns.
+        sqlx::query(
+            "UPDATE folders SET locked = 0, salt = NULL, sentinel = NULL WHERE id = ?",
+        )
+        .bind(fid)
+        .execute(pool.inner())
+        .await
+        .map_err(|e| e.to_string())?;
     }
 
-    // Clear folder lock columns.
-    sqlx::query(
-        "UPDATE folders SET locked = 0, salt = NULL, sentinel = NULL WHERE id = ?",
-    )
-    .bind(folder_id)
-    .execute(pool.inner())
-    .await
-    .map_err(|e| e.to_string())?;
-
-    // Remove session key.
-    let mut folder_keys = keys.folder_keys.lock().map_err(|e| e.to_string())?;
-    if let Some(ref mut k) = folder_keys.get_mut(&folder_id) {
-        k.zeroize();
+    // All async work is done — now acquire the mutex to update session keys.
+    {
+        let mut folder_keys = keys.folder_keys.lock().map_err(|e| e.to_string())?;
+        for &fid in &subtree_ids {
+            if let Some(ref mut k) = folder_keys.get_mut(&fid) {
+                k.zeroize();
+            }
+            folder_keys.remove(&fid);
+        }
     }
-    folder_keys.remove(&folder_id);
 
     key.zeroize();
     Ok(())
@@ -528,19 +560,36 @@ pub async fn unlock_folder(
         return Ok(false);
     }
 
-    let mut folder_keys = keys.folder_keys.lock().map_err(|e| e.to_string())?;
-    folder_keys.insert(folder_id, key);
+    // Get the full subtree first (async), then acquire the mutex (sync-only section).
+    let subtree_ids = folder_subtree_ids(pool.inner(), folder_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    {
+        let mut folder_keys = keys.folder_keys.lock().map_err(|e| e.to_string())?;
+        for fid in subtree_ids {
+            folder_keys.insert(fid, key);
+        }
+    }
     key.zeroize();
     Ok(true)
 }
 
 /// Lock a folder for this session: zeroize and remove its key from memory.
+/// Also locks all descendant folders that were unlocked with the same key.
 #[tauri::command]
-pub fn lock_folder(folder_id: i64, keys: State<'_, KeyStore>) -> Result<(), String> {
+pub async fn lock_folder(
+    folder_id: i64,
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, KeyStore>,
+) -> Result<(), String> {
+    let subtree_ids = folder_subtree_ids(pool.inner(), folder_id).await?;
     let mut folder_keys = keys.folder_keys.lock().map_err(|e| e.to_string())?;
-    if let Some(ref mut k) = folder_keys.get_mut(&folder_id) {
-        k.zeroize();
+    for fid in subtree_ids {
+        if let Some(ref mut k) = folder_keys.get_mut(&fid) {
+            k.zeroize();
+        }
+        folder_keys.remove(&fid);
     }
-    folder_keys.remove(&folder_id);
     Ok(())
 }

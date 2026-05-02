@@ -39,6 +39,7 @@
     onEditTemplate,
     onDeleteTemplate,
     onConfirmInlineRename,
+    onRenameFolder,
     onMoveNote,
     onMoveFolder,
   } = $props();
@@ -333,6 +334,14 @@
               </svg>
             </button>
           {/if}
+        {/if}
+        {#if !folder.locked && !(inlineRenaming?.id === folder.id && inlineRenaming?.type === 'folder')}
+          <button class="icon-btn" onclick={() => onRenameFolder?.(folder)} title="Rename folder" aria-label="Rename folder {folder.name}">
+            <svg width="12" height="12" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 2 L13 5 L5 13 L2 13 L2 10 Z"/>
+              <line x1="8" y1="4" x2="11" y2="7"/>
+            </svg>
+          </button>
         {/if}
         <button class="icon-btn danger" onclick={() => onDeleteFolder?.(folder.id)} title="Delete folder" aria-label="Delete folder {folder.name}">✕</button>
       </div>

@@ -20,8 +20,8 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
 use crate::KeyStore;
-use crate::AppResult;
-use super::{NoteRow, Note, map_note_row, resolve_key};
+use crate::{AppResult, EncryptedNoteStore};
+use super::Note;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -142,37 +142,8 @@ pub async fn get_notes_for_day(
     keys: State<'_, KeyStore>,
     date_str: String,
 ) -> AppResult<Vec<Note>> {
-    let rows: Vec<NoteRow> = sqlx::query_as(
-        "SELECT id, title, content, folder_id, created_at, updated_at
-         FROM notes
-         WHERE date(created_at, 'unixepoch') = ?1
-            OR date(updated_at,  'unixepoch') = ?1",
-    )
-    .bind(&date_str)
-    .fetch_all(pool.inner())
-    .await
-    ?;
-
-    let folder_lock_states: HashMap<i64, bool> = {
-        let locked_rows: Vec<(i64, i64)> = sqlx::query_as("SELECT id, locked FROM folders")
-            .fetch_all(pool.inner())
-            .await
-            .unwrap_or_default();
-        locked_rows.into_iter().map(|(id, lk)| (id, lk != 0)).collect()
-    };
-
-    let notes = rows
-        .into_iter()
-        .map(|row| {
-            let fl = row
-                .folder_id
-                .and_then(|fid| folder_lock_states.get(&fid).copied())
-                .unwrap_or(false);
-            map_note_row(row, fl, &keys)
-        })
-        .collect();
-
-    Ok(notes)
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    store.list_notes_for_day(&date_str).await
 }
 
 /// Find the daily note for `date_str` inside the "Daily Notes" folder, creating
@@ -181,8 +152,6 @@ pub async fn get_notes_for_day(
 /// The stored note title is the date formatted according to `date_format` (e.g.
 /// `DD-MM-YYYY` → `"06-04-2026"`), encrypted with the vault key when one is active.
 /// Legacy notes stored as raw ISO (`YYYY-MM-DD`) are matched as a fallback.
-/// The "Daily Notes" folder never carries a per-folder password, so
-/// `folder_locked = false` is safe to pass to `map_note_row`.
 ///
 /// Because AES-GCM is non-deterministic we cannot query by encrypted title directly.
 /// Instead, all notes in the folder are fetched and decrypted in Rust to find the
@@ -194,92 +163,23 @@ pub async fn get_or_create_daily_note(
     date_str: String,
     date_format: Option<String>,
 ) -> AppResult<Note> {
-    let vault_key = resolve_key(None, &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
     let fmt = date_format.as_deref().unwrap_or("DD-MM-YYYY");
-    // Title stored in the note (e.g. "06-04-2026" for DD-MM-YYYY).
     let display_title = format_display_date(&date_str, fmt);
 
-    // ── Step 1: find or create the "Daily Notes" folder ──────────────────────
 
-    let folder_rows: Vec<(i64, String)> =
-        sqlx::query_as("SELECT id, name FROM folders WHERE parent_id IS NULL")
-            .fetch_all(pool.inner())
-            .await
-            ?;
-
-    let daily_folder_id = folder_rows.iter().find(|(_, enc_name)| {
-        let name = if let Some(key) = vault_key {
-            crate::crypto::decrypt(&key, enc_name)
-                .and_then(|b| String::from_utf8(b).map_err(|e| e.to_string()))
-                .unwrap_or_else(|_| enc_name.clone())
-        } else {
-            enc_name.clone()
-        };
-        name == "Daily Notes"
-    }).map(|(id, _)| *id);
-
-    let folder_id: i64 = if let Some(id) = daily_folder_id {
+    let folder_id: i64 = if let Some(id) = store.find_root_folder_by_name("Daily Notes").await? {
         id
     } else {
-        let stored_name = if let Some(key) = vault_key {
-            crate::crypto::encrypt(&key, b"Daily Notes")
-        } else {
-            "Daily Notes".to_string()
-        };
-        let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO folders (name, parent_id) VALUES (?, NULL) RETURNING id",
-        )
-        .bind(&stored_name)
-        .fetch_one(pool.inner())
-        .await
-        ?;
-        id
+        store.create_folder("Daily Notes", None).await?.id
     };
 
-    // ── Step 2: find or create the note for this date ─────────────────────────
-
-    let note_rows: Vec<NoteRow> = sqlx::query_as(
-        "SELECT id, title, content, folder_id, created_at, updated_at
-         FROM notes WHERE folder_id = ?",
-    )
-    .bind(folder_id)
-    .fetch_all(pool.inner())
-    .await
-    ?;
-
-    let existing = note_rows.into_iter().find(|row| {
-        let title = if let Some(key) = vault_key {
-            crate::crypto::decrypt(&key, &row.title)
-                .and_then(|b| String::from_utf8(b).map_err(|e| e.to_string()))
-                .unwrap_or_else(|_| row.title.clone())
-        } else {
-            row.title.clone()
-        };
-        // Match either the display format (new notes) or raw ISO (legacy notes).
-        title == display_title || title == date_str
-    });
-
-    if let Some(row) = existing {
-        return Ok(map_note_row(row, false, &keys));
+    let notes = store.list_notes(Some(folder_id), false).await?;
+    if let Some(note) = notes.into_iter().find(|n| n.title == display_title || n.title == date_str) {
+        return Ok(note);
     }
 
-    let stored_title = if let Some(key) = vault_key {
-        crate::crypto::encrypt(&key, display_title.as_bytes())
-    } else {
-        display_title.clone()
-    };
-
-    let row = sqlx::query_as::<_, NoteRow>(
-        "INSERT INTO notes (title, folder_id) VALUES (?, ?)
-         RETURNING id, title, content, folder_id, created_at, updated_at",
-    )
-    .bind(&stored_title)
-    .bind(folder_id)
-    .fetch_one(pool.inner())
-    .await
-    ?;
-
-    let note = map_note_row(row, false, &keys);
+    let note = store.create_note(&display_title, Some(folder_id)).await?;
     super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
     Ok(note)
 }
@@ -301,69 +201,21 @@ pub async fn create_daily_note(
         .await
         ?;
 
-    let vault_key = resolve_key(None, &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
     let fmt = date_format.as_deref().unwrap_or("DD-MM-YYYY");
     let base_title = format_display_date(&iso_date, fmt);
 
-    // ── Find or create the "Daily Notes" folder (same logic as above) ─────────
-
-    let folder_rows: Vec<(i64, String)> =
-        sqlx::query_as("SELECT id, name FROM folders WHERE parent_id IS NULL")
-            .fetch_all(pool.inner())
-            .await
-            ?;
-
-    let daily_folder_id = folder_rows.iter().find(|(_, enc_name)| {
-        let name = if let Some(key) = vault_key {
-            crate::crypto::decrypt(&key, enc_name)
-                .and_then(|b| String::from_utf8(b).map_err(|e| e.to_string()))
-                .unwrap_or_else(|_| enc_name.clone())
-        } else {
-            enc_name.clone()
-        };
-        name == "Daily Notes"
-    }).map(|(id, _)| *id);
-
-    let folder_id: i64 = if let Some(id) = daily_folder_id {
+    let folder_id: i64 = if let Some(id) = store.find_root_folder_by_name("Daily Notes").await? {
         id
     } else {
-        let stored_name = if let Some(key) = vault_key {
-            crate::crypto::encrypt(&key, b"Daily Notes")
-        } else {
-            "Daily Notes".to_string()
-        };
-        let (id,): (i64,) = sqlx::query_as(
-            "INSERT INTO folders (name, parent_id) VALUES (?, NULL) RETURNING id",
-        )
-        .bind(&stored_name)
-        .fetch_one(pool.inner())
-        .await
-        ?;
-        id
+        store.create_folder("Daily Notes", None).await?.id
     };
 
-    // ── Collect existing titles in the folder ─────────────────────────────────
-
-    let note_rows: Vec<NoteRow> = sqlx::query_as(
-        "SELECT id, title, content, folder_id, created_at, updated_at
-         FROM notes WHERE folder_id = ?",
-    )
-    .bind(folder_id)
-    .fetch_all(pool.inner())
-    .await
-    ?;
-
-    let existing_titles: Vec<String> = note_rows.iter().map(|row| {
-        if let Some(key) = vault_key {
-            crate::crypto::decrypt(&key, &row.title)
-                .and_then(|b| String::from_utf8(b).map_err(|e| e.to_string()))
-                .unwrap_or_else(|_| row.title.clone())
-        } else {
-            row.title.clone()
-        }
-    }).collect();
-
-    // ── Find first available title ────────────────────────────────────────────
+    let existing_titles: Vec<String> = store
+        .list_notes(Some(folder_id), false).await?
+        .into_iter()
+        .map(|n| n.title)
+        .collect();
 
     let final_title = if !existing_titles.contains(&base_title) {
         base_title
@@ -378,25 +230,7 @@ pub async fn create_daily_note(
         }
     };
 
-    // ── Insert the note ───────────────────────────────────────────────────────
-
-    let stored_title = if let Some(key) = vault_key {
-        crate::crypto::encrypt(&key, final_title.as_bytes())
-    } else {
-        final_title.clone()
-    };
-
-    let row = sqlx::query_as::<_, NoteRow>(
-        "INSERT INTO notes (title, folder_id) VALUES (?, ?)
-         RETURNING id, title, content, folder_id, created_at, updated_at",
-    )
-    .bind(&stored_title)
-    .bind(folder_id)
-    .fetch_one(pool.inner())
-    .await
-    ?;
-
-    let note = map_note_row(row, false, &keys);
+    let note = store.create_note(&final_title, Some(folder_id)).await?;
     super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
     Ok(note)
 }
