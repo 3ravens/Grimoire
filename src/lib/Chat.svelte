@@ -18,17 +18,49 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 <script>
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
-  import { untrack, tick, onMount } from 'svelte';
+  import { untrack, tick, onMount, getContext } from 'svelte';
   import { FEATURE_GUIDE } from './utils/featureGuide.js';
+
+  const ns       = getContext('ns');
+  const ts       = getContext('ts');
+  const fs       = getContext('fs');
+  const settings = getContext('settings');
 
   // ── Props ──────────────────────────────────────────────────────────────────
 
-  // The note currently open in the editor, passed down from App.svelte.
-  // Shape: { id, title, content, ... } | null
-  // pendingInsert: { text: string, seq: number } — injected quote from the editor keybind.
-  // keepInMemory: when true, keep_alive: -1 is sent so Ollama never unloads the model.
-  // llmEnabled: false disables the chat UI and shows a hardware warning banner.
-  let { activeNote = null, pendingInsert = null, keepInMemory = false, llmEnabled = true, wikipediaEnabled = false, onClose = null, onContextMenu = null, onInsertIntoNote = null, onOpenWikipediaArticle = null, activeView = null, activeViewFolderId = null, activeViewLabel = '', activeViewFilters = {} } = $props();
+  // suppressNoteContext: set to true in the Chat tab (where there is no active note).
+  // onClose/onInsertIntoNote/onContextMenu/onOpenWikipediaArticle differ per usage.
+  let {
+    suppressNoteContext = false,
+    onClose = null,
+    onContextMenu = null,
+    onInsertIntoNote = null,
+    onOpenWikipediaArticle = null,
+  } = $props();
+
+  // Settings props replaced by context.
+  const keepInMemory    = $derived(settings.keepModelInMemory);
+  const llmEnabled      = $derived(settings.llmEnabled);
+  const wikipediaEnabled = $derived(settings.wikipediaEnabled);
+
+  // pendingInsert and activeNote: when suppressNoteContext is true (chat tab), both are null.
+  const pendingInsert = $derived(suppressNoteContext ? null : ts.chatInsert);
+  const activeNote    = $derived(suppressNoteContext ? null : ns.activeNote);
+
+  // activeView deriveds — computed locally from ts + fs.
+  const activeView = $derived(ts.activeView);
+  const activeViewFolderId = $derived(
+    activeView === 'kanban'   ? ts.activeTab?.folderId
+    : activeView === 'database' ? fs.selectedFolderId
+    : null
+  );
+  const activeViewLabel = $derived.by(() => {
+    if (!activeView || !activeViewFolderId) return '';
+    const folder = fs.folders.find(f => f.id === activeViewFolderId);
+    const name = folder?.name ?? 'Unknown';
+    return activeView === 'kanban' ? `Kanban — ${name}` : `Table — ${name}`;
+  });
+  const activeViewFilters = $derived(ts.activeViewFilters);
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -66,24 +98,25 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   let model = $state('llama3.2');
   let isLoading = $state(false);
   let error = $state('');
-  let useNotes = $state(true);
-  let useWiki = $state(true);
-  let useFiles = $state(true);
-  let useViewContext = $state(true);
-  let useFeatureGuide = $state(true);
+  // Initialise toggles directly from localStorage so they are correct on first render,
+  // avoiding the write-before-read race when effects run in definition order.
+  function readPref(key, fallback) {
+    try { const v = localStorage.getItem(key); return v !== null ? JSON.parse(v) : fallback; }
+    catch { return fallback; }
+  }
+  let useNotes       = $state(readPref('grimoire:chat:useNotes',       true));
+  let useWiki        = $state(readPref('grimoire:chat:useWiki',        true));
+  let useFiles       = $state(readPref('grimoire:chat:useFiles',       true));
+  let useViewContext = $state(readPref('grimoire:chat:useViewContext', true));
+  let useFeatureGuide = $state(readPref('grimoire:chat:useFeatureGuide', true));
   let chatOptsOpen = $state(false);
 
-  // Persist all context toggles to localStorage.
-  $effect(() => { localStorage.setItem('grimoire:chat:useNotes',       JSON.stringify(useNotes)); });
-  $effect(() => { const v = localStorage.getItem('grimoire:chat:useNotes');       if (v !== null) useNotes       = JSON.parse(v); });
-  $effect(() => { localStorage.setItem('grimoire:chat:useWiki',        JSON.stringify(useWiki)); });
-  $effect(() => { const v = localStorage.getItem('grimoire:chat:useWiki');        if (v !== null) useWiki        = JSON.parse(v); });
-  $effect(() => { localStorage.setItem('grimoire:chat:useFiles',       JSON.stringify(useFiles)); });
-  $effect(() => { const v = localStorage.getItem('grimoire:chat:useFiles');       if (v !== null) useFiles       = JSON.parse(v); });
-  $effect(() => { localStorage.setItem('grimoire:chat:useViewContext', JSON.stringify(useViewContext)); });
-  $effect(() => { const v = localStorage.getItem('grimoire:chat:useViewContext'); if (v !== null) useViewContext = JSON.parse(v); });
+  // Persist all context toggles to localStorage (write-only — initial values come from readPref above).
+  $effect(() => { localStorage.setItem('grimoire:chat:useNotes',        JSON.stringify(useNotes)); });
+  $effect(() => { localStorage.setItem('grimoire:chat:useWiki',         JSON.stringify(useWiki)); });
+  $effect(() => { localStorage.setItem('grimoire:chat:useFiles',        JSON.stringify(useFiles)); });
+  $effect(() => { localStorage.setItem('grimoire:chat:useViewContext',  JSON.stringify(useViewContext)); });
   $effect(() => { localStorage.setItem('grimoire:chat:useFeatureGuide', JSON.stringify(useFeatureGuide)); });
-  $effect(() => { const v = localStorage.getItem('grimoire:chat:useFeatureGuide'); if (v !== null) useFeatureGuide = JSON.parse(v); });
 
   // Load chat model from SQLite on mount.
   onMount(() => {
@@ -378,8 +411,9 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     if (useFiles) {
       try {
         fileMatches = await invoke('search_scanned_files', { query: ragQuery });
-      } catch (_) {
+      } catch (e) {
         // Best-effort — don't block the chat if scanned file search fails.
+        console.warn('Scanned file search failed:', e);
       }
       if (fileMatches.length > 0) {
         const fileContext = fileMatches

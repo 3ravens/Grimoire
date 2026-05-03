@@ -2,7 +2,15 @@
 This file is part of Grimoire — licensed under GPL-3.0 or later. -->
 
 <script>
-  const { tabs, activeTabId, onActivate, onClose, onRename, onNew, renameRequestId = null } = $props();
+  import { getContext } from 'svelte';
+
+  const ts = getContext('ts');
+
+  const { onActivate, onClose, onRename, onNew } = $props();
+
+  const tabs           = $derived(ts.tabs);
+  const activeTabId    = $derived(ts.activeTabId);
+  const renameRequestId = $derived(ts.externalRenameTabId);
 
   // Local state for the inline rename input.
   let editingTabId = $state(null);

@@ -330,6 +330,19 @@ pub async fn debug_search_wikipedia(
     crate::vector::raw_wikipedia_search(&vdb.0, embedding, 10).await.map_err(|e| AppError::VectorStore(e))
 }
 
+/// Debug command: returns top scanned-file search hits with raw distance scores, no filtering.
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub async fn debug_search_scanned_files(
+    vdb: State<'_, crate::vector::VectorDb>,
+    config: State<'_, SharedConfig>,
+    query: String,
+) -> AppResult<Vec<crate::vector::RawMatch>> {
+    let model = config.read().unwrap().embedding_model.clone();
+    let embedding = embed_query(&query, &model).await?;
+    crate::vector::raw_scanned_search(&vdb.0, embedding, 10).await.map_err(|e| AppError::VectorStore(e))
+}
+
 /// Insert a set of varied seed notes and index them all.
 /// Intended for development/testing only.
 #[cfg(debug_assertions)]

@@ -1,31 +1,41 @@
 <!-- Copyright (C) 2026 Wim Palland — see App.svelte for license header. -->
 <script>
+  import { getContext } from 'svelte';
   import { autofocus } from './utils/autofocus.js';
 
-  let {
-    notes = [],
-    folders = [],
-    activeNote = null,
-    selectedFolderId = null,
-    tagFilter = null,
-    isSeeding = false,
-    isReindexing = false,
-    inlineRenaming = $bindable(null),
+  const ns = getContext('ns');
+  const fs = getContext('fs');
+  const ts = getContext('ts');
 
+  // Data props replaced by context aliases.
+  const notes            = $derived(ns.notes);
+  const activeNote       = $derived(ns.activeNote);
+  const tagFilter        = $derived(ns.tagFilter);
+  const isSeeding        = $derived(ns.isSeeding);
+  const isReindexing     = $derived(ns.isReindexing);
+  const folders          = $derived(fs.folders);
+  const selectedFolderId = $derived(fs.selectedFolderId);
+  const inlineRenaming   = $derived(fs.inlineRenaming);
+  const tableViewOpen    = $derived(ts.tableViewOpen);
+
+  let {
     onOpenNote,
     onOpenNoteInNewTab,
     onDeleteNote,
     onConfirmInlineRename,
     onOpenKanbanTab,
     onSaveNote,
-    onClearTagFilter,
     onSeedNotes,
     onReindexAll,
     onTableViewToggle,
-    tableViewOpen = false,
     onNoteDragStart,
     onNoteDragEnd,
   } = $props();
+
+  async function clearTagFilter() {
+    ns.tagFilter = null;
+    await ns.loadNotes(fs.selectedFolderId, null);
+  }
 
   let noteSort = $state('modified');
 
@@ -47,7 +57,7 @@
     {/if}
   </h2>
   {#if tagFilter}
-    <button class="clear-filter-btn" onclick={onClearTagFilter} title="Clear tag filter">✕</button>
+    <button class="clear-filter-btn" onclick={clearTagFilter} title="Clear tag filter">✕</button>
   {/if}
   <select class="sort-select" bind:value={noteSort} title="Sort notes" aria-label="Sort notes">
     <option value="modified">Modified</option>

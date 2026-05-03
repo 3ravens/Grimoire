@@ -17,10 +17,17 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
 <script>
   import { invoke } from '@tauri-apps/api/core';
+  import { getContext } from 'svelte';
+
+  const fs = getContext('fs');
+  const ts = getContext('ts');
 
   // ── Props ────────────────────────────────────────────────────────────────
-  /** @type {{ folders: Array<{id: number, name: string}>, open: boolean, onSelectNote: (id: number) => void }} */
-  let { folders = [], open = false, onSelectNote } = $props();
+  /** @type {{ onSelectNote: (id: number) => void }} */
+  let { onSelectNote } = $props();
+
+  const folders = $derived(fs.folders);
+  const open = $derived(ts.searchOpen);
 
   // ── State ────────────────────────────────────────────────────────────────
   let query = $state('');
@@ -131,7 +138,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
   // Focus the input whenever the panel becomes visible.
   $effect(() => {
-    if (open && inputEl) inputEl.focus();
+    if (ts.searchOpen && inputEl) inputEl.focus();
   });
 </script>
 

@@ -204,6 +204,8 @@ pub fn run() {
         #[cfg(debug_assertions)]
         commands::debug_search_wikipedia,
         #[cfg(debug_assertions)]
+        commands::debug_search_scanned_files,
+        #[cfg(debug_assertions)]
         commands::seed_notes,
     ]);
 

@@ -1,11 +1,17 @@
 import { invoke } from '@tauri-apps/api/core';
 
+/**
+ * @param {{ onError?: (e: unknown) => void }} opts
+ */
 export function createTabService({ onError }) {
+  /** @type {any[]} */
   let tabs = $state([]);
+  /** @type {string | null} */
   let activeTabId = $state(null);
   let tableViewOpen = $state(false);
   let searchOpen = $state(false);
   let chatInsert = $state(null);
+  /** @type {string | null} */
   let externalRenameTabId = $state(null);
   let activeViewFilters = $state({});
 
@@ -47,6 +53,7 @@ export function createTabService({ onError }) {
     return { id, isNew: true };
   }
 
+  /** @param {any} note @param {(() => any) | null} [saveFn] */
   async function navigateToNote(note, saveFn) {
     if (saveFn) await saveFn();
     if (!activeTabId || tabs.length === 0) {
@@ -68,6 +75,7 @@ export function createTabService({ onError }) {
     }
   }
 
+  /** @param {any} note @param {(() => any) | null} [saveFn] */
   async function openNoteInNewTab(note, saveFn) {
     if (saveFn) await saveFn();
     const id = makeTabId();
@@ -75,6 +83,11 @@ export function createTabService({ onError }) {
     activeTabId = id;
   }
 
+  /**
+   * @param {string} id
+   * @param {(() => any) | null} [saveFn]
+   * @param {((note: any) => void) | null} [openNoteFn]
+   */
   async function activateTab(id, saveFn, openNoteFn) {
     if (activeTabId === id) return;
     if (saveFn) await saveFn();
@@ -89,9 +102,17 @@ export function createTabService({ onError }) {
         onError?.(e);
         closeTab(id);
       }
+    } else {
+      openNoteFn?.(null);
     }
   }
 
+  /**
+   * @param {string} id
+   * @param {(() => any) | null} [saveFn]
+   * @param {((note: any) => void) | null} [openNoteFn]
+   * @param {(() => any) | null} [newTabFn]
+   */
   async function closeTab(id, saveFn, openNoteFn, newTabFn) {
     const idx = tabs.findIndex(t => t.id === id);
     if (idx === -1) return;
@@ -108,12 +129,19 @@ export function createTabService({ onError }) {
           try {
             const note = await invoke('get_note', { id: next.noteId });
             openNoteFn?.(note);
-          } catch { /* note deleted */ }
+          } catch { openNoteFn?.(null); }
+        } else {
+          openNoteFn?.(null);
         }
       }
     }
   }
 
+  /**
+   * @param {string} keepId
+   * @param {(() => any) | null} [saveFn]
+   * @param {((note: any) => void) | null} [openNoteFn]
+   */
   async function closeOtherTabs(keepId, saveFn, openNoteFn) {
     if (saveFn) await saveFn();
     tabs = tabs.filter(t => t.id === keepId);
@@ -124,16 +152,20 @@ export function createTabService({ onError }) {
         try {
           const note = await invoke('get_note', { id: tab.noteId });
           openNoteFn?.(note);
-        } catch { /* note gone */ }
+        } catch { openNoteFn?.(null); }
+      } else {
+        openNoteFn?.(null);
       }
     }
   }
 
+  /** @param {string} id */
   function startTabRenameExternal(id) {
     externalRenameTabId = id;
     setTimeout(() => { externalRenameTabId = null; }, 50);
   }
 
+  /** @param {string} id @param {string | null} label */
   function renameTab(id, label) {
     tabs = tabs.map(t => t.id === id ? { ...t, customLabel: label || null } : t);
   }
@@ -161,6 +193,7 @@ export function createTabService({ onError }) {
     return 'new';
   }
 
+  /** @param {any} folderId @param {string} folderName */
   function openKanbanTab(folderId, folderName) {
     const existing = tabs.find(t => t.type === 'kanban' && t.folderId === folderId);
     if (existing) { activeTabId = existing.id; return 'existing'; }
@@ -179,6 +212,7 @@ export function createTabService({ onError }) {
     return 'new';
   }
 
+  /** @param {any} bundleId @param {string} articlePath @param {string} [title] */
   function openWikipediaArticle(bundleId, articlePath, title) {
     // Deduplicate: if already open, activate the existing tab
     const existing = tabs.find(
@@ -196,6 +230,7 @@ export function createTabService({ onError }) {
 
   // Called when the reader navigates internally (cross-link or search).
   // Updates the active tab's path and label in place so no extra tab is opened.
+  /** @param {any} bundleId @param {string} articlePath @param {string} [title] */
   function updateWikipediaTab(bundleId, articlePath, title) {
     tabs = tabs.map(t =>
       t.id === activeTabId
@@ -208,6 +243,7 @@ export function createTabService({ onError }) {
     tabs = tabs.map(t => t.id === activeTabId ? { ...t, noteId: null, label: 'New Tab' } : t);
   }
 
+  /** @param {((note: any) => void) | null} [openNoteFn] */
   async function restoreTabs(openNoteFn) {
     try {
       const saved = localStorage.getItem('grimoire_tabs');
@@ -231,10 +267,11 @@ export function createTabService({ onError }) {
         })
       );
 
-      const valid = results.filter(Boolean);
+      const valid = /** @type {Array<{tab: any, note: any}>} */ (results.filter(Boolean));
       if (valid.length === 0) return;
       tabs = valid.map(r => r.tab);
       const target = valid.find(r => r.tab.id === savedActiveId) ?? valid[valid.length - 1];
+      if (!target) return;
       activeTabId = target.tab.id;
       if (target.tab.type === 'note' && target.note) {
         openNoteFn?.(target.note);
@@ -248,6 +285,7 @@ export function createTabService({ onError }) {
     get activeTabId() { return activeTabId; },
     set activeTabId(v) { activeTabId = v; },
     get activeTab() { return activeTab; },
+    get activeView() { return activeView; },
     get tableViewOpen() { return tableViewOpen; },
     set tableViewOpen(v) { tableViewOpen = v; },
     get searchOpen() { return searchOpen; },

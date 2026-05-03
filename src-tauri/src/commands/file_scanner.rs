@@ -210,16 +210,26 @@ async fn index_path(
             }
         };
 
-        // Build (chunk_index, title, content, embedding) tuples, skipping empty embeddings.
+        // Build (chunk_index, title, content, embedding) tuples, skipping empty
+        // embeddings and empty/whitespace content chunks.
         let chunks: Vec<(i32, String, String, Vec<f32>)> = raw_chunks
             .into_iter()
             .zip(embeddings)
             .enumerate()
             .filter_map(|(ci, (content_chunk, emb))| {
-                if emb.is_empty() { return None; }
+                if emb.is_empty() || content_chunk.trim().is_empty() {
+                    return None;
+                }
                 Some((ci as i32, title.clone(), content_chunk, emb))
             })
             .collect();
+
+        // If every chunk was empty (e.g. whitespace-only file), skip this file.
+        // Storing an empty-content chunk creates a title-only embedding that matches
+        // on file name alone but returns a blank excerpt to the LLM.
+        if chunks.is_empty() {
+            continue;
+        }
 
         // Upsert into LanceDB.
         if let Err(e) = crate::vector::scanned_file_upsert_batch(vdb, file_path, chunks).await {
