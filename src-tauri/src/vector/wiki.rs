@@ -358,3 +358,56 @@ pub async fn raw_wikipedia_search(
     }
     Ok(results)
 }
+
+// ---------------------------------------------------------------------------
+// Full table scan (no vector query) — used to backfill SQLite FTS from LanceDB.
+// ---------------------------------------------------------------------------
+
+/// Stream all indexed rows for one bundle as `(article_id, title, content)`.
+/// Invokes `on_batch` for each Arrow record batch (keeps memory bounded).
+pub async fn for_each_wikipedia_bundle_batch<F>(
+    conn: &Connection,
+    bundle_id: &str,
+    mut on_batch: F,
+) -> Result<(), String>
+where
+    F: FnMut(Vec<(String, String, String)>),
+{
+    let table = open_wiki_table(conn, 0).await?;
+    let filter = format!("bundle_id = '{}'", super::escape_sql(bundle_id));
+    let mut stream = table
+        .query()
+        .only_if(filter)
+        .execute()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    while let Some(batch) = stream.try_next().await.map_err(|e| e.to_string())? {
+        let article_ids = batch
+            .column_by_name("article_id")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+            .ok_or("missing article_id column in wikipedia scan")?;
+        let titles = batch
+            .column_by_name("title")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+            .ok_or("missing title column in wikipedia scan")?;
+        let contents = batch
+            .column_by_name("content")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+            .ok_or("missing content column in wikipedia scan")?;
+
+        let mut rows = Vec::with_capacity(batch.num_rows());
+        for i in 0..batch.num_rows() {
+            rows.push((
+                article_ids.value(i).to_string(),
+                titles.value(i).to_string(),
+                contents.value(i).to_string(),
+            ));
+        }
+        if !rows.is_empty() {
+            on_batch(rows);
+        }
+    }
+
+    Ok(())
+}

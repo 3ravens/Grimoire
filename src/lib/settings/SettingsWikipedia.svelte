@@ -129,11 +129,11 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   async function loadBundles() {
     const raw = await invoke('list_wikipedia_bundles').catch(() => []);
     // If the app was restarted mid-index, the DB still shows 'indexing'.
-    // Reset those to 'queued' so the user can restart them.
+    // Reset those to 'none' so the user can restart them.
     for (const b of raw) {
       if (b.indexing_state === 'indexing' && !progress[b.id]) {
-        await invoke('set_bundle_indexing_state', { bundleId: b.id, state: 'queued' }).catch(() => {});
-        b.indexing_state = 'queued';
+        await invoke('set_bundle_indexing_state', { bundleId: b.id, state: 'none' }).catch(() => {});
+        b.indexing_state = 'none';
       }
     }
     bundles = raw;
@@ -197,7 +197,6 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     if (bundle.indexing_state === 'done') return 'Indexed';
     if (bundle.indexing_state === 'error') return 'Error';
     if (bundle.indexing_state === 'indexing') return 'Indexing…';
-    if (bundle.indexing_state === 'queued') return 'Queued';
     return 'Not indexed';
   }
 
@@ -250,6 +249,11 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     loadingCatalogue = true;
     catalogueError = '';
     try {
+      const conn = await invoke('check_wikipedia_connectivity');
+      if (!conn.online) {
+        catalogueError = conn.message || 'No internet connection';
+        return;
+      }
       catalogueItems = await invoke('fetch_wikipedia_catalogue');
     } catch (e) {
       catalogueError = e?.message ?? String(e);
@@ -263,6 +267,22 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       catalogueError = 'Set a storage path before downloading.';
       return;
     }
+    catalogueError = '';
+    try {
+      const conn = await invoke('check_wikipedia_connectivity');
+      if (!conn.online) {
+        catalogueError = conn.message || 'No internet connection';
+        return;
+      }
+      await invoke('check_wikipedia_download_preflight', {
+        destDir: storagePath,
+        expectedSizeBytes: item.size_bytes ?? null,
+      });
+    } catch (e) {
+      catalogueError = e?.message ?? String(e);
+      return;
+    }
+
     downloadProgress = {
       ...downloadProgress,
       [item.id]: { downloaded_bytes: 0, total_bytes: item.size_bytes },
@@ -289,6 +309,9 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       }
     } catch (e) {
       catalogueError = `Download failed: ${e?.message ?? e}`;
+      const next = { ...downloadProgress };
+      delete next[item.id];
+      downloadProgress = next;
     }
   }
 

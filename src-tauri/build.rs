@@ -55,11 +55,10 @@ fn copy_zim_dlls_to_out() {
     let out_dir = std::path::PathBuf::from(
         std::env::var("OUT_DIR").expect("OUT_DIR not set"),
     );
-    // out_dir / .. / .. / .. == target/<profile>/
+    // out_dir / .. / .. == target/<profile>/
     let bin_dir = out_dir
         .parent().unwrap() // out
         .parent().unwrap() // <pkg>
-        .parent().unwrap() // build
         .parent().unwrap(); // target/<profile>
 
     let dlls = [

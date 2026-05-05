@@ -75,5 +75,8 @@ impl From<std::io::Error> for AppError {
     }
 }
 
+/// User-facing message when Wikipedia catalogue/download cannot reach the network.
+pub const WIKIPEDIA_OFFLINE_MSG: &str = "No internet connection";
+
 /// Convenience alias used by all command return types.
 pub type AppResult<T> = Result<T, AppError>;

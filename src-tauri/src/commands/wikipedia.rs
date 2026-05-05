@@ -22,7 +22,7 @@
 //! included as context in the RAG pipeline.
 //!
 //! Architecture:
-//!   - SQLite: bundle metadata + checkpointing + highlights
+//!   - SQLite: bundle metadata + checkpointing + highlights + FTS5 over indexed articles
 //!   - LanceDB: one embedding per article (title + intro text, ≤1500 chars)
 //!   - Ollama: same embedding model as notes (nomic-embed-text by default)
 //!
@@ -36,11 +36,159 @@ use tauri::Manager;
 use futures::StreamExt;
 use rayon::prelude::*;
 use std::io::Write;
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use crate::{AppError, AppResult};
 use crate::config::SharedConfig;
+
+// ---------------------------------------------------------------------------
+// Wikipedia SQLite FTS5 (lexical fallback, blended with LanceDB in search_wikipedia)
+// ---------------------------------------------------------------------------
+
+const WIKI_FTS_RRF_K: f64 = 60.0;
+
+fn wiki_rrf_score(rank: usize) -> f64 {
+    1.0 / (WIKI_FTS_RRF_K + rank as f64)
+}
+
+/// Best-effort: populate FTS rows for one indexing window (same articles as phase 2).
+async fn wiki_fts_insert_articles_batch(
+    pool: &SqlitePool,
+    bundle_id: &str,
+    articles: &[(u32, String, String, String)],
+) {
+    if articles.is_empty() {
+        return;
+    }
+    let Ok(mut tx) = pool.begin().await else {
+        return;
+    };
+    for (_, article_id, title, content) in articles {
+        let article_path = article_id
+            .strip_prefix(bundle_id)
+            .and_then(|s| s.strip_prefix('/'))
+            .unwrap_or(article_id.as_str());
+        let _ = sqlx::query(
+            "INSERT INTO wikipedia_articles_fts(article_id, bundle_id, article_path, title, content) VALUES (?,?,?,?,?)",
+        )
+        .bind(article_id)
+        .bind(bundle_id)
+        .bind(article_path)
+        .bind(title)
+        .bind(content)
+        .execute(&mut *tx)
+        .await;
+    }
+    let _ = tx.commit().await;
+}
+
+async fn wiki_fts_backfill_chunk(
+    pool: &SqlitePool,
+    bundle_id: &str,
+    rows: Vec<(String, String, String)>,
+) {
+    if rows.is_empty() {
+        return;
+    }
+    let Ok(mut tx) = pool.begin().await else {
+        return;
+    };
+    for (article_id, title, content) in rows {
+        let article_path = article_id
+            .strip_prefix(bundle_id)
+            .and_then(|s| s.strip_prefix('/'))
+            .unwrap_or(article_id.as_str());
+        let _ = sqlx::query(
+            "INSERT INTO wikipedia_articles_fts(article_id, bundle_id, article_path, title, content) VALUES (?,?,?,?,?)",
+        )
+        .bind(&article_id)
+        .bind(bundle_id)
+        .bind(article_path)
+        .bind(&title)
+        .bind(&content)
+        .execute(&mut *tx)
+        .await;
+    }
+    let _ = tx.commit().await;
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct WikiFtsHit {
+    article_id: String,
+    bundle_id: String,
+    title: String,
+    snippet: String,
+}
+
+async fn wiki_fts_search_inner(
+    pool: &SqlitePool,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<WikiFtsHit>, sqlx::Error> {
+    let fts_query = super::search::build_fts_query(query);
+    if fts_query.is_empty() {
+        return Ok(vec![]);
+    }
+    sqlx::query_as::<_, WikiFtsHit>(
+        r#"SELECT article_id, bundle_id, title,
+                  snippet(wikipedia_articles_fts, 4, '<b>', '</b>', '...', 32) AS snippet
+           FROM wikipedia_articles_fts
+           WHERE wikipedia_articles_fts MATCH ?
+           ORDER BY bm25(wikipedia_articles_fts)
+           LIMIT ?"#,
+    )
+    .bind(&fts_query)
+    .bind(limit as i64)
+    .fetch_all(pool)
+    .await
+}
+
+/// One-shot backfill: for each fully indexed bundle with no FTS rows, copy title+content
+/// from LanceDB into SQLite FTS (no Ollama / re-embed).
+pub async fn wikipedia_fts_initial_sync(pool: &SqlitePool, conn: &lancedb::Connection) {
+    let bundles: Vec<String> = match sqlx::query_scalar::<_, String>(
+        "SELECT id FROM wikipedia_bundles WHERE indexing_state = 'done'",
+    )
+    .fetch_all(pool)
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("wikipedia_fts_initial_sync: failed to list bundles: {e}");
+            return;
+        }
+    };
+
+    let pool = pool.clone();
+    for bid in bundles {
+        let fts_n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM wikipedia_articles_fts WHERE bundle_id = ?",
+        )
+        .bind(&bid)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(-1);
+        if fts_n > 0 {
+            continue;
+        }
+
+        let pool_inner = pool.clone();
+        let bid_inner = bid.clone();
+        if let Err(e) =
+            crate::vector::for_each_wikipedia_bundle_batch(conn, &bid, |rows| {
+                let handle = tokio::runtime::Handle::current();
+                let pool_c = pool_inner.clone();
+                let b = bid_inner.clone();
+                handle.block_on(wiki_fts_backfill_chunk(&pool_c, &b, rows));
+            })
+            .await
+        {
+            log::warn!("wikipedia_fts_initial_sync: bundle {bid}: {e}");
+        }
+    }
+}
 
 fn resolve_wiki_perf_log_path(app: &AppHandle) -> Option<PathBuf> {
     if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
@@ -265,6 +413,178 @@ fn parse_catalogue(xml: &str) -> AppResult<Vec<CatalogueEntry>> {
 }
 
 // ---------------------------------------------------------------------------
+// Network + disk preflight (catalogue fetch / bundle download)
+// ---------------------------------------------------------------------------
+
+const KIWIX_HOST_ROOT: &str = "https://library.kiwix.org/";
+const KIWIX_CATALOGUE_URL: &str =
+    "https://library.kiwix.org/catalog/v2/entries?lang=eng&category=wikipedia&count=500";
+
+/// Result of a lightweight connectivity probe to Kiwix.
+#[derive(Debug, Serialize)]
+pub struct WikipediaConnectivityResult {
+    pub online: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Successful download preflight (disk space OK).
+#[derive(Debug, Serialize)]
+pub struct WikipediaDownloadPreflightOk {
+    pub ok: bool,
+    pub required_bytes: i64,
+    pub available_bytes: u64,
+}
+
+fn map_wikipedia_transport_error(e: &reqwest::Error) -> AppError {
+    if e.is_timeout() || e.is_connect() {
+        AppError::Io(crate::error::WIKIPEDIA_OFFLINE_MSG.to_string())
+    } else {
+        AppError::Io(format!("Network error: {e}"))
+    }
+}
+
+/// Probe Kiwix reachability before catalogue fetch or download.
+async fn ensure_wikipedia_network_available() -> AppResult<()> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| AppError::Io(format!("Failed to build HTTP client: {e}")))?;
+
+    client
+        .head(KIWIX_HOST_ROOT)
+        .send()
+        .await
+        .map_err(|e| map_wikipedia_transport_error(&e))?;
+
+    Ok(())
+}
+
+/// Upper-bound estimate for the `.zim` file size when the catalogue omits `length`.
+fn wikipedia_estimated_zim_bytes(expected_size_bytes: Option<i64>) -> i64 {
+    const DEFAULT_UNKNOWN_ZIM: i64 = 5 * 1024 * 1024 * 1024; // 5 GiB conservative
+    expected_size_bytes
+        .unwrap_or(DEFAULT_UNKNOWN_ZIM)
+        .max(16 * 1024 * 1024)
+}
+
+/// Extra bytes reserved for LanceDB index + SQLite FTS + write amplification during indexing.
+fn wikipedia_download_overhead_bytes(zim_bytes: i64) -> i64 {
+    const MIN_OVERHEAD: i64 = 512 * 1024 * 1024; // 512 MiB floor
+    let pct = zim_bytes / 4;
+    MIN_OVERHEAD.max(pct)
+}
+
+fn fmt_bytes_human(bytes: u64) -> String {
+    let gb = bytes as f64 / 1e9;
+    if gb >= 1.0 {
+        return format!("{gb:.1} GB");
+    }
+    let mb = bytes as f64 / 1e6;
+    format!("{mb:.0} MB")
+}
+
+/// Free space on the volume that contains `dest_dir` (best-effort via mount-point prefix match).
+fn disk_available_bytes_for_dir(dest_dir: &Path) -> AppResult<u64> {
+    use sysinfo::Disks;
+
+    let dest_str = dest_dir.to_str().ok_or_else(|| {
+        AppError::InvalidInput("Destination path must be valid UTF-8 for disk space check".to_string())
+    })?;
+    let dest_lower = dest_str.to_lowercase();
+
+    let disks = Disks::new_with_refreshed_list();
+    let mut best: Option<(usize, u64)> = None;
+    for disk in disks.list() {
+        let Some(mount_str) = disk.mount_point().to_str() else {
+            continue;
+        };
+        let mount_lower = mount_str.to_lowercase();
+        if dest_lower.starts_with(&mount_lower) {
+            let len = mount_lower.len();
+            let avail = disk.available_space();
+            if best.map(|(bl, _)| len > bl).unwrap_or(true) {
+                best = Some((len, avail));
+            }
+        }
+    }
+
+    best.map(|(_, b)| b).ok_or_else(|| {
+        AppError::Io(
+            "Could not determine free disk space for the selected folder. Try an absolute path (e.g. C:\\Users\\…)."
+                .to_string(),
+        )
+    })
+}
+
+fn assert_wikipedia_download_disk_space(dest_dir: &Path, expected_size_bytes: Option<i64>) -> AppResult<()> {
+    let zim = wikipedia_estimated_zim_bytes(expected_size_bytes);
+    let overhead = wikipedia_download_overhead_bytes(zim);
+    let required = (zim as i128).saturating_add(overhead as i128);
+    let required_u64 = u64::try_from(required).unwrap_or(u64::MAX);
+
+    let available = disk_available_bytes_for_dir(dest_dir)?;
+    if available < required_u64 {
+        return Err(AppError::InvalidInput(format!(
+            "Not enough free disk space (about {} required including index overhead; about {} available).",
+            fmt_bytes_human(required_u64),
+            fmt_bytes_human(available),
+        )));
+    }
+    Ok(())
+}
+
+/// Lightweight probe for UI; does not throw on failure — returns `{ online: false, message }`.
+#[tauri::command]
+pub async fn check_wikipedia_connectivity() -> AppResult<WikipediaConnectivityResult> {
+    match ensure_wikipedia_network_available().await {
+        Ok(()) => Ok(WikipediaConnectivityResult {
+            online: true,
+            message: None,
+        }),
+        Err(e) => Ok(WikipediaConnectivityResult {
+            online: false,
+            message: Some(e.to_string()),
+        }),
+    }
+}
+
+/// Hard-block preflight: returns `Ok(details)` only if there is enough free space.
+#[tauri::command]
+pub async fn check_wikipedia_download_preflight(
+    dest_dir: String,
+    expected_size_bytes: Option<i64>,
+) -> AppResult<WikipediaDownloadPreflightOk> {
+    let dir = Path::new(&dest_dir);
+    if !dir.is_dir() {
+        return Err(AppError::InvalidInput(format!(
+            "Destination directory does not exist: {dest_dir}"
+        )));
+    }
+
+    let zim = wikipedia_estimated_zim_bytes(expected_size_bytes);
+    let overhead = wikipedia_download_overhead_bytes(zim);
+    let required = (zim as i128).saturating_add(overhead as i128);
+    let required_i64 = i64::try_from(required).unwrap_or(i64::MAX);
+    let required_u64 = u64::try_from(required).unwrap_or(u64::MAX);
+
+    let available = disk_available_bytes_for_dir(dir)?;
+    if available < required_u64 {
+        return Err(AppError::InvalidInput(format!(
+            "Not enough free disk space (about {} required including index overhead; about {} available).",
+            fmt_bytes_human(required_u64),
+            fmt_bytes_human(available),
+        )));
+    }
+
+    Ok(WikipediaDownloadPreflightOk {
+        ok: true,
+        required_bytes: required_i64,
+        available_bytes: available,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
 
@@ -272,20 +592,35 @@ fn parse_catalogue(xml: &str) -> AppResult<Vec<CatalogueEntry>> {
 /// This is the only command that makes an outbound network request.
 #[tauri::command]
 pub async fn fetch_wikipedia_catalogue() -> AppResult<Vec<CatalogueEntry>> {
+    ensure_wikipedia_network_available().await?;
+
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| AppError::Io(format!("Failed to build HTTP client: {e}")))?;
 
-    let url = "https://library.kiwix.org/catalog/v2/entries?lang=eng&category=wikipedia&count=500";
     let body = client
-        .get(url)
+        .get(KIWIX_CATALOGUE_URL)
         .send()
         .await
-        .map_err(|e| AppError::Io(format!("Failed to fetch catalogue: {e}")))?
+        .map_err(|e| map_wikipedia_transport_error(&e))?
+        .error_for_status()
+        .map_err(|e| {
+            if e.is_timeout() || e.is_connect() {
+                map_wikipedia_transport_error(&e)
+            } else {
+                AppError::Io(format!("Catalogue request failed: {e}"))
+            }
+        })?
         .text()
         .await
-        .map_err(|e| AppError::Io(format!("Failed to read catalogue response: {e}")))?;
+        .map_err(|e| {
+            if e.is_timeout() || e.is_connect() {
+                map_wikipedia_transport_error(&e)
+            } else {
+                AppError::Io(format!("Failed to read catalogue response: {e}"))
+            }
+        })?;
 
     parse_catalogue(&body)
 }
@@ -314,7 +649,7 @@ pub async fn set_bundle_indexing_state(
     state: String,
 ) -> AppResult<()> {
     // Only allow safe state values.
-    if !matches!(state.as_str(), "none" | "queued" | "done" | "error") {
+    if !matches!(state.as_str(), "none" | "done" | "error") {
         return Err(AppError::InvalidInput(format!("Invalid state: {state}")));
     }
     sqlx::query("UPDATE wikipedia_bundles SET indexing_state = ? WHERE id = ?")
@@ -344,7 +679,7 @@ pub async fn cancel_wikipedia_indexing(
         }
     }
 
-    sqlx::query("UPDATE wikipedia_bundles SET indexing_state = 'queued' WHERE id = ?")
+    sqlx::query("UPDATE wikipedia_bundles SET indexing_state = 'none' WHERE id = ?")
         .bind(&bundle_id)
         .execute(pool.inner())
         .await
@@ -373,10 +708,13 @@ pub async fn download_wikipedia_bundle(
     use tokio::io::AsyncWriteExt;
 
     // Validate dest_dir is an existing directory to prevent path traversal.
-    let dir = std::path::Path::new(&dest_dir);
+    let dir = Path::new(&dest_dir);
     if !dir.is_dir() {
         return Err(AppError::InvalidInput(format!("Destination directory does not exist: {dest_dir}")));
     }
+
+    ensure_wikipedia_network_available().await?;
+    assert_wikipedia_download_disk_space(dir, expected_size_bytes)?;
 
     // Derive filename from the URL.
     let filename = download_url
@@ -392,7 +730,7 @@ pub async fn download_wikipedia_bundle(
         .to_string();
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(3600))
+        .timeout(Duration::from_secs(3600))
         .build()
         .map_err(|e| AppError::Io(format!("Failed to build HTTP client: {e}")))?;
 
@@ -400,7 +738,7 @@ pub async fn download_wikipedia_bundle(
         .get(&download_url)
         .send()
         .await
-        .map_err(|e| AppError::Io(format!("Download failed: {e}")))?;
+        .map_err(|e| map_wikipedia_transport_error(&e))?;
 
     if !resp.status().is_success() {
         return Err(AppError::Io(format!("Download returned HTTP {}", resp.status())));
@@ -417,7 +755,13 @@ pub async fn download_wikipedia_bundle(
     let mut stream = resp.bytes_stream();
 
     while let Some(chunk) = stream.next().await {
-        let bytes = chunk.map_err(|e| AppError::Io(format!("Download stream error: {e}")))?;
+        let bytes = chunk.map_err(|e| {
+            if e.is_timeout() || e.is_connect() {
+                map_wikipedia_transport_error(&e)
+            } else {
+                AppError::Io(format!("Download stream error: {e}"))
+            }
+        })?;
         file.write_all(&bytes)
             .await
             .map_err(|e| AppError::Io(format!("Failed to write to file: {e}")))?;
@@ -439,12 +783,12 @@ pub async fn download_wikipedia_bundle(
     // Upsert the bundle record in SQLite.
     sqlx::query(
         "INSERT INTO wikipedia_bundles (id, name, flavour, title, article_count, size_bytes, zim_path, installed_at, indexing_state)
-         VALUES (?, ?, 'nopic', ?, ?, ?, ?, ?, 'queued')
+         VALUES (?, ?, 'nopic', ?, ?, ?, ?, ?, 'none')
          ON CONFLICT(id) DO UPDATE SET
              name = excluded.name, title = excluded.title,
              article_count = excluded.article_count,
              size_bytes = excluded.size_bytes, zim_path = excluded.zim_path,
-             installed_at = excluded.installed_at, indexing_state = 'queued'",
+             installed_at = excluded.installed_at, indexing_state = 'none'",
     )
     .bind(&bundle_id)
     .bind(&bundle_name)
@@ -495,6 +839,11 @@ pub async fn remove_wikipedia_bundle(
         .execute(pool.inner())
         .await
         ?;
+
+    let _ = sqlx::query("DELETE FROM wikipedia_articles_fts WHERE bundle_id = ?")
+        .bind(&bundle_id)
+        .execute(pool.inner())
+        .await;
 
     // Delete bundle rows (cascade deletes checkpoint).
     sqlx::query("DELETE FROM wikipedia_bundles WHERE id = ?")
@@ -569,6 +918,10 @@ pub async fn index_wikipedia_bundle(
             .execute(pool.inner())
             .await
             ?;
+        let _ = sqlx::query("DELETE FROM wikipedia_articles_fts WHERE bundle_id = ?")
+            .bind(&bundle_id)
+            .execute(pool.inner())
+            .await;
         crate::vector::wikipedia_remove_bundle(&vdb.0, &bundle_id).await.map_err(|e| AppError::VectorStore(e))?;
     }
 
@@ -727,6 +1080,12 @@ pub async fn index_wikipedia_bundle(
                 })
                 .collect();
             let parse_ms = phase_parse_t0.elapsed().as_millis();
+
+            let _ = rt.block_on(wiki_fts_insert_articles_batch(
+                &pool_clone,
+                &bundle_id_clone,
+                &articles,
+            ));
 
             // ── Phase 3 + 4: embed in batches, then bulk-upsert to LanceDB ──────
             let mut embed_ms: u128 = 0;
@@ -917,7 +1276,7 @@ pub async fn index_wikipedia_bundle(
             let is_cancelled = matches!(&e, AppError::InvalidInput(m) if m == "Indexing cancelled");
             if is_cancelled {
                 sqlx::query(
-                    "UPDATE wikipedia_bundles SET indexing_state = 'queued' WHERE id = ?",
+                    "UPDATE wikipedia_bundles SET indexing_state = 'none' WHERE id = ?",
                 )
                 .bind(&bundle_id)
                 .execute(pool.inner())
@@ -960,22 +1319,136 @@ pub async fn index_wikipedia_bundle(
     }
 }
 
-/// Semantic search over the indexed wikipedia articles.
+/// Lexical + semantic search over indexed Wikipedia articles, merged via RRF.
 /// Called by the RAG pipeline in Chat.svelte when wikipedia is enabled.
 #[tauri::command]
 pub async fn search_wikipedia(
+    pool: State<'_, SqlitePool>,
     vdb: State<'_, crate::vector::VectorDb>,
     config: State<'_, SharedConfig>,
     query: String,
 ) -> AppResult<Vec<crate::vector::WikiMatch>> {
+    const CANDIDATE_LIMIT: usize = 40;
+    const FINAL_LIMIT: usize = 5;
+
     // Only search if wikipedia is enabled in settings.
     if !config.read().unwrap().wikipedia_enabled {
         return Ok(vec![]);
     }
 
-    let model = config.read().unwrap().embedding_model.clone();
-    let embedding = super::rag::embed_query(&query, &model).await?;
-    crate::vector::wikipedia_search(&vdb.0, embedding, 5).await.map_err(|e| AppError::VectorStore(e))
+    let query = query.trim().to_string();
+    if query.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let fts_fut = wiki_fts_search_inner(pool.inner(), &query, CANDIDATE_LIMIT);
+    let sem_fut = async {
+        let model = config.read().unwrap().embedding_model.clone();
+        match super::rag::embed_query(&query, &model).await {
+            Ok(emb) => crate::vector::wikipedia_search(&vdb.0, emb, CANDIDATE_LIMIT)
+                .await
+                .unwrap_or_default(),
+            Err(_) => vec![],
+        }
+    };
+
+    let (fts_rows, semantic) = tokio::join!(fts_fut, sem_fut);
+    let fts_rows = fts_rows.unwrap_or_default();
+
+    struct Entry {
+        article_id: String,
+        bundle_id: String,
+        title: String,
+        score: f64,
+        fts: bool,
+        sem: bool,
+        fts_snippet: Option<String>,
+        sem_distance: Option<f32>,
+        sem_excerpts: Vec<String>,
+    }
+
+    let mut entries: HashMap<String, Entry> = HashMap::new();
+
+    for (rank, r) in fts_rows.iter().enumerate() {
+        let e = entries.entry(r.article_id.clone()).or_insert(Entry {
+            article_id: r.article_id.clone(),
+            bundle_id: r.bundle_id.clone(),
+            title: r.title.clone(),
+            score: 0.0,
+            fts: false,
+            sem: false,
+            fts_snippet: None,
+            sem_distance: None,
+            sem_excerpts: vec![],
+        });
+        e.score += wiki_rrf_score(rank + 1);
+        e.fts = true;
+        e.fts_snippet = Some(r.snippet.clone());
+        e.title = r.title.clone();
+    }
+
+    for (rank, m) in semantic.iter().enumerate() {
+        let e = entries.entry(m.article_id.clone()).or_insert(Entry {
+            article_id: m.article_id.clone(),
+            bundle_id: m.bundle_id.clone(),
+            title: m.title.clone(),
+            score: 0.0,
+            fts: false,
+            sem: false,
+            fts_snippet: None,
+            sem_distance: None,
+            sem_excerpts: vec![],
+        });
+        e.score += wiki_rrf_score(rank + 1);
+        e.sem = true;
+        e.sem_distance = Some(m.distance);
+        if e.sem_excerpts.is_empty() {
+            e.sem_excerpts = m.excerpts.clone();
+        }
+        if e.title.is_empty() {
+            e.title = m.title.clone();
+        }
+    }
+
+    let mut scored: Vec<(f64, crate::vector::WikiMatch)> = entries
+        .into_values()
+        .map(|e| {
+            let score = e.score;
+            let mut excerpts = e.sem_excerpts;
+            if let Some(s) = e.fts_snippet {
+                if !s.is_empty() && !excerpts.iter().any(|x| x == &s) {
+                    excerpts.insert(0, s);
+                }
+            }
+            if excerpts.is_empty() {
+                excerpts.push(String::new());
+            }
+            let m = crate::vector::WikiMatch {
+                article_id: e.article_id,
+                bundle_id: e.bundle_id,
+                title: e.title,
+                excerpts,
+                distance: e.sem_distance.unwrap_or(0.0),
+            };
+            (score, m)
+        })
+        .collect();
+
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(FINAL_LIMIT);
+    let out: Vec<crate::vector::WikiMatch> = scored.into_iter().map(|(_, m)| m).collect();
+
+    let _ = crate::audit::log_event(
+        pool.inner(),
+        "search_wikipedia",
+        Some("wikipedia"),
+        None,
+        None,
+        Some(&query),
+    )
+    .await;
+
+    Ok(out)
 }
 
 /// Read a single article from a ZIM bundle by its entry path.

@@ -67,6 +67,7 @@ pub fn run() {
                     .await
                     .expect("failed to initialise database");
                 let pool_for_fts = pool.clone();
+                let pool_for_wiki_fts = pool.clone();
 
                 let app_config = config::AppConfig::load(&pool)
                     .await
@@ -82,7 +83,12 @@ pub fn run() {
                 let vdb = vector::init(&app_handle)
                     .await
                     .expect("failed to initialise vector database");
+                let vdb_for_wiki_fts = vdb.clone();
                 app_handle.manage(vector::VectorDb(vdb));
+
+                tauri::async_runtime::spawn(async move {
+                    commands::wikipedia_fts_initial_sync(&pool_for_wiki_fts, &vdb_for_wiki_fts).await;
+                });
 
                 app_handle.manage(KeyStore {
                     vault_key: Mutex::new(None),
@@ -172,6 +178,8 @@ pub fn run() {
         auth::lock_folder,
         commands::test_zim_parse,
         commands::fetch_wikipedia_catalogue,
+        commands::check_wikipedia_connectivity,
+        commands::check_wikipedia_download_preflight,
         commands::list_wikipedia_bundles,
         commands::set_bundle_indexing_state,
         commands::cancel_wikipedia_indexing,

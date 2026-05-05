@@ -67,7 +67,7 @@ pub(crate) async fn fts_delete(pool: &SqlitePool, id: i64) {
 /// matches "gases" and "gaseous", "run" matches "running" and "runner".
 ///
 /// Example: `rust error` → `"rust"* "error"*`
-fn build_fts_query(raw: &str) -> String {
+pub(crate) fn build_fts_query(raw: &str) -> String {
     raw.split_whitespace()
         .filter_map(|tok| {
             let clean = tok.replace('"', "");

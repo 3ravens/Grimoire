@@ -42,9 +42,39 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool, sqlx::Error> {
         .execute(&pool)
         .await?;
 
+    // Compatibility guard after removing migration v16 from the codebase.
+    // Some local databases still have v16 recorded in _sqlx_migrations; with the
+    // file gone, sqlx returns VersionMissing(16). Dropping that history row makes
+    // migration metadata consistent again while leaving actual user data intact.
+    forget_removed_migration_16_if_present(&pool).await?;
+
     // Run any pending migrations from the migrations/ folder.
     // sqlx tracks which ones have already been applied, so this is safe to call every startup.
     sqlx::migrate!("./migrations").run(&pool).await?;
 
     Ok(pool)
 }
+
+async fn forget_removed_migration_16_if_present(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    // _sqlx_migrations may not exist on a brand-new database yet.
+    let has_migrations_table: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    if has_migrations_table.is_none() {
+        return Ok(());
+    }
+
+    // Only remove the orphaned *queue* migration row. Do not delete version 16 when it
+    // legitimately refers to `0016_wikipedia_fts` (or any other current v16 migration).
+    sqlx::query(
+        "DELETE FROM _sqlx_migrations WHERE version = 16 AND description LIKE '%wikipedia_queue%'",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+

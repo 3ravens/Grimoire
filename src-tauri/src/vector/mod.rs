@@ -186,8 +186,8 @@ pub use notes::{
 };
 
 pub use wiki::{
-    clear_wiki_index, raw_wikipedia_search, wikipedia_append_batch, wikipedia_remove_bundle,
-    wikipedia_search, WikiMatch,
+    clear_wiki_index, for_each_wikipedia_bundle_batch, raw_wikipedia_search,
+    wikipedia_append_batch, wikipedia_remove_bundle, wikipedia_search, WikiMatch,
 };
 
 pub use scanned::{
