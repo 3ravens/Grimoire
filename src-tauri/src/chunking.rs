@@ -87,3 +87,41 @@ pub fn chunk_sentences(
     }
     chunks
 }
+
+/// Target size for CSV row blocks (characters). Keeps embeddings within a reasonable budget.
+pub const CSV_CHUNK_MAX_CHARS: usize = 6000;
+
+/// Pack CSV rows into text blocks without splitting a row across chunks. Each row is one line
+/// (tab-separated cells).
+pub fn chunk_csv_row_blocks(rows: Vec<String>, max_chunk_chars: usize) -> Vec<String> {
+    if rows.is_empty() {
+        return vec![];
+    }
+    let max = max_chunk_chars.max(256);
+    let mut blocks = Vec::new();
+    let mut cur = String::new();
+
+    for row in rows {
+        let next_len = if cur.is_empty() {
+            row.len()
+        } else {
+            cur.len() + 1 + row.len()
+        };
+
+        if next_len > max && !cur.is_empty() {
+            blocks.push(std::mem::take(&mut cur));
+            cur = row;
+        } else if cur.is_empty() {
+            cur = row;
+        } else {
+            cur.push('\n');
+            cur.push_str(&row);
+        }
+    }
+
+    if !cur.trim().is_empty() {
+        blocks.push(cur);
+    }
+
+    blocks
+}

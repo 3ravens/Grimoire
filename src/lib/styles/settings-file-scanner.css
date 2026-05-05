@@ -154,10 +154,25 @@
 
 /* ── Progress bar ────────────────────────────────────────────────────────── */
 
+.fs-progress-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
 .fs-progress-row {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.fs-progress-detail {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.35;
+  padding-left: 0;
+  word-break: break-word;
 }
 
 .fs-progress-bar {

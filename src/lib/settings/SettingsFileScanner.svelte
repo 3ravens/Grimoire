@@ -26,8 +26,11 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   // ScannedPath shape: { id, path, kind, added_at, last_scanned_at, enabled, file_count, error_msg }
   let paths = $state([]);
 
-  // progress[path_id] = { scanned: number, total: number, done: boolean, error: string|null }
+  // progress[path_id] — scanning state including chunk-level embedding progress (EPUBs, large files).
   let progress = $state({});
+
+  /** First meaningful embedding progress per path — used for ETA (same idea as Wikipedia indexing). */
+  let embedStarts = $state({});
 
   // id of the path currently being imported as a note (null if none)
   let importingNoteId = $state(null);
@@ -47,13 +50,54 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     await loadPaths();
 
     unlisten = await listen('filescanner:progress', (ev) => {
-      const { path_id, scanned, total, done, error } = ev.payload;
-      progress = {
-        ...progress,
-        [path_id]: { scanned, total, done, error: error ?? null },
+      const payload = ev.payload;
+      const path_id = payload.path_id;
+      const prev = progress[path_id] ?? {};
+
+      const next = {
+        ...prev,
+        scanned: payload.scanned ?? 0,
+        skipped: payload.skipped ?? 0,
+        total: payload.total ?? 0,
+        visited:
+          payload.visited !== undefined && payload.visited !== null ? payload.visited : prev.visited ?? 0,
+        done: !!payload.done,
+        error: payload.error ?? null,
       };
-      if (done) {
-        // Refresh the row so file_count / last_scanned_at update.
+
+      if (payload.phase !== undefined && payload.phase !== null) next.phase = payload.phase;
+      if (payload.chunks_embedded !== undefined && payload.chunks_embedded !== null) {
+        next.chunks_embedded = payload.chunks_embedded;
+      }
+      if (payload.chunks_total !== undefined && payload.chunks_total !== null) {
+        next.chunks_total = payload.chunks_total;
+      }
+      if (payload.current_file !== undefined) next.current_file = payload.current_file;
+
+      const ct = payload.chunks_total ?? next.chunks_total ?? 0;
+      if (ct === 0) {
+        const es = { ...embedStarts };
+        delete es[path_id];
+        embedStarts = es;
+      }
+
+      if (
+        ct > 0 &&
+        (payload.chunks_embedded ?? 0) > 0 &&
+        !embedStarts[path_id]
+      ) {
+        embedStarts = {
+          ...embedStarts,
+          [path_id]: { time: Date.now(), at: payload.chunks_embedded ?? 0 },
+        };
+      }
+
+      progress = { ...progress, [path_id]: next };
+
+      if (payload.done) {
+        const es = { ...embedStarts };
+        delete es[path_id];
+        embedStarts = es;
         loadPaths();
       }
     });
@@ -73,7 +117,24 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     const selected = await openDialog({
       directory: false,
       multiple: false,
-      filters: [{ name: 'Supported files', extensions: ['txt', 'md', 'pdf'] }],
+      filters: [
+        {
+          name: 'Supported files',
+          extensions: [
+            'txt',
+            'md',
+            'pdf',
+            'csv',
+            'html',
+            'htm',
+            'docx',
+            'odt',
+            'epub',
+            'rtf',
+            'log',
+          ],
+        },
+      ],
     });
     if (!selected) return;
     const filePath = Array.isArray(selected) ? selected[0] : selected;
@@ -106,6 +167,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       delete next[id];
       progress = next;
     } catch (e) {
+      console.error('[remove_scanned_path]', e);
       alert(`Could not remove path: ${e?.message ?? e}`);
     }
   }
@@ -121,7 +183,21 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
   async function rescan(id) {
     // Clear stale progress for this path before rescanning.
-    progress = { ...progress, [id]: { scanned: 0, total: 0, done: false, error: null } };
+    progress = {
+      ...progress,
+      [id]: {
+        scanned: 0,
+        skipped: 0,
+        visited: 0,
+        total: 0,
+        done: false,
+        error: null,
+        phase: null,
+        chunks_embedded: 0,
+        chunks_total: 0,
+        current_file: null,
+      },
+    };
     try {
       await invoke('rescan_path', { id });
     } catch (e) {
@@ -133,6 +209,9 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     try {
       await invoke('cancel_scanned_path_index', { id });
       const existing = progress[id] ?? { scanned: 0, total: 0, done: true, error: null };
+      const es = { ...embedStarts };
+      delete es[id];
+      embedStarts = es;
       progress = { ...progress, [id]: { ...existing, done: true, error: null } };
       await loadPaths();
     } catch (e) {
@@ -153,7 +232,21 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
     const ids = paths.map((p) => p.id);
     for (const id of ids) {
-      progress = { ...progress, [id]: { scanned: 0, total: 0, done: false, error: null } };
+      progress = {
+        ...progress,
+        [id]: {
+          scanned: 0,
+          skipped: 0,
+          visited: 0,
+          total: 0,
+          done: false,
+          error: null,
+          phase: null,
+          chunks_embedded: 0,
+          chunks_total: 0,
+          current_file: null,
+        },
+      };
     }
 
     const starts = await Promise.all(
@@ -190,10 +283,72 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     return new Date(timestamp * 1000).toLocaleString();
   }
 
+  /** Format a duration in seconds as a human-readable string (matches Wikipedia indexing). */
+  function fmtEta(secs) {
+    if (!isFinite(secs) || secs < 0) return null;
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = Math.floor(secs % 60);
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  }
+
+  /**
+   * Composite progress: completed files use `scanned - 1`, current file adds chunk fraction when known.
+   * Avoids showing ~100% for “file 1 of 1” during a long embedding run.
+   */
   function progressFraction(id) {
     const p = progress[id];
     if (!p || p.total === 0) return 0;
-    return p.scanned / p.total;
+    const ct = p.chunks_total ?? 0;
+    const ce = p.chunks_embedded ?? 0;
+    const scanned = p.scanned ?? 0;
+    if (ct > 0) {
+      const base = Math.max(0, scanned - 1);
+      return Math.min(1, (base + ce / ct) / p.total);
+    }
+    return Math.min(1, scanned / p.total);
+  }
+
+  function scanPhaseDetail(id) {
+    const p = progress[id];
+    if (!p || p.error) return '';
+    const phase = p.phase ?? '';
+    const name = p.current_file ? ` · ${p.current_file}` : '';
+    if (phase === 'storing') return `Saving to index${name}`;
+    const ct = p.chunks_total ?? 0;
+    const ce = p.chunks_embedded ?? 0;
+    if (ct > 0) {
+      return `Embedding ${ce.toLocaleString()} / ${ct.toLocaleString()} chunks${name}`;
+    }
+    if (phase === 'reading') return `Reading${name}`;
+    if (phase === 'storing') return `Saving to index${name}`;
+    if (phase === 'cleanup') return 'Removing stale index entries…';
+    if (phase === 'starting') return 'Starting…';
+    if (phase === 'walking') {
+      const v = p.visited ?? 0;
+      const t = p.total ?? 0;
+      return `Finding files… (${v} / ${t})`;
+    }
+    if (phase === 'embedding') return `Embedding…${name}`;
+    return '';
+  }
+
+  function embedEtaSuffix(id) {
+    const p = progress[id];
+    const start = embedStarts[id];
+    if (!p || !start || p.done || p.error) return '';
+    const ct = p.chunks_total ?? 0;
+    const ce = p.chunks_embedded ?? 0;
+    if (ct <= 0 || ce <= start.at || ce >= ct) return '';
+    const elapsedSec = (Date.now() - start.time) / 1000;
+    if (elapsedSec < 4) return '';
+    const rate = (ce - start.at) / elapsedSec;
+    const remainingSec = (ct - ce) / rate;
+    if (!isFinite(remainingSec) || remainingSec < 5) return '';
+    const formatted = fmtEta(remainingSec);
+    return formatted ? ` · ~${formatted} left` : '';
   }
 
   function isScanning(id) {
@@ -209,7 +364,8 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       <p class="fs-description">
         Add files or folders from outside your vault as context sources.
         Indexed content is searched alongside your notes when chatting.
-        Supports <code>.txt</code>, <code>.md</code>, and <code>.pdf</code> files.
+        Supports <code>.txt</code>, <code>.md</code>, <code>.pdf</code>, <code>.csv</code>, <code>.html</code>,
+        <code>.docx</code>, <code>.odt</code>, <code>.epub</code>, <code>.rtf</code>, <code>.log</code>, and more.
       </p>
     </div>
     <div class="fs-add-buttons">
@@ -255,17 +411,28 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
           </div>
 
           {#if scanning}
-            <div class="fs-progress-row">
-              <div class="fs-progress-bar">
-                <div class="fs-progress-fill" style="width: {Math.round(progressFraction(p.id) * 100)}%"></div>
+            <div class="fs-progress-stack">
+              <div class="fs-progress-row">
+                <div class="fs-progress-bar">
+                  <div class="fs-progress-fill" style="width: {Math.round(progressFraction(p.id) * 100)}%"></div>
+                </div>
+                <span class="fs-progress-label">
+                  {#if prog?.error}
+                    {prog.error}
+                  {:else}
+                    File {prog?.visited ?? 0} / {prog?.total ?? 0}{@const s = prog?.skipped ?? 0}{s > 0 ? ` (${s} unchanged)` : ''}
+                  {/if}
+                </span>
               </div>
-              <span class="fs-progress-label">
-                {#if prog?.error}
-                  {prog.error}
-                {:else}
-                  Scanning {prog?.scanned ?? 0} / {prog?.total ?? 0}
+              {#if !prog?.error}
+                {@const detail = scanPhaseDetail(p.id)}
+                {@const eta = embedEtaSuffix(p.id)}
+                {#if detail || eta}
+                  <div class="fs-progress-detail">
+                    {detail}{eta}
+                  </div>
                 {/if}
-              </span>
+              {/if}
             </div>
           {/if}
 

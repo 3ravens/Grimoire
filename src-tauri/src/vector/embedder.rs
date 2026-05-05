@@ -86,11 +86,21 @@ async fn evict_other_models(client: &reqwest::Client, keep_model: &str) {
 
 /// Call Ollama's /api/embeddings endpoint and return the embedding vector.
 /// Evicts all running models first to prevent Vulkan GPU context conflicts.
-/// Uses keep_alive=0 so the embed model is unloaded immediately after use.
 /// Retries once on failure — evicting again before the second attempt clears
 /// any GPU state that was corrupted by the first crash.
-pub async fn embed(text: &str, model: &str) -> Result<Vec<f32>, String> {
-    log::info!("[embed] model={model} text_len={}", text.len());
+///
+/// `keep_alive_secs`: seconds Ollama keeps the embedding model loaded after the request.
+/// Use `0` for interactive RAG queries so VRAM is freed quickly; use `300` (or similar)
+/// when embedding many chunks in sequence so the model stays warm between calls.
+pub async fn embed_with_keep_alive(
+    text: &str,
+    model: &str,
+    keep_alive_secs: i32,
+) -> Result<Vec<f32>, String> {
+    log::info!(
+        "[embed] model={model} text_len={} keep_alive={keep_alive_secs}s",
+        text.len()
+    );
     #[derive(Serialize)]
     struct Req<'a> {
         model: &'a str,
@@ -119,7 +129,11 @@ pub async fn embed(text: &str, model: &str) -> Result<Vec<f32>, String> {
         let result: Result<Vec<f32>, String> = async {
             let response = client
                 .post("http://localhost:11434/api/embeddings")
-                .json(&Req { model, prompt: text, keep_alive: 0 })
+                .json(&Req {
+                    model,
+                    prompt: text,
+                    keep_alive: keep_alive_secs,
+                })
                 .send()
                 .await
                 .map_err(|e| format!("Could not reach Ollama (embedding): {e}"))?;
@@ -169,6 +183,11 @@ pub async fn embed(text: &str, model: &str) -> Result<Vec<f32>, String> {
         }
     }
     Err(last_err)
+}
+
+/// Same as [`embed_with_keep_alive`] with `keep_alive_secs = 0` (unload after each call).
+pub async fn embed(text: &str, model: &str) -> Result<Vec<f32>, String> {
+    embed_with_keep_alive(text, model, 0).await
 }
 
 /// Embed a batch of texts in a single Ollama request using `/api/embed`.
@@ -241,13 +260,43 @@ pub async fn embed_batch(texts: &[String], model: &str) -> Result<Vec<Vec<f32>>,
         return Ok(vec![]);
     }
 
+    // `/api/embed` can fail sporadically when Ollama's internal runner drops the
+    // connection (HTTP 400 with embedded TCP errors). Single-chunk work is common
+    // during incremental rescans; use the same `/api/embeddings` path as `embed()`
+    // and skip the batch endpoint entirely.
+    if texts.len() == 1 {
+        // Match multi-chunk batch behavior: keep the model warm (see /api/embed keep_alive).
+        let v = embed_with_keep_alive(&texts[0], model, 300).await?;
+        return Ok(vec![v]);
+    }
+
+    evict_other_models(&client, model).await;
+
+    // Split into API-sized batches up front. Sending thousands of inputs in one `/api/embed`
+    // request can stall Ollama for minutes with no feedback (common for large EPUBs).
+    let bs = batch_size_for_model(model).max(1);
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut s = 0usize;
+    while s < texts.len() {
+        let e = (s + bs).min(texts.len());
+        ranges.push((s, e));
+        s = e;
+    }
+
     let mut out: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
-    let mut ranges: Vec<(usize, usize)> = vec![(0, texts.len())];
 
     while let Some((start, end)) = ranges.pop() {
         let slice = &texts[start..end];
         match embed_batch_once(&client, slice, model).await {
             Ok(embs) if embs.len() == slice.len() => {
+                if texts.len() >= 128 {
+                    log::info!(
+                        "[embed_batch] slice {}..{} / {} chunks",
+                        start,
+                        end,
+                        texts.len()
+                    );
+                }
                 for (i, emb) in embs.into_iter().enumerate() {
                     out[start + i] = Some(emb);
                 }
@@ -264,7 +313,7 @@ pub async fn embed_batch(texts: &[String], model: &str) -> Result<Vec<Vec<f32>>,
                 if slice.len() == 1 {
                     log::warn!("[embed_batch] single-item batch mismatch: {err}");
                     EMBED_BATCH_SINGLE_FALLBACK_COUNT.fetch_add(1, Ordering::Relaxed);
-                    out[start] = Some(embed(&texts[start], model).await?);
+                    out[start] = Some(embed_with_keep_alive(&texts[start], model, 300).await?);
                 } else {
                     let mid = start + (slice.len() / 2);
                     log::warn!("[embed_batch] splitting batch ({start}..{end}) after mismatch: {err}");
@@ -277,7 +326,7 @@ pub async fn embed_batch(texts: &[String], model: &str) -> Result<Vec<Vec<f32>>,
                 if slice.len() == 1 {
                     log::warn!("[embed_batch] single-item batch failed, falling back to /api/embeddings: {e}");
                     EMBED_BATCH_SINGLE_FALLBACK_COUNT.fetch_add(1, Ordering::Relaxed);
-                    out[start] = Some(embed(&texts[start], model).await?);
+                    out[start] = Some(embed_with_keep_alive(&texts[start], model, 300).await?);
                 } else {
                     let mid = start + (slice.len() / 2);
                     log::warn!("[embed_batch] splitting batch ({start}..{end}) after failure: {e}");

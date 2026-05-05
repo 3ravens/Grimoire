@@ -176,7 +176,7 @@ pub async fn init(app: &tauri::AppHandle) -> Result<Connection, String> {
 // ---------------------------------------------------------------------------
 
 pub use embedder::{
-    batch_size_for_model, content_chars_for_model, embed, embed_batch,
+    batch_size_for_model, content_chars_for_model, embed, embed_batch, embed_with_keep_alive,
     reset_embed_batch_telemetry, snapshot_embed_batch_telemetry,
 };
 

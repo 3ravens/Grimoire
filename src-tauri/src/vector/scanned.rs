@@ -153,11 +153,9 @@ pub async fn scanned_file_remove(conn: &Connection, file_path: &str) -> Result<(
 /// Used when removing a scanned folder.
 pub async fn scanned_file_remove_prefix(conn: &Connection, prefix: &str) -> Result<(), String> {
     let table = open_scanned_table(conn, 0).await?;
-    // Escape single quotes, then escape LIKE wildcards in the prefix.
     let safe_prefix = super::escape_sql(prefix);
-    let like_prefix = safe_prefix.replace('%', "\\%").replace('_', "\\_");
     table
-        .delete(&format!("file_path LIKE '{like_prefix}%' ESCAPE '\\'"))
+        .delete(&format!("file_path LIKE '{safe_prefix}%'"))
         .await
         .map_err(|e| e.to_string())
 }

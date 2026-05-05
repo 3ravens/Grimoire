@@ -47,6 +47,7 @@ pub mod file_scanner;
 pub mod hardware;
 pub mod notes;
 pub mod rag;
+mod scanner_extract;
 pub mod search;
 pub mod settings;
 pub mod tags;

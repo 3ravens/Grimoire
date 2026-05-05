@@ -17,14 +17,14 @@
 
 //! File Scanner — lets users add files/folders from outside the vault as RAG context sources.
 //!
-//! Supported formats (v1): `.txt`, `.md`
-//! Each indexed file is chunked via the same sentence-chunking pipeline as notes and embedded
-//! into the `scanned_files` LanceDB table.
+//! Supported formats include plain text, Markdown, PDF, CSV, HTML, DOCX, ODT, EPUB, RTF, and `.log`.
+//! CSV uses row-aware blocks; EPUB respects spine chapters then sentence chunking; other prose
+//! formats use the same sentence-chunking pipeline as notes and embed into `scanned_files`.
 
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, State};
 use serde::Serialize;
-use pdf_extract;
+use std::collections::HashMap;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use crate::{AppError, AppResult};
@@ -55,29 +55,23 @@ pub struct ScannedPath {
 
 /// Return the mime type for a supported file extension, or None if unsupported.
 fn mime_for_path(path: &std::path::Path) -> Option<&'static str> {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("txt")  => Some("text/plain"),
-        Some("md")   => Some("text/markdown"),
-        Some("pdf")  => Some("application/pdf"),
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())?;
+    match ext.as_str() {
+        "txt" | "log" => Some("text/plain"),
+        "md" => Some("text/markdown"),
+        "pdf" => Some("application/pdf"),
+        "csv" => Some("text/csv"),
+        "html" | "htm" => Some("text/html"),
+        "docx" => Some(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        "odt" => Some("application/vnd.oasis.opendocument.text"),
+        "epub" => Some("application/epub+zip"),
+        "rtf" => Some("application/rtf"),
         _ => None,
-    }
-}
-
-/// Extract the text content of a supported file.
-/// For PDFs, text is extracted from the PDF structure via pdf-extract.
-/// For plain text / Markdown, the file is read as UTF-8.
-/// Returns an error if the file cannot be read or, for PDFs, yields no text.
-fn read_file_text(path: &std::path::Path) -> AppResult<String> {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("pdf") => {
-            let text = pdf_extract::extract_text(path).map_err(|e| AppError::Io(e.to_string()))?;
-            if text.trim().is_empty() {
-                Err(AppError::Io("No text could be extracted from this PDF. It may be a scanned image without embedded text.".to_string()))
-            } else {
-                Ok(text)
-            }
-        }
-        _ => std::fs::read_to_string(path).map_err(Into::into),
     }
 }
 
@@ -127,9 +121,120 @@ fn walkdir_collect(root: &std::path::Path) -> Result<Vec<std::path::PathBuf>, st
     Ok(result)
 }
 
-/// Index all files for a scanned_paths row. Emits `filescanner:progress` events.
+/// Short label for UI (filename only).
+fn file_display_name(file_path: &str) -> String {
+    std::path::Path::new(file_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(file_path)
+        .to_string()
+}
+
+/// Embed `doc_texts` in API-sized batches and emit `filescanner:progress` so the UI can show
+/// chunk-level progress (same idea as Wikipedia index windows).
+async fn embed_scanned_chunks_with_progress(
+    app: &AppHandle,
+    path_id: i64,
+    visited: usize,
+    scanned: usize,
+    skipped: usize,
+    total: usize,
+    file_path: &str,
+    doc_texts: &[String],
+    model: &str,
+    cancel: Option<&Arc<AtomicBool>>,
+) -> Result<Vec<Vec<f32>>, String> {
+    let chunks_total = doc_texts.len();
+    let label = file_display_name(file_path);
+
+    let _ = app.emit("filescanner:progress", serde_json::json!({
+        "path_id": path_id,
+        "visited": visited,
+        "scanned": scanned,
+        "skipped": skipped,
+        "total": total,
+        "phase": "embedding",
+        "chunks_embedded": 0,
+        "chunks_total": chunks_total,
+        "current_file": label,
+        "done": false,
+        "error": null,
+    }));
+
+    let bs = crate::vector::batch_size_for_model(model).max(1);
+    let mut embeddings: Vec<Vec<f32>> = Vec::with_capacity(chunks_total);
+    let mut offset = 0usize;
+
+    while offset < chunks_total {
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            return Err("Indexing cancelled".into());
+        }
+
+        let end = (offset + bs).min(chunks_total);
+        let slice = &doc_texts[offset..end];
+
+        match crate::vector::embed_batch(slice, model).await {
+            Ok(part) if part.len() == slice.len() => {
+                embeddings.extend(part);
+                offset = end;
+            }
+            Ok(_) | Err(_) => {
+                for j in offset..end {
+                    if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+                        return Err("Indexing cancelled".into());
+                    }
+                    let emb =
+                        crate::vector::embed_with_keep_alive(&doc_texts[j], model, 300)
+                            .await
+                            .unwrap_or_default();
+                    embeddings.push(emb);
+                    let emit_every = if chunks_total > 256 { 48usize } else { 1usize };
+                    let at_slice_end = j + 1 == end;
+                    if at_slice_end || (j + 1 - offset) % emit_every == 0 {
+                        let _ = app.emit("filescanner:progress", serde_json::json!({
+                            "path_id": path_id,
+                            "visited": visited,
+                            "scanned": scanned,
+                            "skipped": skipped,
+                            "total": total,
+                            "phase": "embedding",
+                            "chunks_embedded": j + 1,
+                            "chunks_total": chunks_total,
+                            "current_file": label,
+                            "done": false,
+                            "error": null,
+                        }));
+                    }
+                }
+                offset = end;
+            }
+        }
+
+        let _ = app.emit("filescanner:progress", serde_json::json!({
+            "path_id": path_id,
+            "visited": visited,
+            "scanned": scanned,
+            "skipped": skipped,
+            "total": total,
+            "phase": "embedding",
+            "chunks_embedded": offset,
+            "chunks_total": chunks_total,
+            "current_file": label,
+            "done": false,
+            "error": null,
+        }));
+    }
+
+    Ok(embeddings)
+}
+
+/// Emits `filescanner:progress` with `visited` (files examined, 1-based), `scanned`
+/// (files re-indexed), `skipped` (unchanged), and `total`.
 /// Updates SQLite `scanned_files` rows and the LanceDB scanned_files table.
 /// On completion, updates `last_scanned_at` and `file_count` in `scanned_paths`.
+///
+/// When `incremental` is true, files whose mtime hasn't changed since the last
+/// index are skipped. Stale entries (in the DB but deleted from disk) are cleaned up.
 async fn index_path(
     app: &AppHandle,
     pool: &SqlitePool,
@@ -139,36 +244,111 @@ async fn index_path(
     kind: &str,
     model: &str,
     cancel: Option<Arc<AtomicBool>>,
+    incremental: bool,
 ) -> AppResult<()> {
     let files = collect_files(path, kind);
     let total = files.len();
     let mut scanned = 0usize;
+    let mut skipped = 0usize;
+
+    let known_mtime: HashMap<String, i64> = if incremental {
+        sqlx::query_as::<_, (String, Option<i64>)>(
+            "SELECT file_path, mtime FROM scanned_files WHERE path_id = ?",
+        )
+        .bind(path_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(p, m)| m.map(|mt| (p, mt)))
+        .collect()
+    } else {
+        HashMap::new()
+    };
 
     // Emit started event.
     let _ = app.emit("filescanner:progress", serde_json::json!({
         "path_id": path_id,
+        "visited": 0,
         "scanned": 0,
+        "skipped": 0,
         "total": total,
+        "phase": "starting",
+        "chunks_embedded": 0,
+        "chunks_total": 0,
+        "current_file": serde_json::Value::Null,
         "done": false,
         "error": null,
     }));
 
-    for (file_path, mime) in &files {
+    for (idx, (file_path, mime)) in files.iter().enumerate() {
+        let visited = idx + 1;
         if cancel.as_ref().is_some_and(|flag| flag.load(Ordering::Relaxed)) {
             return Err(AppError::InvalidInput("Indexing cancelled".to_string()));
         }
 
+        let _ = app.emit("filescanner:progress", serde_json::json!({
+            "path_id": path_id,
+            "visited": visited,
+            "scanned": scanned,
+            "skipped": skipped,
+            "total": total,
+            "phase": "walking",
+            "chunks_embedded": 0,
+            "chunks_total": 0,
+            "current_file": serde_json::Value::Null,
+            "done": false,
+            "error": null,
+        }));
+
+        // ── Incremental skip: compare mtime against the last-indexed value ────
+        if incremental {
+            let old_mtime = known_mtime.get(file_path).copied();
+
+            let now_mtime = std::fs::metadata(file_path)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64);
+
+            if let (Some(old), Some(new)) = (old_mtime, now_mtime) {
+                if old == new {
+                    skipped += 1;
+                    continue;
+                }
+            }
+        }
+
         scanned += 1;
 
+        let _ = app.emit("filescanner:progress", serde_json::json!({
+            "path_id": path_id,
+            "visited": visited,
+            "scanned": scanned,
+            "skipped": skipped,
+            "total": total,
+            "phase": "reading",
+            "chunks_embedded": 0,
+            "chunks_total": 0,
+            "current_file": file_display_name(file_path),
+            "done": false,
+            "error": null,
+        }));
+
         // Read file content.
-        let content = match read_file_text(std::path::Path::new(file_path)) {
-            Ok(c) => c,
+        let extracted = match super::scanner_extract::extract(std::path::Path::new(file_path)) {
+            Ok(e) => e,
             Err(e) => {
-                // Skip unreadable files but report via progress.
                 let _ = app.emit("filescanner:progress", serde_json::json!({
                     "path_id": path_id,
+                    "visited": visited,
                     "scanned": scanned,
+                    "skipped": skipped,
                     "total": total,
+                    "phase": "idle",
+                    "chunks_embedded": 0,
+                    "chunks_total": 0,
+                    "current_file": serde_json::Value::Null,
                     "done": false,
                     "error": format!("Could not read {file_path}: {e}"),
                 }));
@@ -183,9 +363,13 @@ async fn index_path(
             .unwrap_or(file_path)
             .to_string();
 
-        // Chunk content using the same sentence pipeline as notes.
-        let sentences = split_sentences(&content);
-        let raw_chunks = chunk_sentences(sentences, 1, 0);
+        let raw_chunks = match extracted {
+            super::scanner_extract::ScanExtract::FullText(content) => {
+                let sentences = split_sentences(&content);
+                chunk_sentences(sentences, 1, 0)
+            }
+            super::scanner_extract::ScanExtract::Chunks(chunks) => chunks,
+        };
         let doc_texts: Vec<String> = raw_chunks
             .iter()
             .enumerate()
@@ -196,19 +380,40 @@ async fn index_path(
             continue;
         }
 
-        // Embed all chunks in one batch call.
-        let embeddings = match crate::vector::embed_batch(&doc_texts, &model).await {
+        let embeddings = match embed_scanned_chunks_with_progress(
+            app,
+            path_id,
+            visited,
+            scanned,
+            skipped,
+            total,
+            file_path,
+            &doc_texts,
+            model,
+            cancel.as_ref(),
+        )
+        .await
+        {
             Ok(e) => e,
-            Err(_) => {
-                // Fall back to one-at-a-time embedding on batch failure.
-                let mut embs = Vec::new();
-                for text in &doc_texts {
-                    let emb = crate::vector::embed(text, &model).await.unwrap_or_default();
-                    embs.push(emb);
-                }
-                embs
+            Err(e) if e == "Indexing cancelled" => {
+                return Err(AppError::InvalidInput("Indexing cancelled".to_string()));
             }
+            Err(e) => return Err(AppError::Io(e)),
         };
+
+        let _ = app.emit("filescanner:progress", serde_json::json!({
+            "path_id": path_id,
+            "visited": visited,
+            "scanned": scanned,
+            "skipped": skipped,
+            "total": total,
+            "phase": "storing",
+            "chunks_embedded": embeddings.len(),
+            "chunks_total": embeddings.len(),
+            "current_file": file_display_name(file_path),
+            "done": false,
+            "error": null,
+        }));
 
         // Build (chunk_index, title, content, embedding) tuples, skipping empty
         // embeddings and empty/whitespace content chunks.
@@ -235,8 +440,14 @@ async fn index_path(
         if let Err(e) = crate::vector::scanned_file_upsert_batch(vdb, file_path, chunks).await {
             let _ = app.emit("filescanner:progress", serde_json::json!({
                 "path_id": path_id,
+                "visited": visited,
                 "scanned": scanned,
+                "skipped": skipped,
                 "total": total,
+                "phase": "idle",
+                "chunks_embedded": 0,
+                "chunks_total": 0,
+                "current_file": serde_json::Value::Null,
                 "done": false,
                 "error": format!("Failed to index {file_path}: {e}"),
             }));
@@ -272,14 +483,59 @@ async fn index_path(
         .await
         ?;
 
-        // Emit progress every file.
+        // Emit progress every file (clear chunk-level fields for the row summary).
         let _ = app.emit("filescanner:progress", serde_json::json!({
             "path_id": path_id,
+            "visited": visited,
             "scanned": scanned,
+            "skipped": skipped,
             "total": total,
+            "phase": "idle",
+            "chunks_embedded": 0,
+            "chunks_total": 0,
+            "current_file": serde_json::Value::Null,
             "done": false,
             "error": null,
         }));
+    }
+
+    // ── Stale file cleanup (incremental only) ──────────────────────────────
+    // Remove entries for files that were previously indexed but no longer exist on disk.
+    if incremental {
+        let stale_rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT file_path FROM scanned_files WHERE path_id = ?",
+        )
+        .bind(path_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        if !stale_rows.is_empty() {
+            let _ = app.emit("filescanner:progress", serde_json::json!({
+                "path_id": path_id,
+                "visited": total,
+                "scanned": scanned,
+                "skipped": skipped,
+                "total": total,
+                "phase": "cleanup",
+                "chunks_embedded": 0,
+                "chunks_total": 0,
+                "current_file": serde_json::Value::Null,
+                "done": false,
+                "error": null,
+            }));
+        }
+
+        for (stale_path,) in &stale_rows {
+            if !std::path::Path::new(stale_path).exists() {
+                let _ = crate::vector::scanned_file_remove(vdb, stale_path).await;
+                let _ = sqlx::query("DELETE FROM scanned_files WHERE file_path = ? AND path_id = ?")
+                    .bind(stale_path)
+                    .bind(path_id)
+                    .execute(pool)
+                    .await;
+            }
+        }
     }
 
     // Update scanned_paths.last_scanned_at and file_count.
@@ -301,8 +557,14 @@ async fn index_path(
     // Emit done event.
     let _ = app.emit("filescanner:progress", serde_json::json!({
         "path_id": path_id,
+        "visited": total,
         "scanned": total,
+        "skipped": skipped,
         "total": total,
+        "phase": "done",
+        "chunks_embedded": 0,
+        "chunks_total": 0,
+        "current_file": serde_json::Value::Null,
         "done": true,
         "error": null,
     }));
@@ -362,7 +624,7 @@ pub async fn add_scanned_path(
     if kind == "file" && mime_for_path(p).is_none() {
         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("none");
         return Err(AppError::InvalidInput(format!(
-            "Unsupported file type '.{ext}'. Only .txt, .md, and .pdf files are supported."
+            "Unsupported file type '.{ext}'. Supported extensions include .txt, .md, .pdf, .csv, .html, .htm, .docx, .odt, .epub, .rtf, and .log."
         )));
     }
 
@@ -415,7 +677,7 @@ pub async fn add_scanned_path(
     }
 
     tauri::async_runtime::spawn(async move {
-        let result = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path_clone, &kind_clone, &model_clone, Some(cancel)).await;
+        let result = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path_clone, &kind_clone, &model_clone, Some(cancel), false).await;
 
         if let Ok(mut map) = cancel_map_clone.lock() {
             map.remove(&id);
@@ -435,6 +697,7 @@ pub async fn add_scanned_path(
                 let _ = app_clone.emit("filescanner:progress", serde_json::json!({
                     "path_id": id,
                     "scanned": 0,
+                    "skipped": 0,
                     "total": 0,
                     "done": true,
                     "error": null,
@@ -456,6 +719,7 @@ pub async fn add_scanned_path(
             let _ = app_clone.emit("filescanner:progress", serde_json::json!({
                 "path_id": id,
                 "scanned": 0,
+                "skipped": 0,
                 "total": 0,
                 "done": true,
                 "error": e_str,
@@ -532,7 +796,8 @@ pub async fn toggle_scanned_path(
     Ok(())
 }
 
-/// Re-index all files for a scanned path (forced, regardless of mtime).
+/// Re-index all files for a scanned path.
+/// When `full_rescan` is false or absent, unchanged files (mtime match) are skipped.
 /// Called by the "Rescan" button in the UI.
 #[tauri::command]
 pub async fn rescan_path(
@@ -542,6 +807,7 @@ pub async fn rescan_path(
     cancel_map: State<'_, super::FileScanCancelMap>,
     config: State<'_, SharedConfig>,
     id: i64,
+    full_rescan: Option<bool>,
 ) -> AppResult<()> {
     let row: Option<(String, String)> = sqlx::query_as(
         "SELECT path, kind FROM scanned_paths WHERE id = ?",
@@ -564,6 +830,7 @@ pub async fn rescan_path(
     let cancel_map_clone = cancel_map.0.clone();
     let model_clone = config.read().unwrap().embedding_model.clone();
     let pool_err   = pool.inner().clone();
+    let incremental = !full_rescan.unwrap_or(false);
 
     let cancel = Arc::new(AtomicBool::new(false));
     {
@@ -572,7 +839,7 @@ pub async fn rescan_path(
     }
 
     tauri::async_runtime::spawn(async move {
-        let result = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path, &kind, &model_clone, Some(cancel)).await;
+        let result = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path, &kind, &model_clone, Some(cancel), incremental).await;
 
         if let Ok(mut map) = cancel_map_clone.lock() {
             map.remove(&id);
@@ -742,7 +1009,8 @@ pub async fn import_file_as_note(
         return Err(AppError::InvalidInput(format!("Unsupported file type '.{ext}'")));
     }
 
-    let content = read_file_text(p)?;
+    let extracted = super::scanner_extract::extract(p)?;
+    let content = super::scanner_extract::flatten_for_note(&extracted);
 
     // Derive a title from the filename stem.
     let title = p

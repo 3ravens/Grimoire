@@ -20,10 +20,11 @@
     "types": ["vite/client"],
     "skipLibCheck": true,
     /**
-     * Typecheck JS in `.svelte` and `.js` files by default.
-     * Disable this if you'd like to use dynamic types.
+     * Off by default: the app uses plain JS in Svelte with minimal annotations.
+     * Turning checkJs on surfaces hundreds of implicit-any / inference issues in the IDE.
+     * Enable when migrating files to TypeScript or adding JSDoc types.
      */
-    "checkJs": true
+    "checkJs": false
   },
   /**
    * Use global.d.ts instead of compilerOptions.types
