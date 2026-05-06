@@ -25,7 +25,7 @@ use sqlx::{QueryBuilder, SqlitePool};
 use tauri::State;
 
 use crate::audit::AuditEntry;
-use crate::{AppError, AppResult, KeyStore};
+use crate::{AppError, AppResult, SharedKeyStore};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -168,7 +168,7 @@ pub async fn clear_audit_log(pool: State<'_, SqlitePool>) -> AppResult<()> {
 #[tauri::command]
 pub async fn export_audit_log(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     format: String,
     action_filter: Option<String>,
     search: Option<String>,

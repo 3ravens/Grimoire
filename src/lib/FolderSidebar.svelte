@@ -7,6 +7,8 @@
         buildFolderTree,
         isFolderDescendantOrSelf,
     } from "./utils/folderTree.js";
+    import LockClosedIcon from "./icons/LockClosedIcon.svelte";
+    import LockRemovePasswordIcon from "./icons/LockRemovePasswordIcon.svelte";
 
     const ns = getContext("ns");
     const fs = getContext("fs");
@@ -40,6 +42,7 @@
         onDeleteTemplate,
         onMoveNote,
         onMoveFolder,
+        onLockFolderSession,
     } = $props();
 
     // ── Local state ────────────────────────────────────────────────────────────
@@ -473,8 +476,8 @@
                         class="row-btn folder-name"
                         onclick={() => fs.requestFolderUnlock(folder)}
                     >
-                        <span class="lock-icon">🔒</span>{folder.name ===
-                        "<locked>"
+                        <span class="lock-icon"><LockClosedIcon /></span
+                        >{folder.name === "<locked>"
                             ? "(locked folder)"
                             : folder.name}
                     </button>
@@ -506,29 +509,18 @@
                     {#if unlockedFolderIds?.has(folder.id)}
                         <button
                             class="icon-btn"
+                            title="Lock folder for this session"
+                            onclick={() => onLockFolderSession?.(folder.id)}
+                        >
+                            <LockClosedIcon />
+                        </button>
+                        <button
+                            class="icon-btn"
                             title="Remove folder password"
                             onclick={() =>
                                 fs.openFolderPwModal(folder.id, "remove")}
                         >
-                            <svg
-                                width="13"
-                                height="13"
-                                viewBox="0 0 15 15"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="1.5"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                            >
-                                <rect
-                                    x="2"
-                                    y="7"
-                                    width="11"
-                                    height="7"
-                                    rx="1"
-                                />
-                                <path d="M5 7V4.5a2.5 2.5 0 0 1 5 0" />
-                            </svg>
+                            <LockRemovePasswordIcon />
                         </button>
                     {:else}
                         <button
@@ -537,25 +529,7 @@
                             onclick={() =>
                                 fs.openFolderPwModal(folder.id, "set")}
                         >
-                            <svg
-                                width="13"
-                                height="13"
-                                viewBox="0 0 15 15"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="1.5"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                            >
-                                <rect
-                                    x="2"
-                                    y="7"
-                                    width="11"
-                                    height="7"
-                                    rx="1"
-                                />
-                                <path d="M5 7V4.5a2.5 2.5 0 0 1 5 0V7" />
-                            </svg>
+                            <LockClosedIcon />
                         </button>
                     {/if}
                 {/if}

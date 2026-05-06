@@ -154,6 +154,7 @@ impl<'a> EncryptedNoteStore<'a> {
             parent_id: row.parent_id,
             created_at: row.created_at,
             locked: is_locked,
+            password_protected: row.locked != 0,
         }
     }
 

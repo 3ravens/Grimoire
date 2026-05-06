@@ -2,6 +2,7 @@
 <script>
   import { getContext } from 'svelte';
   import { autofocus } from './utils/autofocus.js';
+  import LockClosedIcon from './icons/LockClosedIcon.svelte';
 
   const ns = getContext('ns');
   const fs = getContext('fs');
@@ -20,6 +21,7 @@
   const tableViewOpen    = $derived(ts.tableViewOpen);
 
   let {
+    folderUnlockReindex = null,
     onOpenNote,
     onOpenNoteInNewTab,
     onDeleteNote,
@@ -46,6 +48,16 @@
     else if (noteSort === 'created') arr.sort((a, b) => b.created_at - a.created_at);
     else arr.sort((a, b) => b.updated_at - a.updated_at);
     return arr;
+  });
+
+  const showFolderUnlockProgress = $derived.by(() => {
+    const u = folderUnlockReindex;
+    if (!u || tagFilter) return null;
+    const sid = selectedFolderId;
+    if (typeof sid !== 'number') return null;
+    if (!u.affectedFolderIds?.includes(sid)) return null;
+    if (!u.total) return null;
+    return u;
   });
 </script>
 
@@ -83,6 +95,16 @@
   {/if}
 </div>
 
+{#if showFolderUnlockProgress}
+  <p class="folder-unlock-index-status" role="status">
+    {#if showFolderUnlockProgress.embeddingChunks}
+      Embedding “{showFolderUnlockProgress.embeddingChunks.note_title}”… {showFolderUnlockProgress.embeddingChunks.done}/{showFolderUnlockProgress.embeddingChunks.total} chunks · notes {showFolderUnlockProgress.processed}/{showFolderUnlockProgress.total}
+    {:else}
+      Indexing notes for AI… {showFolderUnlockProgress.processed}/{showFolderUnlockProgress.total}
+    {/if}
+  </p>
+{/if}
+
 <ul role="listbox" aria-label="Notes">
   {#each sortedNotes as note (note.id)}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
@@ -100,7 +122,7 @@
       onkeydown={(e) => { if (e.key === 'Enter' && !note.locked) { onOpenNote?.(note); } }}
     >
       {#if note.locked}
-        <span class="row-btn note-title note-locked"><span class="lock-icon">🔒</span>(locked)</span>
+        <span class="row-btn note-title note-locked"><span class="lock-icon"><LockClosedIcon /></span>(locked)</span>
       {:else if inlineRenaming?.id === note.id && inlineRenaming?.type === 'note'}
         <input
           class="inline-rename"

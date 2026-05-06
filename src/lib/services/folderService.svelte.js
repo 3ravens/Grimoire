@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { tick } from "svelte";
+import { folderSubtreeIds } from "../utils/folderTree.js";
 
 /**
  * @param {{
@@ -140,6 +141,11 @@ export function createFolderService({
     folderUnlockTarget = folder;
   }
 
+  /** @param {any} folderId */
+  function scheduleFolderUnlocked(folderId) {
+    setTimeout(() => onFolderUnlocked?.(folderId), 0);
+  }
+
   /** @param {string} password */
   async function handleFolderUnlockSafe(password) {
     if (!folderUnlockTarget) return false;
@@ -149,7 +155,7 @@ export function createFolderService({
       folderUnlockTarget = null;
       unlockedFolderIds = new Set([...unlockedFolderIds, targetId]);
       await loadFolders();
-      onFolderUnlocked?.(targetId);
+      scheduleFolderUnlocked(targetId);
     }
     return ok;
   }
@@ -173,7 +179,7 @@ export function createFolderService({
       const next = new Set(unlockedFolderIds);
       next.delete(folderPwModal.folderId);
       unlockedFolderIds = next;
-      onFolderUnlocked?.(folderPwModal.folderId);
+      scheduleFolderUnlocked(folderPwModal.folderId);
     }
     folderPwModal = null;
     await loadFolders();
@@ -193,6 +199,20 @@ export function createFolderService({
     } catch {
       folderHasProperties = false;
       return [];
+    }
+  }
+
+  /** @param {any} folderId */
+  async function lockFolderSession(folderId) {
+    try {
+      await invoke("lock_folder", { folderId });
+      const subtree = folderSubtreeIds(folders, folderId);
+      const next = new Set(unlockedFolderIds);
+      for (const id of subtree) next.delete(id);
+      unlockedFolderIds = next;
+      await loadFolders();
+    } catch (e) {
+      onError?.(e);
     }
   }
 
@@ -282,6 +302,7 @@ export function createFolderService({
     handleFolderPwSubmit,
     loadFolderPropertyDefs,
     openFolderPwModal,
+    lockFolderSession,
     onNoteDragStart,
     onNoteDragEnd,
   };

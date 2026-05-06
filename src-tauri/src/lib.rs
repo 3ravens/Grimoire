@@ -24,6 +24,7 @@ mod config;
 mod crypto;
 mod db;
 pub mod error;
+mod folder_tree;
 mod hardware;
 mod note_store;
 mod retry;
@@ -47,6 +48,9 @@ pub struct KeyStore {
     pub vault_key: Mutex<Option<[u8; 32]>>,
     pub folder_keys: Mutex<HashMap<i64, [u8; 32]>>,
 }
+
+/// Shared handle to the session key store (cloneable for background tasks).
+pub type SharedKeyStore = Arc<KeyStore>;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -93,10 +97,12 @@ pub fn run() {
                     commands::wikipedia_fts_initial_sync(&pool_for_wiki_fts, &vdb_for_wiki_fts).await;
                 });
 
-                app_handle.manage(KeyStore {
+                app_handle.manage(SharedKeyStore::new(KeyStore {
                     vault_key: Mutex::new(None),
                     folder_keys: Mutex::new(HashMap::new()),
-                });
+                }));
+
+                app_handle.manage(commands::FolderUnlockReindexCoordinator::new());
 
                 app_handle.manage(commands::CancelMap::new());
                 app_handle.manage(commands::FileScanCancelMap::new());
@@ -128,6 +134,7 @@ pub fn run() {
         commands::remove_note_index,
         commands::search_notes,
         commands::reindex_all,
+        commands::start_folder_unlock_reindex,
         commands::vault_reindex_status,
         commands::cancel_vault_reindex,
         commands::abandon_vault_reindex,

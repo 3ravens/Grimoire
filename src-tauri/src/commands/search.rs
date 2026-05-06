@@ -19,7 +19,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
 use crate::AppResult;
-use crate::KeyStore;
+use crate::{KeyStore, SharedKeyStore};
 use crate::AccessFilter;
 use crate::config::SharedConfig;
 
@@ -156,7 +156,7 @@ async fn fts_search_inner(
 #[tauri::command]
 pub async fn fts_search(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     query: String,
     limit: Option<usize>,
 ) -> AppResult<Vec<FtsResult>> {
@@ -164,7 +164,7 @@ pub async fn fts_search(
     if query.is_empty() {
         return Ok(vec![]);
     }
-    let results = fts_search_inner(pool.inner(), &keys, &query, limit.unwrap_or(12)).await?;
+    let results = fts_search_inner(pool.inner(), keys.inner().as_ref(), &query, limit.unwrap_or(12)).await?;
     let _ = crate::audit::log_event(
         pool.inner(), "search_fts", None, None, None, Some(&query),
     ).await;
@@ -205,7 +205,7 @@ fn rrf_score(rank: usize) -> f64 {
 #[tauri::command]
 pub async fn combined_search(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     vdb: State<'_, crate::vector::VectorDb>,
     config: State<'_, SharedConfig>,
     query: String,
@@ -217,7 +217,7 @@ pub async fn combined_search(
         return Ok(vec![]);
     }
 
-    let fts_fut = fts_search_inner(pool.inner(), &keys, &query, limit * 2);
+    let fts_fut = fts_search_inner(pool.inner(), keys.inner().as_ref(), &query, limit * 2);
 
     let semantic_fut = async {
         let model = config.read().unwrap().embedding_model.clone();

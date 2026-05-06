@@ -20,6 +20,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     import { getCurrentWindow } from "@tauri-apps/api/window";
     import { openUrl } from "@tauri-apps/plugin-opener";
     import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+    import { listen } from "@tauri-apps/api/event";
     import { onMount, tick, untrack, setContext } from "svelte";
     import ActivityBar from "./lib/ActivityBar.svelte";
     import Calendar from "./lib/Calendar.svelte";
@@ -53,6 +54,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     import { createUiService } from "./lib/services/uiService.svelte.js";
     import { createErrorService } from "./lib/services/errorService.svelte.js";
     import { createContextMenuService } from "./lib/services/contextMenuService.svelte.js";
+    import { folderSubtreeIds } from "./lib/utils/folderTree.js";
     import { createKeyboardService } from "./lib/services/keyboardService.svelte.js";
 
     const appWindow = getCurrentWindow();
@@ -63,20 +65,15 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     const bm = createBookmarks();
     const tmpl = createTemplates();
     const err = createErrorService();
+    /** @type {{ rootFolderId: number, affectedFolderIds: number[], processed: number, total: number, embeddingChunks: { done: number, total: number, note_title: string } | null } | null} */
+    let folderUnlockReindex = $state(null);
+
     const fs = createFolderService({
         onError: err.showError,
         onFolderUnlocked: (folderId) => {
-            // Re-index notes in the newly unlocked folder so they become searchable.
-            invoke("list_notes", { folderId })
-                .then((notes) => {
-                    for (const n of notes)
-                        invoke("index_note", {
-                            noteId: n.id,
-                            title: n.title,
-                            content: n.content,
-                        }).catch(() => {});
-                })
-                .catch(() => {});
+            invoke("start_folder_unlock_reindex", { rootFolderId: folderId }).catch(
+                () => {},
+            );
         },
     });
     const ns = createNoteService({ onError: err.showError });
@@ -136,6 +133,18 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         await refreshVaultReindexBanner();
     }
 
+    /** Drop session keys for a folder subtree and refresh lists (password stays set). */
+    async function lockFolderSession(id) {
+        const subtree = folderSubtreeIds(fs.folders, id);
+        const fid = ns.activeNote?.folder_id;
+        if (fid != null && subtree.has(fid)) {
+            ns.clearActiveNote();
+        }
+        await fs.lockFolderSession(id);
+        await tick();
+        await loadNotes();
+    }
+
     // Context menu service — needs coordinator callbacks, so created after them.
     const ctx = createContextMenuService({
         ns,
@@ -156,6 +165,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         startNoteInline,
         sendSelectionToChat,
         loadNotes,
+        lockFolderSession,
         onError: err.showError,
     });
 
@@ -296,43 +306,50 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     // cleanup automatically, including during HMR.
     $effect(() => ctx.setup());
 
-    onMount(async () => {
-        ts.setupPersistence();
-        await vault.checkLockState();
+    onMount(() => {
+        let cancelled = false;
+        /** @type {(() => void)[]} */
+        let unsubs = [];
 
-        if (!vault.vaultLocked) {
-            await Promise.all([loadFolders(), loadNotes(), restoreTabs()]);
-            if (ts.tabs.length === 0) newTab();
-            loadAllTags();
-            tmpl.loadTemplates();
-            bm.loadBookmarks();
+        (async () => {
+            try {
+                unsubs.push(
+                    await listen("folder_unlock_index:progress", (ev) => {
+                        const p = /** @type {any} */ (ev.payload);
+                        folderUnlockReindex = {
+                            rootFolderId: p.root_folder_id,
+                            affectedFolderIds: p.affected_folder_ids ?? [],
+                            processed: p.processed ?? 0,
+                            total: p.total ?? 0,
+                            embeddingChunks: p.embedding_chunks ?? null,
+                        };
+                    }),
+                );
+                unsubs.push(
+                    await listen("folder_unlock_index:done", () => {
+                        folderUnlockReindex = null;
+                    }),
+                );
+                unsubs.push(
+                    await listen("folder_unlock_index:error", (ev) => {
+                        const p = /** @type {any} */ (ev.payload);
+                        err.showError(
+                            p?.message ??
+                                "Semantic indexing failed for unlocked folder.",
+                        );
+                        folderUnlockReindex = null;
+                    }),
+                );
+            } catch {
+                /* ignore */
+            }
+            if (cancelled) unsubs.forEach((u) => u());
+        })();
 
-            invoke("get_hardware_info")
-                .then((hw) => {
-                    settings.hwCapability = hw.capability;
-                    settings.llmForceEnabled = hw.llmForceEnabled;
-                })
-                .catch(() => {});
+        const onNoteImported = () => loadNotes();
+        window.addEventListener("grimoire:note-imported", onNoteImported);
 
-            invoke("get_setting", { key: "wikipedia_enabled" })
-                .then((v) => {
-                    settings.wikipediaEnabled = v === "true";
-                })
-                .catch(() => {});
-
-            void refreshVaultReindexBanner();
-        }
-
-        await tick();
-        await getCurrentWindow().show();
-
-        // Refresh notes when the file scanner imports a file as a note.
-        window.addEventListener("grimoire:note-imported", (e) => {
-            loadNotes();
-        });
-
-        // Navigate directly to a note (used by file scanner's "View note" button).
-        window.addEventListener("grimoire:navigate-note", async (e) => {
+        const onNavigateNote = async (e) => {
             const noteId = /** @type {CustomEvent} */ (e).detail?.noteId;
             if (!noteId) return;
             try {
@@ -342,7 +359,46 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
             } catch {
                 /* ignore */
             }
-        });
+        };
+        window.addEventListener("grimoire:navigate-note", onNavigateNote);
+
+        (async () => {
+            ts.setupPersistence();
+            await vault.checkLockState();
+
+            if (!vault.vaultLocked) {
+                await Promise.all([loadFolders(), loadNotes(), restoreTabs()]);
+                if (ts.tabs.length === 0) newTab();
+                loadAllTags();
+                tmpl.loadTemplates();
+                bm.loadBookmarks();
+
+                invoke("get_hardware_info")
+                    .then((hw) => {
+                        settings.hwCapability = hw.capability;
+                        settings.llmForceEnabled = hw.llmForceEnabled;
+                    })
+                    .catch(() => {});
+
+                invoke("get_setting", { key: "wikipedia_enabled" })
+                    .then((v) => {
+                        settings.wikipediaEnabled = v === "true";
+                    })
+                    .catch(() => {});
+
+                void refreshVaultReindexBanner();
+            }
+
+            await tick();
+            await getCurrentWindow().show();
+        })();
+
+        return () => {
+            cancelled = true;
+            unsubs.forEach((u) => u());
+            window.removeEventListener("grimoire:note-imported", onNoteImported);
+            window.removeEventListener("grimoire:navigate-note", onNavigateNote);
+        };
     });
 
     // ── Folder actions ──────────────────────────────────────────────────────────────
@@ -674,7 +730,10 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
     async function handleFolderUnlockSafe(password) {
         const ok = await fs.handleFolderUnlockSafe(password);
-        if (ok) await loadNotes();
+        if (ok) {
+            await tick();
+            await loadNotes();
+        }
         return ok;
     }
 
@@ -1042,6 +1101,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                     onConfirmInlineRename={confirmInlineRename}
                     onMoveNote={moveNote}
                     onMoveFolder={loadFolders}
+                    onLockFolderSession={lockFolderSession}
                 />
             {:else}
                 <button
@@ -1065,6 +1125,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         <div class="note-list" class:collapsed={!layout.notesOpen}>
             {#if layout.notesOpen}
                 <NoteList
+                    {folderUnlockReindex}
                     onOpenNote={navigateToNote}
                     onOpenNoteInNewTab={openNoteInNewTab}
                     onDeleteNote={deleteNote}

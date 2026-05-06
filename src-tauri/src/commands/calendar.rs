@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
-use crate::KeyStore;
+use crate::SharedKeyStore;
 use crate::{AppResult, EncryptedNoteStore};
 use super::Note;
 
@@ -139,10 +139,10 @@ pub async fn get_activity_heatmap(
 #[tauri::command]
 pub async fn get_notes_for_day(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     date_str: String,
 ) -> AppResult<Vec<Note>> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     store.list_notes_for_day(&date_str).await
 }
 
@@ -159,11 +159,11 @@ pub async fn get_notes_for_day(
 #[tauri::command]
 pub async fn get_or_create_daily_note(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     date_str: String,
     date_format: Option<String>,
 ) -> AppResult<Note> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let fmt = date_format.as_deref().unwrap_or("DD-MM-YYYY");
     let display_title = format_display_date(&date_str, fmt);
 
@@ -192,7 +192,7 @@ pub async fn get_or_create_daily_note(
 #[tauri::command]
 pub async fn create_daily_note(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     date_format: Option<String>,
 ) -> AppResult<Note> {
     // Get today's date in ISO format from SQLite (UTC).
@@ -201,7 +201,7 @@ pub async fn create_daily_note(
         .await
         ?;
 
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let fmt = date_format.as_deref().unwrap_or("DD-MM-YYYY");
     let base_title = format_display_date(&iso_date, fmt);
 

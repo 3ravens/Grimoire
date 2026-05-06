@@ -30,31 +30,10 @@ use zeroize::Zeroize;
 
 use crate::{
     crypto,
+    folder_tree::folder_subtree_ids,
     vector::VectorDb,
-    KeyStore,
+    SharedKeyStore,
 };
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/// Return the IDs of all folders in the subtree rooted at `folder_id`,
-/// including `folder_id` itself.
-async fn folder_subtree_ids(pool: &SqlitePool, folder_id: i64) -> Result<Vec<i64>, String> {
-    let rows: Vec<(i64,)> = sqlx::query_as(
-        "WITH RECURSIVE sub(id) AS (
-             SELECT id FROM folders WHERE id = ?
-             UNION ALL
-             SELECT f.id FROM folders f JOIN sub ON f.parent_id = sub.id
-         )
-         SELECT id FROM sub",
-    )
-    .bind(folder_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(rows.into_iter().map(|(id,)| id).collect())
-}
 
 // ---------------------------------------------------------------------------
 // Vault commands
@@ -74,7 +53,7 @@ pub async fn vault_has_password(pool: State<'_, SqlitePool>) -> Result<bool, Str
 #[tauri::command]
 pub async fn is_vault_locked(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
 ) -> Result<bool, String> {
     let has_pw = vault_has_password(pool).await?;
     if !has_pw {
@@ -91,7 +70,7 @@ pub async fn is_vault_locked(
 pub async fn unlock_vault(
     password: String,
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
 ) -> Result<bool, String> {
     let row: Option<(String, String)> =
         sqlx::query_as("SELECT salt, sentinel FROM vault_lock WHERE id = 1")
@@ -127,7 +106,7 @@ pub async fn unlock_vault(
 #[tauri::command]
 pub async fn lock_vault(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     vdb: State<'_, crate::vector::VectorDb>,
 ) -> Result<(), String> {
     {
@@ -159,7 +138,7 @@ pub async fn lock_vault(
 pub async fn set_vault_password(
     password: String,
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     vdb: State<'_, VectorDb>,
 ) -> Result<(), String> {
     // If there's an existing password, the vault must be unlocked.
@@ -285,7 +264,7 @@ pub async fn set_vault_password(
 pub async fn remove_vault_password(
     password: String,
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
 ) -> Result<(), String> {
     // Verify the supplied password before doing anything.
     let row: Option<(String, String)> =
@@ -391,7 +370,7 @@ pub async fn set_folder_password(
     folder_id: i64,
     password: String,
     pool: State<'_, SqlitePool>,
-    _keys: State<'_, KeyStore>,
+    _keys: State<'_, SharedKeyStore>,
     vdb: State<'_, VectorDb>,
 ) -> Result<(), String> {
     // Enforce mutual exclusivity.
@@ -408,7 +387,9 @@ pub async fn set_folder_password(
     let salt_b64 = base64::engine::general_purpose::STANDARD.encode(&salt);
 
     // Collect all folders in the subtree (root + descendants).
-    let subtree_ids = folder_subtree_ids(pool.inner(), folder_id).await?;
+    let subtree_ids = folder_subtree_ids(pool.inner(), folder_id)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Encrypt notes in every folder in the subtree.
     for &fid in &subtree_ids {
@@ -459,7 +440,7 @@ pub async fn remove_folder_password(
     folder_id: i64,
     password: String,
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
 ) -> Result<(), String> {
     let row: Option<(String, String)> =
         sqlx::query_as("SELECT salt, sentinel FROM folders WHERE id = ? AND locked = 1")
@@ -482,7 +463,9 @@ pub async fn remove_folder_password(
     }
 
     // Decrypt notes.
-    let subtree_ids = folder_subtree_ids(pool.inner(), folder_id).await?;
+    let subtree_ids = folder_subtree_ids(pool.inner(), folder_id)
+        .await
+        .map_err(|e| e.to_string())?;
 
     for &fid in &subtree_ids {
         let note_rows: Vec<(i64, String, String)> =
@@ -542,7 +525,7 @@ pub async fn unlock_folder(
     folder_id: i64,
     password: String,
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
 ) -> Result<bool, String> {
     let row: Option<(String, String)> =
         sqlx::query_as("SELECT salt, sentinel FROM folders WHERE id = ? AND locked = 1")
@@ -588,9 +571,13 @@ pub async fn unlock_folder(
 pub async fn lock_folder(
     folder_id: i64,
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
+    coord: State<'_, crate::commands::FolderUnlockReindexCoordinator>,
 ) -> Result<(), String> {
-    let subtree_ids = folder_subtree_ids(pool.inner(), folder_id).await?;
+    coord.inner().cancel_current_job();
+    let subtree_ids = folder_subtree_ids(pool.inner(), folder_id)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut folder_keys = keys.folder_keys.lock().map_err(|e| e.to_string())?;
     for fid in subtree_ids {
         if let Some(ref mut k) = folder_keys.get_mut(&fid) {

@@ -31,6 +31,7 @@ import {
  *   startNoteInline: (templateId?: number) => void,
  *   sendSelectionToChat: () => void,
  *   loadNotes: () => void,
+ *   lockFolderSession: (id: any) => void | Promise<void>,
  *   onError: (e: unknown) => void,
  * }} deps
  */
@@ -93,6 +94,7 @@ export function createContextMenuService(deps) {
       startNoteInline,
       sendSelectionToChat,
       loadNotes,
+      lockFolderSession,
       onError,
     } = deps;
     const target = /** @type {Element} */ (e.target);
@@ -212,6 +214,14 @@ export function createContextMenuService(deps) {
               action: () => openKanbanTab(folderId, folder.name),
             },
             { divider: true },
+            ...(folder.password_protected && !folder.locked
+              ? [
+                  {
+                    label: "Lock folder",
+                    action: () => void lockFolderSession(folderId),
+                  },
+                ]
+              : []),
             fs.unlockedFolderIds.has(folderId)
               ? {
                   label: "Remove password",

@@ -6,6 +6,14 @@
   overflow: hidden;
 }
 
+.note-list .folder-unlock-index-status {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-muted, var(--text));
+  flex-shrink: 0;
+}
+
 .note-list.collapsed {
   padding: 0;
 }

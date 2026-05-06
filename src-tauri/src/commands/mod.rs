@@ -16,8 +16,45 @@
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
 use serde::Serialize;
-use std::sync::{Arc, atomic::AtomicBool, Mutex};
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use std::collections::HashMap;
+
+/// Cancels the previous in-flight folder-unlock reindex when a new one starts.
+#[derive(Clone)]
+pub struct FolderUnlockReindexCoordinator(pub Arc<Mutex<Option<Arc<AtomicBool>>>>);
+
+impl FolderUnlockReindexCoordinator {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(None)))
+    }
+
+    /// Request cancellation of any prior job; returns this job's cancel flag.
+    pub fn begin_job(&self) -> Arc<AtomicBool> {
+        let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(prev) = g.take() {
+            prev.store(true, Ordering::SeqCst);
+        }
+        let c = Arc::new(AtomicBool::new(false));
+        *g = Some(c.clone());
+        c
+    }
+
+    pub fn finish_job(&self, cancel: &Arc<AtomicBool>) {
+        if let Ok(mut g) = self.0.lock() {
+            if g.as_ref().is_some_and(|cur| Arc::ptr_eq(cur, cancel)) {
+                *g = None;
+            }
+        }
+    }
+
+    /// Signal cancellation for any in-flight folder-unlock reindex (e.g. user locked the folder).
+    pub fn cancel_current_job(&self) {
+        let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(prev) = g.take() {
+            prev.store(true, Ordering::SeqCst);
+        }
+    }
+}
 
 /// Shared map of cancellation flags for in-progress indexing operations,
 /// keyed by bundle_id. Set to true to request cancellation.
@@ -122,6 +159,8 @@ pub(crate) struct FolderRow {
 
 /// A folder as returned to the frontend.
 /// `locked` is true when the folder has a password AND no session key is held for it.
+/// `password_protected` is true when a folder password is set in the database (even if
+/// the user has unlocked the folder for this session).
 #[derive(Debug, Serialize)]
 pub struct Folder {
     pub id: i64,
@@ -129,6 +168,7 @@ pub struct Folder {
     pub parent_id: Option<i64>,
     pub created_at: i64,
     pub locked: bool,
+    pub password_protected: bool,
 }
 
 /// A minimal note reference used for tag/link results — just enough to render

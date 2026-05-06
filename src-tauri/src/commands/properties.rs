@@ -18,7 +18,7 @@
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
-use crate::KeyStore;
+use crate::SharedKeyStore;
 use crate::{AppError, AppResult};
 use crate::EncryptedNoteStore;
 
@@ -254,10 +254,10 @@ pub struct NoteWithProperties {
 #[tauri::command]
 pub async fn list_notes_with_properties(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     folder_id: i64,
 ) -> AppResult<Vec<NoteWithProperties>> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let notes = store.list_notes(Some(folder_id), false).await?;
 
     // Build per-note property values.

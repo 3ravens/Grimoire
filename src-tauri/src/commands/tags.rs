@@ -18,7 +18,7 @@
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
-use crate::KeyStore;
+use crate::SharedKeyStore;
 use crate::{AppError, AppResult, EncryptedNoteStore};
 use super::{Note, LinkedNote, GraphNode, GraphEdge};
 
@@ -237,10 +237,10 @@ pub async fn get_backlinks(
 #[tauri::command]
 pub async fn list_notes_by_tag(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     tag: String,
 ) -> AppResult<Vec<Note>> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     store.notes_for_tag(&tag.to_lowercase()).await
 }
 

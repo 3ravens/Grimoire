@@ -22,10 +22,10 @@ use lancedb::Connection;
 use serde::Serialize;
 use sqlx::{QueryBuilder, SqlitePool};
 use tauri::{Emitter, State};
-use crate::{AppError, AppResult, EncryptedNoteStore};
+use crate::folder_tree::folder_subtree_ids;
+use crate::{AppError, AppResult, EncryptedNoteStore, SharedKeyStore};
 use super::NoteRow;
 use crate::chunking::{split_sentences, chunk_sentences};
-use crate::KeyStore;
 use crate::config::SharedConfig;
 
 /// CancelMap key for in-flight `reindex_all` (see `cancel_vault_reindex`).
@@ -96,19 +96,21 @@ pub(crate) async fn build_properties_suffix(pool: &SqlitePool, note_id: i64) -> 
     }
 }
 
-/// Embed a note and store it in the vector index.
-#[tauri::command]
-pub async fn index_note(
-    pool: State<'_, SqlitePool>,
-    vdb: State<'_, crate::vector::VectorDb>,
-    config: State<'_, SharedConfig>,
+/// Chunk, embed, and upsert one note into LanceDB (shared by IPC `index_note`,
+/// vault re-index, and folder-unlock background indexing).
+pub(crate) async fn index_note_vectors_inner(
+    pool: &SqlitePool,
+    vdb: &Connection,
+    model: &str,
+    max_retries: i64,
     note_id: i64,
-    title: String,
-    content: String,
+    title: &str,
+    content: &str,
+    embed_opts: crate::vector::EmbedBatchOptions,
 ) -> AppResult<()> {
-    let props_suffix = build_properties_suffix(pool.inner(), note_id).await;
+    let props_suffix = build_properties_suffix(pool, note_id).await;
     let full_content = if props_suffix.is_empty() {
-        content
+        content.to_string()
     } else {
         format!("{content}{props_suffix}")
     };
@@ -117,34 +119,42 @@ pub async fn index_note(
     let raw_chunks = chunk_sentences(sentences, 1, 0);
 
     if raw_chunks.iter().all(|c| c.trim().is_empty()) {
-        return crate::vector::remove(&vdb.0, note_id).await.map_err(|e| AppError::VectorStore(e));
+        return crate::vector::remove(vdb, note_id)
+            .await
+            .map_err(AppError::VectorStore);
     }
 
-    let model = config.read().unwrap().embedding_model.clone();
-    let max_retries = config.read().unwrap().background_max_retries;
-
-    // Prefix every chunk with the document search prefix expected by nomic-embed-text.
     let doc_texts: Vec<String> = raw_chunks
         .iter()
         .map(|chunk| format!("search_document: {title}\n{chunk}"))
         .collect();
 
-    // Embed all chunks in a single batch request instead of one-by-one.
-    // For large files this is orders of magnitude faster.
-    let embeddings = match crate::retry::with_retries(max_retries, None, || async {
-        crate::vector::embed_batch(&doc_texts, &model)
-            .await
-            .map_err(AppError::EmbeddingFailed)
-    })
-    .await
-    {
+    let use_simple_batch = embed_opts.on_slice_progress.is_none()
+        && !embed_opts.skip_ollama_entry_eviction;
+
+    let embeddings_result = if use_simple_batch {
+        crate::retry::with_retries(max_retries, None, || async {
+            crate::vector::embed_batch(&doc_texts, model)
+                .await
+                .map_err(AppError::EmbeddingFailed)
+        })
+        .await
+    } else {
+        crate::retry::with_retries(max_retries, None, || async {
+            crate::vector::embed_batch_with_options(&doc_texts, model, embed_opts.clone())
+                .await
+                .map_err(AppError::EmbeddingFailed)
+        })
+        .await
+    };
+
+    let embeddings = match embeddings_result {
         Ok(e) => e,
         Err(_) => {
-            // Fall back to sequential embedding if batch fails.
             let mut fallback = Vec::with_capacity(raw_chunks.len());
             for chunk in &raw_chunks {
                 let emb = crate::retry::with_retries(max_retries, None, || async {
-                    embed_document(chunk, &model).await
+                    embed_document(chunk, model).await
                 })
                 .await?;
                 fallback.push(emb);
@@ -163,13 +173,38 @@ pub async fn index_note(
     crate::retry::with_retries(max_retries, None, || {
         let ch = chunks.clone();
         async {
-            crate::vector::upsert(&vdb.0, note_id, &title, ch)
+            crate::vector::upsert(vdb, note_id, title, ch)
                 .await
                 .map_err(AppError::VectorStore)
         }
     })
     .await?;
     Ok(())
+}
+
+/// Embed a note and store it in the vector index.
+#[tauri::command]
+pub async fn index_note(
+    pool: State<'_, SqlitePool>,
+    vdb: State<'_, crate::vector::VectorDb>,
+    config: State<'_, SharedConfig>,
+    note_id: i64,
+    title: String,
+    content: String,
+) -> AppResult<()> {
+    let model = config.read().unwrap().embedding_model.clone();
+    let max_retries = config.read().unwrap().background_max_retries;
+    index_note_vectors_inner(
+        pool.inner(),
+        &vdb.0,
+        &model,
+        max_retries,
+        note_id,
+        &title,
+        &content,
+        crate::vector::EmbedBatchOptions::default(),
+    )
+    .await
 }
 
 /// Remove a note from the vector index. Called when a note is deleted.
@@ -191,7 +226,7 @@ pub async fn remove_note_index(
 #[tauri::command]
 pub async fn search_notes(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     vdb: State<'_, crate::vector::VectorDb>,
     config: State<'_, SharedConfig>,
     query: String,
@@ -213,7 +248,7 @@ pub async fn search_notes(
 
     // Cross-reference LanceDB hits with SQLite: filter locked folders, refresh titles.
     let ids: Vec<i64> = matches.iter().map(|m| m.note_id).collect();
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let accessible = store.accessible_note_titles(&ids).await?;
 
     // Drop locked/missing results; update titles with current decrypted values.
@@ -228,6 +263,326 @@ pub async fn search_notes(
         pool.inner(), "search_semantic", None, None, None, Some(&query),
     ).await;
     Ok(matches)
+}
+
+// ---------------------------------------------------------------------------
+// Folder unlock — background incremental LanceDB indexing for subtree
+// ---------------------------------------------------------------------------
+
+/// Kick off embedding for every note under `root_folder_id` (recursive). Returns
+/// immediately; progress is emitted on `folder_unlock_index:*` events.
+#[tauri::command]
+pub async fn start_folder_unlock_reindex(
+    app: tauri::AppHandle,
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
+    vdb: State<'_, crate::vector::VectorDb>,
+    config: State<'_, SharedConfig>,
+    gate: State<'_, super::VaultReindexGate>,
+    coord: State<'_, super::FolderUnlockReindexCoordinator>,
+    root_folder_id: i64,
+) -> AppResult<()> {
+    let pool = pool.inner().clone();
+    let keys = Arc::clone(keys.inner());
+    let vdb = crate::vector::VectorDb(vdb.inner().0.clone());
+    let config = Arc::clone(config.inner());
+    let gate_mu = gate.inner().0.clone();
+    let coord = coord.inner().clone();
+    let cancel = coord.begin_job();
+
+    tauri::async_runtime::spawn(async move {
+        // Let the WebView process the unlock response and paint before we compete for the CPU.
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        let _gate_hold = gate_mu.lock().await;
+        run_folder_unlock_reindex_task(app, pool, keys, vdb, config, root_folder_id, cancel, coord)
+            .await;
+    });
+
+    Ok(())
+}
+
+async fn run_folder_unlock_reindex_task(
+    app: tauri::AppHandle,
+    pool: SqlitePool,
+    keys: SharedKeyStore,
+    vdb: crate::vector::VectorDb,
+    config: SharedConfig,
+    root_folder_id: i64,
+    cancel: Arc<AtomicBool>,
+    coord: super::FolderUnlockReindexCoordinator,
+) {
+    let outcome = folder_unlock_reindex_task_inner(
+        &app,
+        &pool,
+        &keys,
+        &vdb.0,
+        &config,
+        root_folder_id,
+        &cancel,
+    )
+    .await;
+
+    coord.finish_job(&cancel);
+
+    if let Err(e) = outcome {
+        let _ = app.emit(
+            "folder_unlock_index:error",
+            serde_json::json!({
+                "root_folder_id": root_folder_id,
+                "message": e.to_string(),
+            }),
+        );
+    }
+}
+
+async fn folder_unlock_reindex_task_inner(
+    app: &tauri::AppHandle,
+    pool: &SqlitePool,
+    keys: &SharedKeyStore,
+    vdb: &Connection,
+    config: &SharedConfig,
+    root_folder_id: i64,
+    cancel: &AtomicBool,
+) -> AppResult<()> {
+    let vault_key_absent = keys
+        .vault_key
+        .lock()
+        .map(|vk| vk.is_none())
+        .unwrap_or(true);
+    if vault_key_absent {
+        let has_pw: bool = sqlx::query_scalar("SELECT COUNT(*) FROM vault_lock WHERE id = 1")
+            .fetch_one(pool)
+            .await
+            .map(|n: i64| n > 0)
+            .unwrap_or(false);
+        if has_pw {
+            let _ = app.emit(
+                "folder_unlock_index:done",
+                serde_json::json!({
+                    "root_folder_id": root_folder_id,
+                    "affected_folder_ids": Vec::<i64>::new(),
+                    "total": 0usize,
+                    "processed": 0usize,
+                    "indexed_ok": 0usize,
+                    "skipped_locked": 0usize,
+                    "failed_notes": 0usize,
+                    "cancelled": false,
+                    "vault_blocked": true,
+                }),
+            );
+            return Ok(());
+        }
+    }
+
+    let subtree_ids = folder_subtree_ids(pool, root_folder_id).await?;
+    if subtree_ids.is_empty() {
+        let _ = app.emit(
+            "folder_unlock_index:done",
+            serde_json::json!({
+                "root_folder_id": root_folder_id,
+                "affected_folder_ids": Vec::<i64>::new(),
+                "total": 0usize,
+                "processed": 0usize,
+                "indexed_ok": 0usize,
+                "skipped_locked": 0usize,
+                "failed_notes": 0usize,
+                "cancelled": false,
+            }),
+        );
+        return Ok(());
+    }
+
+    let affected_folder_ids: Vec<i64> = subtree_ids.clone();
+
+    let mut qb = QueryBuilder::new("SELECT id FROM notes WHERE folder_id IN (");
+    {
+        let mut sep = qb.separated(", ");
+        for fid in &subtree_ids {
+            sep.push_bind(fid);
+        }
+    }
+    qb.push(") ORDER BY id ASC");
+    let note_rows: Vec<(i64,)> = qb.build_query_as().fetch_all(pool).await?;
+
+    let total_usize = note_rows.len();
+    let model = config.read().unwrap().embedding_model.clone();
+    let max_retries = config.read().unwrap().background_max_retries;
+
+    let mut indexed_ok = 0usize;
+    let mut skipped_locked = 0usize;
+    let mut failed_notes = 0usize;
+    let mut cancelled = false;
+    let mut completed = 0usize;
+
+    let _ = app.emit(
+        "folder_unlock_index:progress",
+        serde_json::json!({
+            "root_folder_id": root_folder_id,
+            "affected_folder_ids": &affected_folder_ids,
+            "processed": 0usize,
+            "total": total_usize,
+            "indexed_ok": 0usize,
+            "skipped_locked": 0usize,
+            "failed_notes": 0usize,
+        }),
+    );
+
+    for (idx, (note_id,)) in note_rows.into_iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            cancelled = true;
+            break;
+        }
+
+        tokio::task::yield_now().await;
+
+        let note_ord = idx + 1;
+        let store = EncryptedNoteStore::new(pool, keys.as_ref());
+
+        let note = match store.get_note(note_id).await {
+            Ok(n) => n,
+            Err(e) => {
+                failed_notes += 1;
+                completed += 1;
+                log::warn!("folder unlock reindex: get_note {note_id}: {e}");
+                let _ = app.emit(
+                    "folder_unlock_index:progress",
+                    serde_json::json!({
+                        "root_folder_id": root_folder_id,
+                        "affected_folder_ids": &affected_folder_ids,
+                        "processed": completed,
+                        "total": total_usize,
+                        "indexed_ok": indexed_ok,
+                        "skipped_locked": skipped_locked,
+                        "failed_notes": failed_notes,
+                    }),
+                );
+                continue;
+            }
+        };
+
+        if note.locked {
+            skipped_locked += 1;
+            completed += 1;
+            let _ = app.emit(
+                "folder_unlock_index:progress",
+                serde_json::json!({
+                    "root_folder_id": root_folder_id,
+                    "affected_folder_ids": &affected_folder_ids,
+                    "processed": completed,
+                    "total": total_usize,
+                    "indexed_ok": indexed_ok,
+                    "skipped_locked": skipped_locked,
+                    "failed_notes": failed_notes,
+                }),
+            );
+            continue;
+        }
+
+        super::search::fts_upsert(pool, note.id, &note.title, &note.content).await;
+
+        let title_short = truncate_reindex_title(&note.title);
+        let last_emit_chunks = Arc::new(AtomicUsize::new(0));
+        let processed_ui = note_ord;
+        let indexed_ui = indexed_ok;
+        let skipped_snap = skipped_locked;
+        let failed_snap = failed_notes;
+        let embed_opts = crate::vector::EmbedBatchOptions {
+            on_slice_progress: Some(Arc::new({
+                let app = app.clone();
+                let last_emit = last_emit_chunks.clone();
+                let affected = affected_folder_ids.clone();
+                move |ready, tot| {
+                    let prev = last_emit.load(Ordering::Relaxed);
+                    let min_step = (tot / 40).max(64).min(tot.max(1));
+                    if ready > 0 && ready < tot && ready.saturating_sub(prev) < min_step {
+                        return;
+                    }
+                    last_emit.store(ready, Ordering::Relaxed);
+                    let _ = app.emit(
+                        "folder_unlock_index:progress",
+                        serde_json::json!({
+                            "root_folder_id": root_folder_id,
+                            "affected_folder_ids": affected,
+                            "processed": processed_ui,
+                            "total": total_usize,
+                            "indexed_ok": indexed_ui,
+                            "skipped_locked": skipped_snap,
+                            "failed_notes": failed_snap,
+                            "phase": "embedding",
+                            "embedding_chunks": {
+                                "done": ready,
+                                "total": tot,
+                                "note_title": title_short,
+                            },
+                        }),
+                    );
+                }
+            })),
+            ..Default::default()
+        };
+
+        match index_note_vectors_inner(
+            pool,
+            vdb,
+            &model,
+            max_retries,
+            note_id,
+            &note.title,
+            &note.content,
+            embed_opts,
+        )
+        .await
+        {
+            Ok(()) => indexed_ok += 1,
+            Err(e) => {
+                failed_notes += 1;
+                log::warn!("folder unlock reindex note {note_id}: {e}");
+            }
+        }
+
+        completed += 1;
+        let _ = app.emit(
+            "folder_unlock_index:progress",
+            serde_json::json!({
+                "root_folder_id": root_folder_id,
+                "affected_folder_ids": &affected_folder_ids,
+                "processed": completed,
+                "total": total_usize,
+                "indexed_ok": indexed_ok,
+                "skipped_locked": skipped_locked,
+                "failed_notes": failed_notes,
+            }),
+        );
+    }
+
+    if failed_notes > 0 {
+        let _ = app.emit(
+            "folder_unlock_index:error",
+            serde_json::json!({
+                "root_folder_id": root_folder_id,
+                "message": format!(
+                    "{failed_notes} note(s) could not be indexed for semantic search after retries."
+                ),
+                "failed_notes": failed_notes,
+            }),
+        );
+    }
+
+    let _ = app.emit(
+        "folder_unlock_index:done",
+        serde_json::json!({
+            "root_folder_id": root_folder_id,
+            "affected_folder_ids": &affected_folder_ids,
+            "total": total_usize,
+            "processed": completed,
+            "indexed_ok": indexed_ok,
+            "skipped_locked": skipped_locked,
+            "failed_notes": failed_notes,
+            "cancelled": cancelled,
+        }),
+    );
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -395,9 +750,9 @@ pub struct VaultReindexStatus {
 #[tauri::command]
 pub async fn vault_reindex_status(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
 ) -> AppResult<VaultReindexStatus> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     if !vault_reindex_checkpoint_queue_consistent(pool.inner(), &store).await? {
         clear_vault_reindex_checkpoint(pool.inner()).await?;
         return Ok(VaultReindexStatus {
@@ -473,7 +828,7 @@ pub async fn abandon_vault_reindex(
 pub async fn reindex_all(
     app: tauri::AppHandle,
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     vdb: State<'_, crate::vector::VectorDb>,
     config: State<'_, SharedConfig>,
     cancel_map: State<'_, super::CancelMap>,
@@ -498,7 +853,7 @@ pub async fn reindex_all(
         }
     }
 
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let model = config.read().unwrap().embedding_model.clone();
     let max_retries = config.read().unwrap().background_max_retries;
 

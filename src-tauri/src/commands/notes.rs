@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::collections::HashMap;
 use sqlx::SqlitePool;
 use tauri::State;
-use crate::KeyStore;
+use crate::SharedKeyStore;
 use crate::{AppError, AppResult, EncryptedNoteStore};
 use super::{Note, Folder};
 
@@ -31,11 +31,11 @@ use super::{Note, Folder};
 #[tauri::command]
 pub async fn create_note(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     title: String,
     folder_id: Option<i64>,
 ) -> AppResult<Note> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let note = store.create_note(&title, folder_id).await?;
     if !note.locked {
         super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
@@ -51,10 +51,10 @@ pub async fn create_note(
 #[tauri::command]
 pub async fn get_note(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     id: i64,
 ) -> AppResult<Note> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let note = store.get_note(id).await?;
     let _ = crate::audit::log_event(
         pool.inner(), "note_open", Some("note"),
@@ -69,11 +69,11 @@ pub async fn get_note(
 #[tauri::command]
 pub async fn list_notes(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     folder_id: Option<i64>,
     all: Option<bool>,
 ) -> AppResult<Vec<Note>> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     store.list_notes(folder_id, all.unwrap_or(false)).await
 }
 
@@ -81,12 +81,12 @@ pub async fn list_notes(
 #[tauri::command]
 pub async fn update_note(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     id: i64,
     title: String,
     content: String,
 ) -> AppResult<Note> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let note = store.update_note(id, &title, &content).await?;
     if !note.locked {
         super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
@@ -102,11 +102,11 @@ pub async fn update_note(
 #[tauri::command]
 pub async fn move_note(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     id: i64,
     folder_id: Option<i64>,
 ) -> AppResult<Note> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let note = store.move_note(id, folder_id).await?;
     let _ = crate::audit::log_event(
         pool.inner(), "note_update", Some("note"),
@@ -119,11 +119,11 @@ pub async fn move_note(
 #[tauri::command]
 pub async fn rename_note(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     id: i64,
     name: String,
 ) -> AppResult<Note> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let note = store.rename_note(id, &name).await?;
     super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
     let _ = crate::audit::log_event(
@@ -155,10 +155,10 @@ pub async fn delete_note(pool: State<'_, SqlitePool>, id: i64) -> AppResult<()> 
 #[tauri::command]
 pub async fn duplicate_note(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     id: i64,
 ) -> AppResult<Note> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let note = store.duplicate_note(id).await?;
     if !note.locked {
         super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
@@ -178,11 +178,11 @@ pub async fn duplicate_note(
 #[tauri::command]
 pub async fn create_folder(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     name: String,
     parent_id: Option<i64>,
 ) -> AppResult<Folder> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let folder = store.create_folder(&name, parent_id).await?;
     let _ = crate::audit::log_event(
         pool.inner(), "folder_create", Some("folder"),
@@ -195,9 +195,9 @@ pub async fn create_folder(
 #[tauri::command]
 pub async fn list_folders(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
 ) -> AppResult<Vec<Folder>> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     store.list_folders().await
 }
 
@@ -205,11 +205,11 @@ pub async fn list_folders(
 #[tauri::command]
 pub async fn rename_folder(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     id: i64,
     name: String,
 ) -> AppResult<Folder> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let folder = store.rename_folder(id, &name).await?;
     let _ = crate::audit::log_event(
         pool.inner(), "folder_rename", Some("folder"),
@@ -291,10 +291,10 @@ pub async fn move_folder(
 #[tauri::command]
 pub async fn export_notes(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     dest_dir: String,
 ) -> AppResult<u32> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
 
     // Build a map from folder ID to its display name (already decrypted).
     let folder_names: HashMap<i64, String> = store.list_folders().await?
@@ -378,12 +378,12 @@ pub async fn export_notes(
 #[tauri::command]
 pub async fn export_single_note_markdown(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     note_id: i64,
     dest_path: String,
     markdown: String,
 ) -> AppResult<()> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let note = store.get_note(note_id).await?;
     if note.locked {
         return Err(AppError::InvalidInput(
@@ -420,12 +420,12 @@ pub async fn export_single_note_markdown(
 #[tauri::command]
 pub async fn save_note_html_export(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     note_id: i64,
     dest_path: String,
     html: String,
 ) -> AppResult<()> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let note = store.get_note(note_id).await?;
     if note.locked {
         return Err(AppError::InvalidInput(
@@ -462,10 +462,10 @@ pub async fn save_note_html_export(
 #[tauri::command]
 pub async fn log_note_export_pdf_print(
     pool: State<'_, SqlitePool>,
-    keys: State<'_, KeyStore>,
+    keys: State<'_, SharedKeyStore>,
     note_id: i64,
 ) -> AppResult<()> {
-    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let note = store.get_note(note_id).await?;
     if note.locked {
         return Err(AppError::InvalidInput(

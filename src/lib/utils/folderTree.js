@@ -28,3 +28,26 @@ export function isFolderDescendantOrSelf(folders, targetId, ancestorId) {
   if (!node || node.parent_id == null) return false;
   return isFolderDescendantOrSelf(folders, node.parent_id, ancestorId);
 }
+
+/**
+ * Folder ids in the subtree rooted at `rootId` (including `rootId`).
+ * @param {{ id: number, parent_id?: number|null }[]} folders
+ * @param {number} rootId
+ * @returns {Set<number>}
+ */
+export function folderSubtreeIds(folders, rootId) {
+  const byParent = new Map();
+  for (const f of folders) {
+    const p = f.parent_id ?? null;
+    if (!byParent.has(p)) byParent.set(p, []);
+    byParent.get(p).push(f.id);
+  }
+  const ids = new Set([rootId]);
+  const stack = [...(byParent.get(rootId) ?? [])];
+  while (stack.length) {
+    const id = stack.pop();
+    ids.add(id);
+    for (const c of byParent.get(id) ?? []) stack.push(c);
+  }
+  return ids;
+}
