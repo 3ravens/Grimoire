@@ -170,6 +170,69 @@ pub async fn duplicate_note(
     Ok(note)
 }
 
+/// Resolved target for `![[note title]]` transclusion (read-only embed). Does not
+/// write audit "note_open" entries — embed resolution is not a full note open.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NoteEmbedResolve {
+    pub found: bool,
+    pub id: Option<i64>,
+    pub locked: bool,
+    pub content: String,
+}
+
+/// Batch-resolve note titles for transclusion. Titles are compared to decrypted
+/// note titles (same rules as wiki-links). Locked/inaccessible notes match only
+/// when the session can decrypt the title.
+#[tauri::command]
+pub async fn resolve_note_embed_batch(
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
+    titles: Vec<String>,
+) -> AppResult<HashMap<String, NoteEmbedResolve>> {
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
+    let all_notes = store.list_notes(None, true).await?;
+    let mut out: HashMap<String, NoteEmbedResolve> = HashMap::new();
+
+    for raw in titles {
+        let key = raw.trim().to_string();
+        if key.is_empty() {
+            continue;
+        }
+        if out.contains_key(&key) {
+            continue;
+        }
+
+        let mut matched: Option<NoteEmbedResolve> = None;
+        for note in &all_notes {
+            if note.title == key {
+                matched = Some(NoteEmbedResolve {
+                    found: true,
+                    id: Some(note.id),
+                    locked: note.locked,
+                    content: if note.locked {
+                        String::new()
+                    } else {
+                        note.content.clone()
+                    },
+                });
+                break;
+            }
+        }
+
+        out.insert(
+            key,
+            matched.unwrap_or(NoteEmbedResolve {
+                found: false,
+                id: None,
+                locked: false,
+                content: String::new(),
+            }),
+        );
+    }
+
+    Ok(out)
+}
+
 // ---------------------------------------------------------------------------
 // Folder commands
 // ---------------------------------------------------------------------------

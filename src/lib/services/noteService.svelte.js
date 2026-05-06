@@ -18,6 +18,8 @@ export function createNoteService({ onError }) {
   let noteDeletePending = $state(null);
   let isSeeding = $state(false);
   let isReindexing = $state(false);
+  /** Bumped after a successful note save so read-mode transclusion re-fetches embedded bodies. */
+  let transclusionRefresh = $state(0);
   /** @type {{ processed: number, total: number, indexed: number, phase?: string | null, embeddingChunks?: { done: number, total: number, note_title: string } | null } | null} */
   let reindexProgress = $state(null);
 
@@ -83,6 +85,7 @@ export function createNoteService({ onError }) {
       });
       activeNote = updated;
       isDirty = false;
+      transclusionRefresh += 1;
       indexState = 'indexing';
       invoke('index_note', { noteId: updated.id, title: editorTitle, content: editorContent })
         .then(() => { indexState = 'idle'; })
@@ -280,6 +283,7 @@ export function createNoteService({ onError }) {
     get isSeeding() { return isSeeding; },
     get isReindexing() { return isReindexing; },
     get reindexProgress() { return reindexProgress; },
+    get transclusionRefresh() { return transclusionRefresh; },
     markDirty,
     loadNotes,
     loadAllTags,

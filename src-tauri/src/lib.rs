@@ -116,6 +116,7 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         commands::create_note,
         commands::get_note,
+        commands::resolve_note_embed_batch,
         commands::list_notes,
         commands::update_note,
         commands::move_note,

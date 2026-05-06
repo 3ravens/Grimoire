@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Wim Palland
 // This file is part of Grimoire — licensed under GPL-3.0 or later.
 
-import { marked } from 'marked';
+import { renderTransclusionMarkdownToHtml } from './transclusion.js';
 
 /** Mirrors `.read-mode-content` in editor.css for standalone HTML/PDF export. */
 const READ_MODE_EXPORT_CSS = `
@@ -89,6 +89,38 @@ body {
   color: #a32121;
   text-decoration: underline;
 }
+.note-embed {
+  margin: 0.75em 0;
+}
+.note-embed-border {
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 6px;
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.035);
+}
+@media (prefers-color-scheme: dark) {
+  .note-embed-border {
+    border-color: rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.05);
+  }
+}
+.note-embed-inner.read-mode-content > :first-child {
+  margin-top: 0;
+}
+.note-embed-inner.read-mode-content > :last-child {
+  margin-bottom: 0;
+}
+.note-embed-stub {
+  margin: 0.55em 0;
+  font-size: 0.92em;
+  opacity: 0.92;
+}
+.note-embed-stub-label {
+  font-weight: 600;
+}
+.note-embed-stub--missing {
+  font-style: italic;
+}
 `;
 
 function escapeHtml(s) {
@@ -100,13 +132,16 @@ function escapeHtml(s) {
 }
 
 /**
- * Full HTML document matching read-mode Markdown rendering (`marked.parse`).
+ * Full HTML document matching read-mode Markdown rendering (including transclusion).
  * @param {string} title
  * @param {string} markdownBody
+ * @param {{ rootNoteId?: number | null }} [options]
  */
-export function buildStandaloneReadModeHtml(title, markdownBody) {
+export async function buildStandaloneReadModeHtml(title, markdownBody, options = {}) {
   const safeTitle = escapeHtml(title || 'Note');
-  const innerHtml = marked.parse(markdownBody || '');
+  const innerHtml = await renderTransclusionMarkdownToHtml(markdownBody || '', {
+    rootNoteId: options.rootNoteId ?? null,
+  });
   return `<!DOCTYPE html>
 <html lang="en">
 <head>

@@ -18,7 +18,7 @@ export const FEATURE_GUIDE = `## Grimoire Feature Guide
 - Escape: Cancel / close dialog / dismiss
 
 ### View Types
-- Note editor: Markdown editing with read/edit toggle, #tags, [[wiki-links]]
+- Note editor: Markdown editing with read/edit toggle, #tags, [[wiki-links]], read-mode transclusion via ![[Other Note Title]]
 - Graph: Force-directed graph of wiki-linked notes
 - Kanban board: Notes grouped by a select property into columns
 - Calendar: Daily notes grid + GitHub-style activity heatmap
@@ -27,7 +27,7 @@ export const FEATURE_GUIDE = `## Grimoire Feature Guide
 - Chat: LLM chat sidebar or full-window tab
 
 ### Note Features
-- #tags and [[wiki-links]] with automatic backlink tracking
+- #tags and [[wiki-links]] with automatic backlink tracking; ![[note title]] embeds another note in read mode only (not tracked as a link)
 - Note properties: text, number, date, boolean (checkbox), select (dropdown)
 - Templates: Blank, Meeting Notes, Daily Journal, Book Notes + user-created
 - Bookmarks: Pin frequently accessed notes above the folder tree

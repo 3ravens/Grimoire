@@ -58,7 +58,7 @@ export async function exportNoteMarkdown(opts) {
 export async function exportNoteHtml(opts) {
   const { noteId, title, body, onError } = opts;
   try {
-    const html = buildStandaloneReadModeHtml(title, body);
+    const html = await buildStandaloneReadModeHtml(title, body, { rootNoteId: noteId });
     const base = sanitiseExportBasename(title);
     const path = await save({
       title: 'Export note as HTML',
@@ -83,7 +83,7 @@ export async function exportNotePdfPrint(opts) {
   const { noteId, title, body, onError } = opts;
   try {
     await invoke('log_note_export_pdf_print', { noteId });
-    const html = buildStandaloneReadModeHtml(title, body);
+    const html = await buildStandaloneReadModeHtml(title, body, { rootNoteId: noteId });
     printStandaloneHtml(html, sanitiseExportBasename(title));
   } catch (e) {
     onError?.(e);

@@ -1,10 +1,10 @@
 <!-- Copyright (C) 2026 Wim Palland — see App.svelte for license header. -->
 <script>
     import { getContext } from "svelte";
-    import { marked } from "marked";
     import NoteProperties from "./NoteProperties.svelte";
     import DiffView from "./DiffView.svelte";
     import ImprovePopover from "./ImprovePopover.svelte";
+    import { renderTransclusionMarkdownToHtml } from "./utils/transclusion.js";
     import {
         exportNoteHtml,
         exportNoteMarkdown,
@@ -62,6 +62,33 @@
         propertiesReady = true;
         fs.folderHasProperties = defs.length > 0;
     }
+
+    /** Populated in read mode via {@link renderTransclusionMarkdownToHtml}. */
+    let readModeHtml = $state("");
+
+    $effect(() => {
+        const read = activeTab?.readMode;
+        const idle = is.improveState.status === "idle";
+        const content = ns.editorContent;
+        /** Reactive dependency — bumps after save so embedded notes refresh. */
+        ns.transclusionRefresh;
+        const rootId = ns.activeNote?.id;
+
+        if (!read || !idle) {
+            readModeHtml = "";
+            return;
+        }
+
+        let cancelled = false;
+        renderTransclusionMarkdownToHtml(content ?? "", {
+            rootNoteId: rootId,
+        }).then((html) => {
+            if (!cancelled) readModeHtml = html;
+        });
+        return () => {
+            cancelled = true;
+        };
+    });
 
     // ── Editor keydown (wiki-link brackets) ───────────────────────────────────
     function handleEditorKeydown(e) {
@@ -301,7 +328,7 @@
         </div>
     {:else if activeTab?.readMode}
         <div class="content-area read-mode-content">
-            {@html marked.parse(ns.editorContent || "")}
+            {@html readModeHtml}
         </div>
     {:else}
         <textarea
