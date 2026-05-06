@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Rust sources live under src-tauri/ — ignore stray root-level stubs
+/*.rs
+
 # Editor directories and files
 .vscode/*
 .idea
