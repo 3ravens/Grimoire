@@ -97,13 +97,17 @@ pub async fn evict_ollama_models_except(keep_model: &str) {
     evict_other_models(&client, keep_model).await;
 }
 
-/// Controls Ollama eviction around [`embed_batch_with_options`].
-#[derive(Clone, Copy, Debug, Default)]
+/// Controls Ollama eviction and optional progress around [`embed_batch_with_options`].
+#[derive(Clone, Default)]
 pub struct EmbedBatchOptions {
     /// When `false` (default), evict competing models once before `/api/embed`.
     /// When `true`, the caller must run [`evict_ollama_models_except`] (e.g. start +
     /// periodic during Wikipedia / file-scan indexing).
     pub skip_ollama_entry_eviction: bool,
+    /// After each successful `/api/embed` slice, called with `(chunks_ready, total_chunks)`.
+    /// `chunks_ready` counts inputs that have an embedding in memory so far (monotonic).
+    /// Used by vault re-index so very large notes do not look frozen at `N/M notes`.
+    pub on_slice_progress: Option<std::sync::Arc<dyn Fn(usize, usize) + Send + Sync>>,
 }
 
 /// Call Ollama's /api/embeddings endpoint and return the embedding vector.
@@ -294,6 +298,8 @@ pub async fn embed_batch_with_options(
         return Ok(vec![]);
     }
 
+    let slice_cb = opts.on_slice_progress.clone();
+
     // `/api/embed` can fail sporadically when Ollama's internal runner drops the
     // connection (HTTP 400 with embedded TCP errors). Single-chunk work is common
     // during incremental rescans; use the same `/api/embeddings` path as `embed()`
@@ -301,6 +307,9 @@ pub async fn embed_batch_with_options(
     if texts.len() == 1 {
         // Match multi-chunk batch behavior: keep the model warm (see /api/embed keep_alive).
         let v = embed_with_keep_alive(&texts[0], model, 300).await?;
+        if let Some(cb) = slice_cb.as_ref() {
+            cb(1, 1);
+        }
         return Ok(vec![v]);
     }
 
@@ -320,6 +329,12 @@ pub async fn embed_batch_with_options(
     }
 
     let mut out: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
+
+    if let Some(cb) = slice_cb.as_ref() {
+        if texts.len() > 1 {
+            cb(0, texts.len());
+        }
+    }
 
     let started_at = std::time::Instant::now();
     const MAX_SPLIT_OPS: u32 = 64;
@@ -346,9 +361,17 @@ pub async fn embed_batch_with_options(
                 for (i, emb) in embs.into_iter().enumerate() {
                     out[start + i] = Some(emb);
                 }
+                if let Some(cb) = slice_cb.as_ref() {
+                    let ready = out.iter().filter(|o| o.is_some()).count();
+                    cb(ready, texts.len());
+                }
             }
             Ok(embs) if embs.len() == 1 && slice.len() == 1 => {
                 out[start] = embs.into_iter().next();
+                if let Some(cb) = slice_cb.as_ref() {
+                    let ready = out.iter().filter(|o| o.is_some()).count();
+                    cb(ready, texts.len());
+                }
             }
             Ok(embs) => {
                 let err = format!(
@@ -360,6 +383,10 @@ pub async fn embed_batch_with_options(
                     log::warn!("[embed_batch] single-item batch mismatch: {err}");
                     EMBED_BATCH_SINGLE_FALLBACK_COUNT.fetch_add(1, Ordering::Relaxed);
                     out[start] = Some(embed_with_keep_alive(&texts[start], model, 300).await?);
+                    if let Some(cb) = slice_cb.as_ref() {
+                        let ready = out.iter().filter(|o| o.is_some()).count();
+                        cb(ready, texts.len());
+                    }
                 } else {
                     let mid = start + (slice.len() / 2);
                     log::warn!("[embed_batch] splitting batch ({start}..{end}) after mismatch: {err}");
@@ -379,6 +406,10 @@ pub async fn embed_batch_with_options(
                     log::warn!("[embed_batch] single-item batch failed, falling back to /api/embeddings: {e}");
                     EMBED_BATCH_SINGLE_FALLBACK_COUNT.fetch_add(1, Ordering::Relaxed);
                     out[start] = Some(embed_with_keep_alive(&texts[start], model, 300).await?);
+                    if let Some(cb) = slice_cb.as_ref() {
+                        let ready = out.iter().filter(|o| o.is_some()).count();
+                        cb(ready, texts.len());
+                    }
                 } else {
                     let mid = start + (slice.len() / 2);
                     log::warn!("[embed_batch] splitting batch ({start}..{end}) after failure: {e}");

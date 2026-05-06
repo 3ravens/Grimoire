@@ -303,6 +303,7 @@ async fn embed_scanned_chunks_with_progress(
     let bs = crate::vector::batch_size_for_model(model).max(1);
     let embed_bulk_opts = crate::vector::EmbedBatchOptions {
         skip_ollama_entry_eviction: true,
+        ..Default::default()
     };
     crate::vector::evict_ollama_models_except(model).await;
     let mut embeddings: Vec<Vec<f32>> = Vec::with_capacity(chunks_total);
@@ -328,7 +329,7 @@ async fn embed_scanned_chunks_with_progress(
             mk_cancel(),
             EMBED_RETRY_MAX_DELAY_MS,
             || async {
-                crate::vector::embed_batch_with_options(slice, model, embed_bulk_opts).await
+                crate::vector::embed_batch_with_options(slice, model, embed_bulk_opts.clone()).await
             },
         )
         .await

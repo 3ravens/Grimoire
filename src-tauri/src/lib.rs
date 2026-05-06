@@ -100,6 +100,7 @@ pub fn run() {
 
                 app_handle.manage(commands::CancelMap::new());
                 app_handle.manage(commands::FileScanCancelMap::new());
+                app_handle.manage(commands::VaultReindexGate::new());
             });
 
             Ok(())
@@ -127,6 +128,9 @@ pub fn run() {
         commands::remove_note_index,
         commands::search_notes,
         commands::reindex_all,
+        commands::vault_reindex_status,
+        commands::cancel_vault_reindex,
+        commands::abandon_vault_reindex,
         commands::clear_notes_index,
         commands::clear_wiki_index,
         commands::clear_scanned_index,

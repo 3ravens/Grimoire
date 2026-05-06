@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 export function createNoteService({ onError }) {
   let notes = $state([]);
@@ -17,6 +18,8 @@ export function createNoteService({ onError }) {
   let noteDeletePending = $state(null);
   let isSeeding = $state(false);
   let isReindexing = $state(false);
+  /** @type {{ processed: number, total: number, indexed: number, phase?: string | null, embeddingChunks?: { done: number, total: number, note_title: string } | null } | null} */
+  let reindexProgress = $state(null);
 
   function markDirty() { isDirty = true; }
 
@@ -224,14 +227,28 @@ export function createNoteService({ onError }) {
 
   async function reindexAll() {
     isReindexing = true;
+    reindexProgress = { processed: 0, total: 0, indexed: 0 };
+    let unlisten = null;
     try {
+      unlisten = await listen('reindex:progress', (ev) => {
+        const pl = ev.payload;
+        reindexProgress = {
+          processed: pl.processed ?? 0,
+          total: pl.total ?? 0,
+          indexed: pl.indexed ?? 0,
+          phase: pl.phase ?? null,
+          embeddingChunks: pl.embedding_chunks ?? null,
+        };
+      });
       const msg = await invoke('reindex_all');
       return { msg };
     } catch (e) {
       onError?.(e);
       return null;
     } finally {
+      unlisten?.();
       isReindexing = false;
+      reindexProgress = null;
     }
   }
 
@@ -262,6 +279,7 @@ export function createNoteService({ onError }) {
     set noteDeletePending(v) { noteDeletePending = v; },
     get isSeeding() { return isSeeding; },
     get isReindexing() { return isReindexing; },
+    get reindexProgress() { return reindexProgress; },
     markDirty,
     loadNotes,
     loadAllTags,

@@ -13,7 +13,16 @@
   let reindexStatus   = $state(''); // '', 'clearing', 'reindexing', 'done', 'error'
   let reindexError    = $state('');
   let reindexSummaryText = $state('');
-  let reindexProgress = $state({ indexed: 0, processed: 0, total: 0, permanently_skipped: 0 });
+  let reindexProgress = $state({
+    indexed: 0,
+    processed: 0,
+    total: 0,
+    permanently_skipped: 0,
+    phase: null,
+    embeddingChunks: null,
+  });
+  /** True once progress events indicate we continued a checkpointed run. */
+  let reindexRunIsResume = $state(false);
   /** Retries for transient embed / vector-store failures in background tasks (0–10). */
   let backgroundMaxRetries = $state(2);
   let chatTemperature = $state(0.8);
@@ -58,7 +67,15 @@
     reindexStatus = 'clearing';
     reindexError = '';
     reindexSummaryText = '';
-    reindexProgress = { indexed: 0, processed: 0, total: 0, permanently_skipped: 0 };
+    reindexRunIsResume = false;
+    reindexProgress = {
+      indexed: 0,
+      processed: 0,
+      total: 0,
+      permanently_skipped: 0,
+      phase: null,
+      embeddingChunks: null,
+    };
     let unlisten = null;
     try {
       await Promise.all([
@@ -69,14 +86,17 @@
       reindexStatus = 'reindexing';
       unlisten = await listen('reindex:progress', (ev) => {
         const pl = ev.payload;
+        if (pl?.resuming) reindexRunIsResume = true;
         reindexProgress = {
           indexed: pl.indexed ?? 0,
           processed: pl.processed ?? 0,
           total: pl.total ?? 0,
           permanently_skipped: pl.permanently_skipped ?? 0,
+          phase: pl.phase ?? null,
+          embeddingChunks: pl.embedding_chunks ?? null,
         };
       });
-      reindexSummaryText = await invoke('reindex_all');
+      reindexSummaryText = await invoke('reindex_all', { forceRestart: true });
       initialEmbeddingModel = embeddingModel;
       reindexStatus = 'done';
     } catch (e) {
@@ -88,6 +108,7 @@
       } else {
         reindexError = msg;
       }
+      reindexError += ' Partial progress may be saved; use Resume on the home banner or Retry here.';
       reindexStatus = 'error';
     } finally {
       unlisten?.();
@@ -153,9 +174,15 @@
     {:else if reindexStatus === 'reindexing'}
       {@const pct = reindexProgress.total > 0 ? Math.round((reindexProgress.processed / reindexProgress.total) * 100) : 0}
       {@const sk = reindexProgress.permanently_skipped ?? 0}
+      {@const verb = reindexRunIsResume ? 'Resuming' : 'Re-indexing'}
       <p class="reindex-msg">
-        Re-indexing notes with {embeddingModel}… {reindexProgress.processed}/{reindexProgress.total} ({pct}%){sk > 0 ? ` · ${sk} skipped after retries` : ''}
+        {verb} notes with {embeddingModel}… {reindexProgress.processed}/{reindexProgress.total} ({pct}%){sk > 0 ? ` · ${sk} skipped after retries` : ''}
       </p>
+      {#if reindexProgress.embeddingChunks}
+        <p class="reindex-msg">
+          Embedding “{reindexProgress.embeddingChunks.note_title}”: {reindexProgress.embeddingChunks.done}/{reindexProgress.embeddingChunks.total} chunks
+        </p>
+      {/if}
       <div class="reindex-bar-track"><div class="reindex-bar-fill" style="width: {pct}%"></div></div>
     {:else if reindexStatus === 'done'}
       <p class="reindex-msg reindex-done">

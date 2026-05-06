@@ -126,6 +126,7 @@ pub async fn unlock_vault(
 /// LanceDB contains plaintext note excerpts — they must not remain readable while locked.
 #[tauri::command]
 pub async fn lock_vault(
+    pool: State<'_, SqlitePool>,
     keys: State<'_, KeyStore>,
     vdb: State<'_, crate::vector::VectorDb>,
 ) -> Result<(), String> {
@@ -138,6 +139,9 @@ pub async fn lock_vault(
     } // key_guard dropped here before the await
     // Purge LanceDB so note excerpts aren't readable while the vault is locked.
     crate::vector::purge_all(&vdb.0).await?;
+    crate::commands::rag::clear_vault_reindex_checkpoint(pool.inner())
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -265,6 +269,9 @@ pub async fn set_vault_password(
 
     // Purge LanceDB — encrypted notes must not remain searchable.
     crate::vector::purge_all(&vdb.0).await?;
+    crate::commands::rag::clear_vault_reindex_checkpoint(pool.inner())
+        .await
+        .map_err(|e| e.to_string())?;
 
     new_key.zeroize();
     Ok(())

@@ -39,6 +39,15 @@ impl FileScanCancelMap {
     }
 }
 
+/// Ensures only one vault note re-index (`reindex_all`) runs at a time.
+pub struct VaultReindexGate(pub Arc<tokio::sync::Mutex<()>>);
+
+impl VaultReindexGate {
+    pub fn new() -> Self {
+        Self(Arc::new(tokio::sync::Mutex::new(())))
+    }
+}
+
 pub mod audit;
 pub mod bookmarks;
 pub mod calendar;

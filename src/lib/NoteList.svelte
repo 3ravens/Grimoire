@@ -13,6 +13,7 @@
   const tagFilter        = $derived(ns.tagFilter);
   const isSeeding        = $derived(ns.isSeeding);
   const isReindexing     = $derived(ns.isReindexing);
+  const reindexProgress  = $derived(ns.reindexProgress);
   const folders          = $derived(fs.folders);
   const selectedFolderId = $derived(fs.selectedFolderId);
   const inlineRenaming   = $derived(fs.inlineRenaming);
@@ -125,5 +126,17 @@
   </button>
 {/if}
 <button class="seed-btn" onclick={onReindexAll} disabled={isReindexing}>
-  {isReindexing ? 'Indexing…' : 'Re-index all notes'}
+  {#if isReindexing}
+    {#if reindexProgress && reindexProgress.total > 0}
+      {#if reindexProgress.embeddingChunks}
+        Embedding “{reindexProgress.embeddingChunks.note_title}”… {reindexProgress.embeddingChunks.done}/{reindexProgress.embeddingChunks.total} chunks · notes {reindexProgress.processed}/{reindexProgress.total}
+      {:else}
+        Indexing… {reindexProgress.processed}/{reindexProgress.total}
+      {/if}
+    {:else}
+      Indexing…
+    {/if}
+  {:else}
+    Re-index all notes
+  {/if}
 </button>

@@ -93,6 +93,49 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     const ui = createUiService();
     const vault = createVaultService({ onError: err.showError, ns, ts, fs });
 
+    let vaultReindexBannerDismissed = $state(false);
+    /** @type {{ nextPos: number, total: number, indexedOk: number, embeddingModel: string } | null} */
+    let vaultReindexBanner = $state(null);
+    let prevVaultReindexIncomplete = $state(false);
+
+    async function refreshVaultReindexBanner() {
+        if (vault.vaultLocked) {
+            vaultReindexBanner = null;
+            return;
+        }
+        try {
+            const s = await invoke("vault_reindex_status");
+            if (s.incomplete && !prevVaultReindexIncomplete) {
+                vaultReindexBannerDismissed = false;
+            }
+            prevVaultReindexIncomplete = Boolean(s.incomplete);
+            if (s.incomplete && !vaultReindexBannerDismissed) {
+                vaultReindexBanner = {
+                    nextPos: s.next_pos,
+                    total: s.total,
+                    indexedOk: s.indexed_ok,
+                    embeddingModel: s.embedding_model,
+                };
+            } else {
+                vaultReindexBanner = null;
+            }
+        } catch {
+            vaultReindexBanner = null;
+        }
+    }
+
+    function dismissVaultReindexBanner() {
+        vaultReindexBannerDismissed = true;
+        vaultReindexBanner = null;
+    }
+
+    async function resumeVaultReindexFromBanner() {
+        vaultReindexBannerDismissed = false;
+        const result = await ns.reindexAll();
+        if (result?.msg) err.showError(`✓ ${result.msg}.`);
+        await refreshVaultReindexBanner();
+    }
+
     // Context menu service — needs coordinator callbacks, so created after them.
     const ctx = createContextMenuService({
         ns,
@@ -276,6 +319,8 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                     settings.wikipediaEnabled = v === "true";
                 })
                 .catch(() => {});
+
+            void refreshVaultReindexBanner();
         }
 
         await tick();
@@ -615,6 +660,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
             await restoreTabs();
             if (ts.tabs.length === 0) newTab();
             invoke("reindex_all").catch(() => {});
+            await refreshVaultReindexBanner();
         });
     }
 
@@ -659,6 +705,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     async function reindexAll() {
         const result = await ns.reindexAll();
         if (result?.msg) err.showError(`✓ ${result.msg}.`);
+        await refreshVaultReindexBanner();
     }
 </script>
 
@@ -672,6 +719,25 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 {:else}
     {#if err.errorMsg}
         <div class="error-banner" role="alert">{err.errorMsg}</div>
+    {/if}
+
+    {#if vaultReindexBanner && !ns.isReindexing}
+        <div class="vault-reindex-banner" role="status">
+            <span>
+                Semantic search re-index is incomplete:
+                <strong>{vaultReindexBanner.indexedOk}</strong> notes embedded so far,
+                <strong>{vaultReindexBanner.nextPos}</strong> of
+                <strong>{vaultReindexBanner.total}</strong> unlockable notes processed.
+                Already-embedded notes stay searchable. Resume to continue (model:
+                {vaultReindexBanner.embeddingModel}).
+            </span>
+            <span class="banner-actions">
+                <button type="button" class="primary" onclick={resumeVaultReindexFromBanner}>
+                    Resume
+                </button>
+                <button type="button" onclick={dismissVaultReindexBanner}>Dismiss</button>
+            </span>
+        </div>
     {/if}
 
     <!-- Password modals (rendered above everything) -->

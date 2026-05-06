@@ -15,7 +15,12 @@
 // You should have received a copy of the GNU General Public License
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
-use sqlx::SqlitePool;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
+
+use lancedb::Connection;
+use serde::Serialize;
+use sqlx::{QueryBuilder, SqlitePool};
 use tauri::{Emitter, State};
 use crate::{AppError, AppResult, EncryptedNoteStore};
 use super::NoteRow;
@@ -23,6 +28,20 @@ use crate::chunking::{split_sentences, chunk_sentences};
 use crate::KeyStore;
 use crate::config::SharedConfig;
 
+/// CancelMap key for in-flight `reindex_all` (see `cancel_vault_reindex`).
+pub const VAULT_REINDEX_CANCEL_KEY: &str = "__vault_notes_reindex__";
+
+fn truncate_reindex_title(title: &str) -> String {
+    const MAX: usize = 80;
+    let t = title.trim();
+    let mut it = t.chars();
+    let head: String = it.by_ref().take(MAX).collect();
+    if it.next().is_some() {
+        format!("{head}…")
+    } else {
+        head
+    }
+}
 
 // ---------------------------------------------------------------------------
 // RAG commands (vector index + semantic search)
@@ -211,7 +230,245 @@ pub async fn search_notes(
     Ok(matches)
 }
 
-/// Re-index every note currently in SQLite into LanceDB from scratch.
+// ---------------------------------------------------------------------------
+// Vault re-index checkpointing (SQLite queue + cursor; resume after crash)
+// ---------------------------------------------------------------------------
+
+/// Invalidate persisted vault re-index progress. Call whenever the notes Lance
+/// table is dropped (`clear_notes_index`, vault lock purge) so we never resume
+/// against an empty or wrong-shaped index.
+pub async fn clear_vault_reindex_checkpoint(pool: &SqlitePool) -> AppResult<()> {
+    sqlx::query("DELETE FROM vault_reindex_queue")
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM vault_reindex_state WHERE id = 1")
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn expected_unlocked_reindex_note_ids(store: &EncryptedNoteStore<'_>) -> AppResult<Vec<i64>> {
+    let mut notes = store.list_notes(None, true).await?;
+    notes.sort_by_key(|n| n.id);
+    Ok(notes
+        .into_iter()
+        .filter(|n| !n.locked)
+        .map(|n| n.id)
+        .collect())
+}
+
+async fn rebuild_vault_reindex_checkpoint(
+    pool: &SqlitePool,
+    store: &EncryptedNoteStore<'_>,
+    embedding_model: &str,
+) -> AppResult<i64> {
+    let ids = expected_unlocked_reindex_note_ids(store).await?;
+    let total = ids.len() as i64;
+
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM vault_reindex_queue")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM vault_reindex_state WHERE id = 1")
+        .execute(&mut *tx)
+        .await?;
+
+    let started = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO vault_reindex_state (id, embedding_model, started_at, next_pos, total, indexed_ok)
+         VALUES (1, ?, ?, 0, ?, 0)",
+    )
+    .bind(embedding_model)
+    .bind(&started)
+    .bind(total)
+    .execute(&mut *tx)
+    .await?;
+
+    const BATCH: usize = 500;
+    let mut offset = 0usize;
+    while offset < ids.len() {
+        let end = (offset + BATCH).min(ids.len());
+        let mut qb: QueryBuilder<'_, sqlx::Sqlite> =
+            QueryBuilder::new("INSERT INTO vault_reindex_queue (pos, note_id) ");
+        qb.push_values(ids[offset..end].iter().enumerate(), |mut b, (i, note_id)| {
+            let pos = (offset + i) as i64;
+            b.push_bind(pos).push_bind(*note_id);
+        });
+        qb.build().execute(&mut *tx).await?;
+        offset = end;
+    }
+    tx.commit().await?;
+    Ok(total)
+}
+
+/// Returns `(next_pos, total, indexed_ok)` when the checkpoint matches `model`,
+/// the queue row count matches `total`, and the queued note ids match the current
+/// set of unlockable notes (otherwise the checkpoint is stale and cleared).
+async fn vault_reindex_resume_snapshot(
+    pool: &SqlitePool,
+    store: &EncryptedNoteStore<'_>,
+    model: &str,
+) -> AppResult<Option<(i64, i64, i64)>> {
+    let row: Option<(String, i64, i64, i64)> = sqlx::query_as(
+        "SELECT embedding_model, next_pos, total, indexed_ok FROM vault_reindex_state WHERE id = 1",
+    )
+    .fetch_optional(pool)
+    .await?;
+    let Some((emb, next_pos, total, indexed_ok)) = row else {
+        return Ok(None);
+    };
+    if emb != model || total <= 0 {
+        clear_vault_reindex_checkpoint(pool).await?;
+        return Ok(None);
+    }
+    if next_pos >= total {
+        clear_vault_reindex_checkpoint(pool).await?;
+        return Ok(None);
+    }
+    let queue_n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM vault_reindex_queue")
+        .fetch_one(pool)
+        .await?;
+    if queue_n != total {
+        clear_vault_reindex_checkpoint(pool).await?;
+        return Ok(None);
+    }
+
+    let expected = expected_unlocked_reindex_note_ids(store).await?;
+    if expected.len() as i64 != total {
+        clear_vault_reindex_checkpoint(pool).await?;
+        return Ok(None);
+    }
+    let queued: Vec<i64> = sqlx::query_scalar("SELECT note_id FROM vault_reindex_queue ORDER BY pos ASC")
+        .fetch_all(pool)
+        .await?;
+    if queued != expected {
+        clear_vault_reindex_checkpoint(pool).await?;
+        return Ok(None);
+    }
+
+    Ok(Some((next_pos, total, indexed_ok)))
+}
+
+/// True when there is no checkpoint row, or the queue matches the current set of
+/// unlockable note ids (same length and same ordered ids).
+async fn vault_reindex_checkpoint_queue_consistent(
+    pool: &SqlitePool,
+    store: &EncryptedNoteStore<'_>,
+) -> AppResult<bool> {
+    let row: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT next_pos, total FROM vault_reindex_state WHERE id = 1",
+    )
+    .fetch_optional(pool)
+    .await?;
+    let Some((_next_pos, total)) = row else {
+        return Ok(true);
+    };
+    if total <= 0 {
+        return Ok(true);
+    }
+    let queue_n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM vault_reindex_queue")
+        .fetch_one(pool)
+        .await?;
+    if queue_n != total {
+        return Ok(false);
+    }
+    let expected = expected_unlocked_reindex_note_ids(store).await?;
+    if expected.len() as i64 != total {
+        return Ok(false);
+    }
+    let queued: Vec<i64> = sqlx::query_scalar("SELECT note_id FROM vault_reindex_queue ORDER BY pos ASC")
+        .fetch_all(pool)
+        .await?;
+    Ok(queued == expected)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VaultReindexStatus {
+    pub incomplete: bool,
+    pub next_pos: i64,
+    pub total: i64,
+    pub indexed_ok: i64,
+    pub embedding_model: String,
+    pub started_at: String,
+}
+
+#[tauri::command]
+pub async fn vault_reindex_status(
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, KeyStore>,
+) -> AppResult<VaultReindexStatus> {
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    if !vault_reindex_checkpoint_queue_consistent(pool.inner(), &store).await? {
+        clear_vault_reindex_checkpoint(pool.inner()).await?;
+        return Ok(VaultReindexStatus {
+            incomplete: false,
+            next_pos: 0,
+            total: 0,
+            indexed_ok: 0,
+            embedding_model: String::new(),
+            started_at: String::new(),
+        });
+    }
+
+    let row: Option<(String, i64, i64, i64, String)> = sqlx::query_as(
+        "SELECT embedding_model, next_pos, total, indexed_ok, started_at
+         FROM vault_reindex_state WHERE id = 1",
+    )
+    .fetch_optional(pool.inner())
+    .await?;
+    match row {
+        None => Ok(VaultReindexStatus {
+            incomplete: false,
+            next_pos: 0,
+            total: 0,
+            indexed_ok: 0,
+            embedding_model: String::new(),
+            started_at: String::new(),
+        }),
+        Some((embedding_model, next_pos, total, indexed_ok, started_at)) => {
+            let incomplete = next_pos < total && total > 0;
+            Ok(VaultReindexStatus {
+                incomplete,
+                next_pos,
+                total,
+                indexed_ok,
+                embedding_model,
+                started_at,
+            })
+        }
+    }
+}
+
+/// Request cooperative cancellation of an in-flight `reindex_all`.
+#[tauri::command]
+pub async fn cancel_vault_reindex(cancel_map: State<'_, super::CancelMap>) -> AppResult<()> {
+    let map = cancel_map
+        .0
+        .lock()
+        .map_err(|e| AppError::InvalidInput(e.to_string()))?;
+    if let Some(flag) = map.get(VAULT_REINDEX_CANCEL_KEY) {
+        flag.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+/// Discard checkpoint/queue so the next `reindex_all` starts fresh. Fails if a
+/// re-index is currently holding the gate.
+#[tauri::command]
+pub async fn abandon_vault_reindex(
+    pool: State<'_, SqlitePool>,
+    gate: State<'_, super::VaultReindexGate>,
+) -> AppResult<()> {
+    if gate.0.try_lock().is_err() {
+        return Err(AppError::InvalidInput(
+            "Cannot abandon while a re-index is running".to_string(),
+        ));
+    }
+    clear_vault_reindex_checkpoint(pool.inner()).await
+}
+
+/// Re-index every note into LanceDB. Resumes from SQLite checkpoint when possible
+/// unless `force_restart` is true.
 #[tauri::command]
 pub async fn reindex_all(
     app: tauri::AppHandle,
@@ -219,41 +476,148 @@ pub async fn reindex_all(
     keys: State<'_, KeyStore>,
     vdb: State<'_, crate::vector::VectorDb>,
     config: State<'_, SharedConfig>,
+    cancel_map: State<'_, super::CancelMap>,
+    gate: State<'_, super::VaultReindexGate>,
+    force_restart: Option<bool>,
 ) -> AppResult<String> {
-    let vault_key_absent = keys.vault_key.lock()
+    let _hold = gate.0.lock().await;
+
+    let vault_key_absent = keys
+        .vault_key
+        .lock()
         .map(|vk| vk.is_none())
         .unwrap_or(true);
     if vault_key_absent {
-        let has_pw: bool = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM vault_lock WHERE id = 1",
-        )
-        .fetch_one(pool.inner())
-        .await
-        .map(|n: i64| n > 0)
-        .unwrap_or(false);
+        let has_pw: bool = sqlx::query_scalar("SELECT COUNT(*) FROM vault_lock WHERE id = 1")
+            .fetch_one(pool.inner())
+            .await
+            .map(|n: i64| n > 0)
+            .unwrap_or(false);
         if has_pw {
             return Ok("0 notes indexed (vault is locked)".to_string());
         }
     }
 
     let store = EncryptedNoteStore::new(pool.inner(), &keys);
-    let notes = store.list_notes(None, true).await?;
-
     let model = config.read().unwrap().embedding_model.clone();
     let max_retries = config.read().unwrap().background_max_retries;
-    let total = notes.len();
-    let mut count = 0usize;
-    let mut processed = 0usize;
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    {
+        let mut map = cancel_map
+            .0
+            .lock()
+            .map_err(|e| AppError::InvalidInput(e.to_string()))?;
+        map.insert(VAULT_REINDEX_CANCEL_KEY.to_string(), cancel.clone());
+    }
+
+    let result = reindex_all_inner(
+        &app,
+        pool.inner(),
+        &store,
+        &vdb.0,
+        &model,
+        max_retries,
+        &cancel,
+        force_restart.unwrap_or(false),
+    )
+    .await;
+
+    if let Ok(mut map) = cancel_map.0.lock() {
+        map.remove(VAULT_REINDEX_CANCEL_KEY);
+    }
+
+    result
+}
+
+async fn reindex_all_inner(
+    app: &tauri::AppHandle,
+    pool: &SqlitePool,
+    store: &EncryptedNoteStore<'_>,
+    vdb: &Connection,
+    model: &str,
+    max_retries: i64,
+    cancel: &AtomicBool,
+    force_restart: bool,
+) -> AppResult<String> {
+    let (resume_from_checkpoint, mut next_pos, total, mut indexed_ok) = if force_restart {
+        let t = rebuild_vault_reindex_checkpoint(pool, store, model).await?;
+        (false, 0i64, t, 0i64)
+    } else if let Some((np, tot, idx)) = vault_reindex_resume_snapshot(pool, store, model).await? {
+        (true, np, tot, idx)
+    } else {
+        let t = rebuild_vault_reindex_checkpoint(pool, store, model).await?;
+        (false, 0i64, t, 0i64)
+    };
+
+    let total_usize = total as usize;
     let mut failed: Vec<String> = Vec::new();
     let mut permanently_skipped: usize = 0;
+    let mut cancelled = false;
 
-    for note in notes {
+    while next_pos < total {
+        if cancel.load(Ordering::Relaxed) {
+            cancelled = true;
+            break;
+        }
+
+        let note_id: i64 = sqlx::query_scalar("SELECT note_id FROM vault_reindex_queue WHERE pos = ?")
+            .bind(next_pos)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| AppError::NotFound("vault re-index queue row missing".to_string()))?;
+
+        let note = match store.get_note(note_id).await {
+            Ok(n) => n,
+            Err(e) => {
+                permanently_skipped += 1;
+                failed.push(format!("note id {note_id} — {e}"));
+                next_pos += 1;
+                sqlx::query(
+                    "UPDATE vault_reindex_state SET next_pos = ?, indexed_ok = ? WHERE id = 1",
+                )
+                .bind(next_pos)
+                .bind(indexed_ok)
+                .execute(pool)
+                .await?;
+                let _ = app.emit(
+                    "reindex:progress",
+                    serde_json::json!({
+                        "indexed": indexed_ok,
+                        "processed": next_pos as usize,
+                        "total": total_usize,
+                        "permanently_skipped": permanently_skipped,
+                        "resuming": resume_from_checkpoint,
+                    }),
+                );
+                continue;
+            }
+        };
+
         if note.locked {
-            processed += 1;
+            next_pos += 1;
+            sqlx::query(
+                "UPDATE vault_reindex_state SET next_pos = ?, indexed_ok = ? WHERE id = 1",
+            )
+            .bind(next_pos)
+            .bind(indexed_ok)
+            .execute(pool)
+            .await?;
+            let _ = app.emit(
+                "reindex:progress",
+                serde_json::json!({
+                    "indexed": indexed_ok,
+                    "processed": next_pos as usize,
+                    "total": total_usize,
+                    "permanently_skipped": permanently_skipped,
+                    "resuming": resume_from_checkpoint,
+                }),
+            );
             continue;
         }
-        super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
-        let props_suffix = build_properties_suffix(pool.inner(), note.id).await;
+
+        super::search::fts_upsert(pool, note.id, &note.title, &note.content).await;
+        let props_suffix = build_properties_suffix(pool, note.id).await;
         let full_content = if props_suffix.is_empty() {
             note.content.clone()
         } else {
@@ -262,17 +626,70 @@ pub async fn reindex_all(
         let sentences = split_sentences(&full_content);
         let raw_chunks = chunk_sentences(sentences, 1, 0);
         if raw_chunks.iter().all(|c| c.trim().is_empty()) {
-            processed += 1;
+            next_pos += 1;
+            sqlx::query(
+                "UPDATE vault_reindex_state SET next_pos = ?, indexed_ok = ? WHERE id = 1",
+            )
+            .bind(next_pos)
+            .bind(indexed_ok)
+            .execute(pool)
+            .await?;
+            let _ = app.emit(
+                "reindex:progress",
+                serde_json::json!({
+                    "indexed": indexed_ok,
+                    "processed": next_pos as usize,
+                    "total": total_usize,
+                    "permanently_skipped": permanently_skipped,
+                    "resuming": resume_from_checkpoint,
+                }),
+            );
             continue;
         }
-        // Use batch embedding first for reindex_all as well; this avoids the
-        // very slow per-chunk keep_alive=0 path.
+
         let doc_texts: Vec<String> = raw_chunks
             .iter()
             .map(|chunk| format!("search_document: {}\n{}", note.title, chunk))
             .collect();
+
+        let processed_ui = next_pos as usize;
+        let indexed_ui = indexed_ok;
+        let title_short = truncate_reindex_title(&note.title);
+        let last_emit_chunks = Arc::new(AtomicUsize::new(0));
+        let embed_opts = crate::vector::EmbedBatchOptions {
+            on_slice_progress: Some(Arc::new({
+                let app = app.clone();
+                let last_emit = last_emit_chunks.clone();
+                move |ready, tot| {
+                    let prev = last_emit.load(Ordering::Relaxed);
+                    let min_step = (tot / 40).max(64).min(tot.max(1));
+                    if ready > 0 && ready < tot && ready.saturating_sub(prev) < min_step {
+                        return;
+                    }
+                    last_emit.store(ready, Ordering::Relaxed);
+                    let _ = app.emit(
+                        "reindex:progress",
+                        serde_json::json!({
+                            "indexed": indexed_ui,
+                            "processed": processed_ui,
+                            "total": total_usize,
+                            "permanently_skipped": permanently_skipped,
+                            "resuming": resume_from_checkpoint,
+                            "phase": "embedding",
+                            "embedding_chunks": {
+                                "done": ready,
+                                "total": tot,
+                                "note_title": title_short,
+                            },
+                        }),
+                    );
+                }
+            })),
+            ..Default::default()
+        };
+
         let embeddings = match crate::retry::with_retries(max_retries, None, || async {
-            crate::vector::embed_batch(&doc_texts, &model)
+            crate::vector::embed_batch_with_options(&doc_texts, model, embed_opts.clone())
                 .await
                 .map_err(AppError::EmbeddingFailed)
         })
@@ -283,7 +700,7 @@ pub async fn reindex_all(
                 let mut fallback = Vec::with_capacity(raw_chunks.len());
                 for chunk in &raw_chunks {
                     let emb = crate::retry::with_retries(max_retries, None, || async {
-                        embed_document(chunk, &model).await
+                        embed_document(chunk, model).await
                     })
                     .await?;
                     fallback.push(emb);
@@ -291,6 +708,7 @@ pub async fn reindex_all(
                 fallback
             }
         };
+
         let mut chunks: Vec<(i32, String, Vec<f32>)> = Vec::new();
         let mut note_ok = true;
         for ((i, chunk_text), embedding) in raw_chunks.into_iter().enumerate().zip(embeddings) {
@@ -302,47 +720,92 @@ pub async fn reindex_all(
             }
             chunks.push((i as i32, chunk_text, embedding));
         }
+
         if note_ok {
             match crate::retry::with_retries(max_retries, None, || {
                 let ch = chunks.clone();
                 async {
-                    crate::vector::upsert(&vdb.0, note.id, &note.title, ch)
+                    crate::vector::upsert(vdb, note.id, &note.title, ch)
                         .await
                         .map_err(AppError::VectorStore)
                 }
             })
             .await
             {
-                Ok(()) => count += 1,
+                Ok(()) => indexed_ok += 1,
                 Err(e) => {
                     permanently_skipped += 1;
                     failed.push(format!("\"{}\" (upsert) — {}", note.title, e));
                 }
             }
         }
-        processed += 1;
-        let _ = app.emit("reindex:progress", serde_json::json!({
-            "indexed": count,
-            "processed": processed,
-            "total": total,
-            "permanently_skipped": permanently_skipped,
-        }));
+
+        next_pos += 1;
+        sqlx::query(
+            "UPDATE vault_reindex_state SET next_pos = ?, indexed_ok = ? WHERE id = 1",
+        )
+        .bind(next_pos)
+        .bind(indexed_ok)
+        .execute(pool)
+        .await?;
+
+        let _ = app.emit(
+            "reindex:progress",
+            serde_json::json!({
+                "indexed": indexed_ok,
+                "processed": next_pos as usize,
+                "total": total_usize,
+                "permanently_skipped": permanently_skipped,
+                "resuming": resume_from_checkpoint,
+            }),
+        );
     }
 
+    if cancelled {
+        let _ = app.emit(
+            "reindex:progress",
+            serde_json::json!({
+                "indexed": indexed_ok,
+                "processed": next_pos as usize,
+                "total": total_usize,
+                "permanently_skipped": permanently_skipped,
+                "resuming": resume_from_checkpoint,
+                "cancelled": true,
+            }),
+        );
+        return Ok(format!(
+            "Re-index cancelled after {} of {} unlockable notes (semantic search updated for {} of them so far). Resume from the banner or Settings.",
+            next_pos,
+            total,
+            indexed_ok
+        ));
+    }
+
+    clear_vault_reindex_checkpoint(pool).await?;
+
+    let embedded = indexed_ok as usize;
+    let total_u = total as usize;
     let summary = if failed.is_empty() {
-        if permanently_skipped == 0 {
-            format!("{count} notes indexed")
+        if embedded == total_u {
+            format!("Re-index complete: all {total} unlockable notes have vectors in semantic search.")
+        } else if permanently_skipped == 0 {
+            let no_vectors = total_u.saturating_sub(embedded);
+            format!(
+                "Re-index complete: processed all {total} unlockable notes. Semantic search has vectors for {embedded} notes; {no_vectors} had no embeddable text after chunking (often blank or whitespace-only)."
+            )
         } else {
-            format!("{count} notes indexed, {permanently_skipped} skipped after retries")
+            format!(
+                "Re-index complete: processed all {total} unlockable notes. Semantic search has vectors for {embedded} notes; {permanently_skipped} skipped after retries."
+            )
         }
     } else {
         let skip_part = if permanently_skipped > 0 {
-            format!(", {permanently_skipped} skipped after retries")
+            format!("; {permanently_skipped} skipped after retries")
         } else {
             String::new()
         };
         format!(
-            "{count} notes indexed{skip_part}, {} failed:\n{}",
+            "Re-index finished with issues: processed {total} unlockable notes, semantic search updated for {embedded}{skip_part}. {} failed:\n{}",
             failed.len(),
             failed.join("\n")
         )
@@ -352,11 +815,16 @@ pub async fn reindex_all(
 
 /// Drop the notes vector index so it can be rebuilt with a new embedding model.
 /// The index will be recreated with the correct schema on the next reindex_all.
+/// Clears any vault re-index checkpoint so a stale resume cannot run after the drop.
 #[tauri::command]
 pub async fn clear_notes_index(
+    pool: State<'_, SqlitePool>,
     vdb: State<'_, crate::vector::VectorDb>,
 ) -> AppResult<()> {
-    crate::vector::clear_notes_index(&vdb.0).await.map_err(|e| AppError::VectorStore(e))
+    clear_vault_reindex_checkpoint(pool.inner()).await?;
+    crate::vector::clear_notes_index(&vdb.0)
+        .await
+        .map_err(|e| AppError::VectorStore(e))
 }
 
 /// Drop the Wikipedia vector index so it can be rebuilt with a new embedding model.

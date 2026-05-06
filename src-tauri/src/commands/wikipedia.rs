@@ -1046,6 +1046,7 @@ pub async fn index_wikipedia_bundle(
         let model = embedding_model;
         let embed_bulk_opts = crate::vector::EmbedBatchOptions {
             skip_ollama_entry_eviction: true,
+            ..Default::default()
         };
 
         rt.block_on(crate::vector::evict_ollama_models_except(&model));
@@ -1194,7 +1195,7 @@ pub async fn index_wikipedia_bundle(
                             crate::vector::embed_batch_with_options(
                                 &doc_texts,
                                 &model,
-                                embed_bulk_opts,
+                                embed_bulk_opts.clone(),
                             )
                             .await
                             .map_err(AppError::EmbeddingFailed)
@@ -2414,6 +2415,7 @@ pub async fn benchmark_wikipedia_indexing(
 
         let embed_bulk_opts = crate::vector::EmbedBatchOptions {
             skip_ollama_entry_eviction: true,
+            ..Default::default()
         };
         rt.block_on(crate::vector::evict_ollama_models_except(&model_for_task));
 
@@ -2490,7 +2492,7 @@ pub async fn benchmark_wikipedia_indexing(
                 let n = match rt.block_on(crate::vector::embed_batch_with_options(
                     &doc_texts,
                     &model_for_task,
-                    embed_bulk_opts,
+                    embed_bulk_opts.clone(),
                 )) {
                     Ok(v) => v.into_iter().filter(|e| !e.is_empty()).count(),
                     Err(_) => {
