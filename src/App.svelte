@@ -113,6 +113,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         startNoteInline,
         sendSelectionToChat,
         loadNotes,
+        onError: err.showError,
     });
 
     // Keyboard shortcut handler.
@@ -1145,6 +1146,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                         onOpenNoteById={openNoteById}
                         onFilterByTag={filterByTag}
                         onConvertMention={convertMention}
+                        onExportError={err.showError}
                         onOpenTableView={() => {
                             if (ns.isDirty) saveNote();
                             const kanban = ts.tabs.find(

@@ -373,6 +373,118 @@ pub async fn export_notes(
     Ok(exported)
 }
 
+/// Export one unlocked note as Markdown to `dest_path` (full path including `.md`).
+/// `markdown` is the exact bytes to write (matches editor/read mode, including unsaved edits).
+#[tauri::command]
+pub async fn export_single_note_markdown(
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, KeyStore>,
+    note_id: i64,
+    dest_path: String,
+    markdown: String,
+) -> AppResult<()> {
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let note = store.get_note(note_id).await?;
+    if note.locked {
+        return Err(AppError::InvalidInput(
+            "Cannot export a locked note. Unlock its folder first.".into(),
+        ));
+    }
+
+    let path = PathBuf::from(&dest_path);
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                AppError::Io(format!("Could not create directory {}: {e}", parent.display()))
+            })?;
+        }
+    }
+
+    std::fs::write(&path, markdown.as_bytes()).map_err(|e| {
+        AppError::Io(format!("Could not write {}: {e}", path.display()))
+    })?;
+
+    let _ = crate::audit::log_event(
+        pool.inner(),
+        "note_export",
+        Some("note"),
+        Some(note_id),
+        Some(&note.title),
+        Some("single_markdown"),
+    )
+    .await;
+    Ok(())
+}
+
+/// Write standalone HTML for an unlocked note; frontend supplies HTML matching read mode.
+#[tauri::command]
+pub async fn save_note_html_export(
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, KeyStore>,
+    note_id: i64,
+    dest_path: String,
+    html: String,
+) -> AppResult<()> {
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let note = store.get_note(note_id).await?;
+    if note.locked {
+        return Err(AppError::InvalidInput(
+            "Cannot export a locked note. Unlock its folder first.".into(),
+        ));
+    }
+
+    let path = PathBuf::from(&dest_path);
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                AppError::Io(format!("Could not create directory {}: {e}", parent.display()))
+            })?;
+        }
+    }
+
+    std::fs::write(&path, html.as_bytes()).map_err(|e| {
+        AppError::Io(format!("Could not write {}: {e}", path.display()))
+    })?;
+
+    let _ = crate::audit::log_event(
+        pool.inner(),
+        "note_export",
+        Some("note"),
+        Some(note_id),
+        Some(&note.title),
+        Some("single_html"),
+    )
+    .await;
+    Ok(())
+}
+
+/// Record that the user initiated print-to-PDF for an unlocked note (no file write).
+#[tauri::command]
+pub async fn log_note_export_pdf_print(
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, KeyStore>,
+    note_id: i64,
+) -> AppResult<()> {
+    let store = EncryptedNoteStore::new(pool.inner(), &keys);
+    let note = store.get_note(note_id).await?;
+    if note.locked {
+        return Err(AppError::InvalidInput(
+            "Cannot export a locked note. Unlock its folder first.".into(),
+        ));
+    }
+
+    let _ = crate::audit::log_event(
+        pool.inner(),
+        "note_export",
+        Some("note"),
+        Some(note_id),
+        Some(&note.title),
+        Some("single_pdf_print"),
+    )
+    .await;
+    Ok(())
+}
+
 /// Strip characters that are illegal in directory or file names on Windows,
 /// macOS, and Linux. Collapses repeating spaces/dashes and trims whitespace.
 fn sanitise_path_component(s: &str) -> String {

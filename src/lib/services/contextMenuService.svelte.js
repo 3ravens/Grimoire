@@ -1,4 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
+import {
+  exportNoteHtml,
+  exportNoteMarkdown,
+  exportNotePdfPrint,
+  resolveExportPayload,
+} from "../utils/noteExportActions.js";
 
 /**
  * Context menu state and logic.
@@ -25,6 +31,7 @@ import { invoke } from "@tauri-apps/api/core";
  *   startNoteInline: (templateId?: number) => void,
  *   sendSelectionToChat: () => void,
  *   loadNotes: () => void,
+ *   onError: (e: unknown) => void,
  * }} deps
  */
 export function createContextMenuService(deps) {
@@ -86,6 +93,7 @@ export function createContextMenuService(deps) {
       startNoteInline,
       sendSelectionToChat,
       loadNotes,
+      onError,
     } = deps;
     const target = /** @type {Element} */ (e.target);
     const tabEl = target.closest("[data-tab-id]");
@@ -116,6 +124,7 @@ export function createContextMenuService(deps) {
         /** @type {HTMLElement} */ (noteLiEl).dataset.noteId,
       );
       const note = ns.notes.find((n) => n.id === noteId);
+      const payload = note ? resolveExportPayload(ns, note) : null;
       items = [
         {
           label: "Open in New Tab",
@@ -128,6 +137,45 @@ export function createContextMenuService(deps) {
             loadNotes();
           },
         },
+        ...(note && payload
+          ? [
+              {
+                label: "Export",
+                submenu: [
+                  {
+                    label: "Markdown…",
+                    action: () =>
+                      exportNoteMarkdown({
+                        noteId,
+                        title: payload.title,
+                        body: payload.body,
+                        onError,
+                      }),
+                  },
+                  {
+                    label: "HTML…",
+                    action: () =>
+                      exportNoteHtml({
+                        noteId,
+                        title: payload.title,
+                        body: payload.body,
+                        onError,
+                      }),
+                  },
+                  {
+                    label: "PDF…",
+                    action: () =>
+                      exportNotePdfPrint({
+                        noteId,
+                        title: payload.title,
+                        body: payload.body,
+                        onError,
+                      }),
+                  },
+                ],
+              },
+            ]
+          : []),
         { divider: true },
         bm.bookmarkedNoteIds.has(noteId)
           ? {

@@ -33,7 +33,7 @@ export const FEATURE_GUIDE = `## Grimoire Feature Guide
 - Bookmarks: Pin frequently accessed notes above the folder tree
 - Read/Edit mode toggle per note tab
 - Daily notes with configurable date format
-- Export all notes as Markdown files from Settings
+- Export current note or folder-list note: Markdown, HTML, or PDF (print dialog); bulk export from Settings
 
 ### Chat Features
 - "Use notes" toggle: auto-injects relevant notes as context via RAG
@@ -46,7 +46,7 @@ export const FEATURE_GUIDE = `## Grimoire Feature Guide
 - LLM: Model selection, keep in memory toggle, embedding model
 - Appearance: Theme (System/Light/Dark/Spellbook), accent colour, date format
 - Security: Vault password (AES-GCM + Argon2id), per-folder passwords
-- Data: Export all notes as Markdown
+- Data: Export all notes as Markdown; export single note from editor or folder list (Markdown, HTML, PDF via print)
 
 ### Vault Security
 - Vault-level password encrypts all notes at rest

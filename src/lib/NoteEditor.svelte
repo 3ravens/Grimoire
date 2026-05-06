@@ -5,6 +5,11 @@
     import NoteProperties from "./NoteProperties.svelte";
     import DiffView from "./DiffView.svelte";
     import ImprovePopover from "./ImprovePopover.svelte";
+    import {
+        exportNoteHtml,
+        exportNoteMarkdown,
+        exportNotePdfPrint,
+    } from "./utils/noteExportActions.js";
 
     const ns = getContext("ns");
     const ts = getContext("ts");
@@ -22,7 +27,15 @@
         onFilterByTag,
         onConvertMention,
         onOpenTableView,
+        onExportError = () => {},
     } = $props();
+
+    /** @type {HTMLDetailsElement | null} */
+    let exportDetailsEl = $state(null);
+
+    function closeExportMenu() {
+        if (exportDetailsEl) exportDetailsEl.open = false;
+    }
 
     // ── Local derived / state ─────────────────────────────────────────────────
     const activeTab = $derived(
@@ -164,6 +177,67 @@
         >
             Improve
         </button>
+        {#if !ns.activeNote.locked}
+            <details
+                class="toolbar-export"
+                bind:this={exportDetailsEl}
+            >
+                <summary
+                    class="graph-toggle export-summary"
+                    aria-haspopup="menu"
+                    aria-label="Export note"
+                    title="Export note"
+                    >Export</summary
+                >
+                <div class="toolbar-export-menu" role="menu">
+                    <button
+                        type="button"
+                        role="menuitem"
+                        class="toolbar-export-item"
+                        onclick={() => {
+                            exportNoteMarkdown({
+                                noteId: ns.activeNote.id,
+                                title: ns.editorTitle,
+                                body: ns.editorContent,
+                                onError: onExportError,
+                            });
+                            closeExportMenu();
+                        }}
+                        >Markdown…</button
+                    >
+                    <button
+                        type="button"
+                        role="menuitem"
+                        class="toolbar-export-item"
+                        onclick={() => {
+                            exportNoteHtml({
+                                noteId: ns.activeNote.id,
+                                title: ns.editorTitle,
+                                body: ns.editorContent,
+                                onError: onExportError,
+                            });
+                            closeExportMenu();
+                        }}
+                        >HTML…</button
+                    >
+                    <button
+                        type="button"
+                        role="menuitem"
+                        class="toolbar-export-item"
+                        onclick={() => {
+                            exportNotePdfPrint({
+                                noteId: ns.activeNote.id,
+                                title: ns.editorTitle,
+                                body: ns.editorContent,
+                                onError: onExportError,
+                            });
+                            closeExportMenu();
+                        }}
+                        >PDF…</button
+                    >
+                </div>
+            </details>
+        {/if}
         <button
             class="graph-toggle"
             aria-label={activeTab?.readMode
