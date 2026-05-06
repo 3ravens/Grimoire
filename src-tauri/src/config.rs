@@ -54,6 +54,11 @@ pub struct AppConfig {
     /// When true, emit periodic `[wiki_index_perf]` timing logs during
     /// wikipedia indexing runs. Disabled by default to avoid noisy logs.
     pub wiki_perf_logging: bool,
+
+    /// Retries for transient embedding / LanceDB failures in background pipelines
+    /// (Wikipedia index, file scanner, note re-index). Setting key `background_max_retries`.
+    /// Default 2; clamped to 0..=10 when loaded or updated.
+    pub background_max_retries: i64,
 }
 
 /// Convenience alias — the shared, mutable config handle stored in Tauri state.
@@ -72,7 +77,8 @@ impl AppConfig {
                'vault_path',
                'llm_force_enabled',
                              'wikipedia_enabled',
-                             'wiki_perf_logging'
+                             'wiki_perf_logging',
+                             'background_max_retries'
              )",
         )
         .fetch_all(db)
@@ -83,6 +89,7 @@ impl AppConfig {
         let mut llm_force_enabled = false;
         let mut wikipedia_enabled = false;
         let mut wiki_perf_logging = false;
+        let mut background_max_retries: Option<i64> = None;
 
         for (key, value) in rows {
             match key.as_str() {
@@ -91,9 +98,14 @@ impl AppConfig {
                 "llm_force_enabled" => llm_force_enabled = value == "true",
                 "wikipedia_enabled" => wikipedia_enabled = value == "true",
                 "wiki_perf_logging" => wiki_perf_logging = value == "true",
+                "background_max_retries" => {
+                    background_max_retries = value.parse::<i64>().ok();
+                }
                 _ => {}
             }
         }
+
+        let background_max_retries = background_max_retries.unwrap_or(2).clamp(0, 10);
 
         Ok(AppConfig {
             embedding_model,
@@ -101,6 +113,7 @@ impl AppConfig {
             llm_force_enabled,
             wikipedia_enabled,
             wiki_perf_logging,
+            background_max_retries,
         })
     }
 
@@ -115,6 +128,12 @@ impl AppConfig {
             "llm_force_enabled" => self.llm_force_enabled = value == "true",
             "wikipedia_enabled" => self.wikipedia_enabled = value == "true",
             "wiki_perf_logging" => self.wiki_perf_logging = value == "true",
+            "background_max_retries" => {
+                self.background_max_retries = value
+                    .parse::<i64>()
+                    .unwrap_or(2)
+                    .clamp(0, 10);
+            }
             _ => {}
         }
     }

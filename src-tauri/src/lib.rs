@@ -26,6 +26,7 @@ mod db;
 pub mod error;
 mod hardware;
 mod note_store;
+mod retry;
 mod vector;
 
 pub use access_filter::AccessFilter;
@@ -66,6 +67,8 @@ pub fn run() {
                 let pool = db::init_db(&app_handle)
                     .await
                     .expect("failed to initialise database");
+                // Audit retention (best-effort; never blocks startup on failure).
+                crate::audit::prune_if_configured(&pool).await;
                 let pool_for_fts = pool.clone();
                 let pool_for_wiki_fts = pool.clone();
 
@@ -197,6 +200,9 @@ pub fn run() {
         commands::delete_wikipedia_highlight,
         commands::get_scanned_paths,
         commands::add_scanned_path,
+        commands::update_scanned_path_excludes,
+        commands::get_scanned_path_stale_summary,
+        commands::clear_stale_scanned_files,
         commands::remove_scanned_path,
         commands::toggle_scanned_path,
         commands::rescan_path,
@@ -206,6 +212,9 @@ pub fn run() {
         commands::get_audit_log,
         commands::get_audit_log_count,
         commands::clear_audit_log,
+        commands::export_audit_log,
+        commands::preview_audit_retention_prune,
+        commands::prune_audit_log,
         // ── Debug-only commands (excluded from release builds) ───────────────
         #[cfg(debug_assertions)]
         commands::debug_search,
@@ -213,6 +222,10 @@ pub fn run() {
         commands::debug_search_wikipedia,
         #[cfg(debug_assertions)]
         commands::debug_search_scanned_files,
+        #[cfg(debug_assertions)]
+        commands::benchmark_wikipedia_quality,
+        #[cfg(debug_assertions)]
+        commands::benchmark_wikipedia_indexing,
         #[cfg(debug_assertions)]
         commands::seed_notes,
     ]);

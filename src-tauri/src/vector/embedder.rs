@@ -84,6 +84,28 @@ async fn evict_other_models(client: &reqwest::Client, keep_model: &str) {
     }
 }
 
+/// Unload every Ollama runner except `keep_model` (RDNA4/Vulkan safety).
+/// Bulk indexers should call this once at job start and periodically instead of
+/// relying on per-batch eviction inside [`embed_batch_with_options`].
+pub async fn evict_ollama_models_except(keep_model: &str) {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+    else {
+        return;
+    };
+    evict_other_models(&client, keep_model).await;
+}
+
+/// Controls Ollama eviction around [`embed_batch_with_options`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EmbedBatchOptions {
+    /// When `false` (default), evict competing models once before `/api/embed`.
+    /// When `true`, the caller must run [`evict_ollama_models_except`] (e.g. start +
+    /// periodic during Wikipedia / file-scan indexing).
+    pub skip_ollama_entry_eviction: bool,
+}
+
 /// Call Ollama's /api/embeddings endpoint and return the embedding vector.
 /// Evicts all running models first to prevent Vulkan GPU context conflicts.
 /// Retries once on failure — evicting again before the second attempt clears
@@ -192,9 +214,21 @@ pub async fn embed(text: &str, model: &str) -> Result<Vec<f32>, String> {
 
 /// Embed a batch of texts in a single Ollama request using `/api/embed`.
 /// 5–10× faster than calling `embed()` per-text: one HTTP round-trip per batch,
-/// model stays resident (`keep_alive=300`), no per-call eviction overhead.
+/// model stays resident (`keep_alive=300`). By default evicts competing Ollama
+/// models once before `/api/embed`; use [`embed_batch_with_options`] with
+/// [`EmbedBatchOptions::skip_ollama_entry_eviction`] when the caller runs eviction
+/// separately (bulk indexing).
 /// Returns one vector per input in the same order.
 pub async fn embed_batch(texts: &[String], model: &str) -> Result<Vec<Vec<f32>>, String> {
+    embed_batch_with_options(texts, model, EmbedBatchOptions::default()).await
+}
+
+/// Same as [`embed_batch`] with explicit eviction policy.
+pub async fn embed_batch_with_options(
+    texts: &[String],
+    model: &str,
+    opts: EmbedBatchOptions,
+) -> Result<Vec<Vec<f32>>, String> {
     log::info!("[embed_batch] model={model} chunks={}", texts.len());
 
     let client = reqwest::Client::builder()
@@ -270,7 +304,9 @@ pub async fn embed_batch(texts: &[String], model: &str) -> Result<Vec<Vec<f32>>,
         return Ok(vec![v]);
     }
 
-    evict_other_models(&client, model).await;
+    if !opts.skip_ollama_entry_eviction {
+        evict_other_models(&client, model).await;
+    }
 
     // Split into API-sized batches up front. Sending thousands of inputs in one `/api/embed`
     // request can stall Ollama for minutes with no feedback (common for large EPUBs).
@@ -285,7 +321,17 @@ pub async fn embed_batch(texts: &[String], model: &str) -> Result<Vec<Vec<f32>>,
 
     let mut out: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
 
+    let started_at = std::time::Instant::now();
+    const MAX_SPLIT_OPS: u32 = 64;
+    const MAX_BATCH_DEGRADE_SECS: u64 = 180;
+    let mut split_ops: u32 = 0;
     while let Some((start, end)) = ranges.pop() {
+        if started_at.elapsed().as_secs() > MAX_BATCH_DEGRADE_SECS {
+            return Err(format!(
+                "Batch embedding exceeded degrade time budget ({}s)",
+                MAX_BATCH_DEGRADE_SECS
+            ));
+        }
         let slice = &texts[start..end];
         match embed_batch_once(&client, slice, model).await {
             Ok(embs) if embs.len() == slice.len() => {
@@ -317,7 +363,13 @@ pub async fn embed_batch(texts: &[String], model: &str) -> Result<Vec<Vec<f32>>,
                 } else {
                     let mid = start + (slice.len() / 2);
                     log::warn!("[embed_batch] splitting batch ({start}..{end}) after mismatch: {err}");
+                    split_ops = split_ops.saturating_add(1);
                     EMBED_BATCH_SPLIT_COUNT.fetch_add(1, Ordering::Relaxed);
+                    if split_ops > MAX_SPLIT_OPS {
+                        return Err(format!(
+                            "Batch embedding exceeded split budget (>{MAX_SPLIT_OPS})"
+                        ));
+                    }
                     ranges.push((mid, end));
                     ranges.push((start, mid));
                 }
@@ -330,7 +382,13 @@ pub async fn embed_batch(texts: &[String], model: &str) -> Result<Vec<Vec<f32>>,
                 } else {
                     let mid = start + (slice.len() / 2);
                     log::warn!("[embed_batch] splitting batch ({start}..{end}) after failure: {e}");
+                    split_ops = split_ops.saturating_add(1);
                     EMBED_BATCH_SPLIT_COUNT.fetch_add(1, Ordering::Relaxed);
+                    if split_ops > MAX_SPLIT_OPS {
+                        return Err(format!(
+                            "Batch embedding exceeded split budget (>{MAX_SPLIT_OPS})"
+                        ));
+                    }
                     ranges.push((mid, end));
                     ranges.push((start, mid));
                 }

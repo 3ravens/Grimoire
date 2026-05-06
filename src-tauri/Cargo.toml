@@ -20,6 +20,7 @@ tauri-build = { version = "2.5.6", features = [] }
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 log = "0.4"
 tauri = { version = "2.10.3", features = [] }
 tauri-plugin-log = "2"
@@ -48,6 +49,8 @@ pdf-extract = "0.7"
 zip = { version = "3", default-features = false, features = ["deflate"] }
 csv = "1.4.0"
 encoding_rs = "0.8.35"
+chardetng = "0.1"
+globset = "0.4"
 epub = "2.1.5"
 rtf-parser = "0.4.2"
 

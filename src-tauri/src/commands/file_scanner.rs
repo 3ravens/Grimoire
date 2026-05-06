@@ -21,10 +21,12 @@
 //! CSV uses row-aware blocks; EPUB respects spine chapters then sentence chunking; other prose
 //! formats use the same sentence-chunking pipeline as notes and embed into `scanned_files`.
 
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, State};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use crate::{AppError, AppResult};
@@ -39,14 +41,15 @@ use crate::chunking::{split_sentences, chunk_sentences};
 /// A scanned path row, returned to the frontend.
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct ScannedPath {
-    pub id:              i64,
-    pub path:            String,
-    pub kind:            String, // "file" | "folder"
-    pub added_at:        i64,
-    pub last_scanned_at: Option<i64>,
-    pub enabled:         bool,
-    pub file_count:      i64,
-    pub error_msg:       Option<String>,
+    pub id:               i64,
+    pub path:             String,
+    pub kind:             String, // "file" | "folder"
+    pub added_at:         i64,
+    pub last_scanned_at:  Option<i64>,
+    pub enabled:          bool,
+    pub file_count:       i64,
+    pub error_msg:        Option<String>,
+    pub exclude_patterns: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -75,22 +78,135 @@ fn mime_for_path(path: &std::path::Path) -> Option<&'static str> {
     }
 }
 
-/// Collect all indexable files under a path.
+/// Normalise `full` as a `/`-separated path relative to scan `root` (for glob matching).
+fn normalize_scan_rel(root: &Path, full: &Path, root_is_file: bool) -> String {
+    if root_is_file && root == full {
+        return root
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default()
+            .replace('\\', "/");
+    }
+    match full.strip_prefix(root) {
+        Ok(rel) => {
+            let mut s = rel.to_string_lossy().replace('\\', "/");
+            while s.starts_with('/') {
+                s.remove(0);
+            }
+            s
+        }
+        Err(_) => full.to_string_lossy().replace('\\', "/"),
+    }
+}
+
+fn path_excluded_by_globs(rel: &str, set: &GlobSet) -> bool {
+    if rel.is_empty() {
+        return false;
+    }
+    if set.is_match(rel) {
+        return true;
+    }
+    set.is_match(format!("{rel}/"))
+}
+
+/// Merge global + per-path newline-separated globs and compile a [`GlobSet`].
+fn merge_compile_exclude_globs(global: &str, per_path: &str) -> Result<Option<GlobSet>, String> {
+    let mut lines: Vec<String> = Vec::new();
+    for src in [global, per_path] {
+        for line in src.lines() {
+            let t = line.trim();
+            if !t.is_empty() && !t.starts_with('#') {
+                lines.push(t.to_string());
+            }
+        }
+    }
+    if lines.is_empty() {
+        return Ok(None);
+    }
+
+    let expand_pattern = |pattern: &str| -> Vec<String> {
+        // Gitignore-like convenience:
+        // - basename-only entries (no '/') should match at any depth.
+        // - plain directory names (e.g. "node_modules") should also exclude descendants.
+        let mut out = vec![pattern.to_string()];
+        let has_slash = pattern.contains('/');
+        let has_wild = pattern.contains('*') || pattern.contains('?') || pattern.contains('[');
+        if !has_slash {
+            out.push(format!("**/{pattern}"));
+            if !has_wild {
+                out.push(format!("{pattern}/**"));
+                out.push(format!("**/{pattern}/**"));
+            }
+        }
+        out
+    };
+
+    let mut builder = GlobSetBuilder::new();
+    for pattern in &lines {
+        for expanded in expand_pattern(pattern) {
+            let g = GlobBuilder::new(&expanded)
+                .build()
+                .map_err(|e| format!("Invalid glob '{pattern}': {e}"))?;
+            builder.add(g);
+        }
+    }
+    let set = builder
+        .build()
+        .map_err(|e| format!("Could not build glob set: {e}"))?;
+    Ok(Some(set))
+}
+
+async fn load_merge_exclude_globs(
+    pool: &SqlitePool,
+    path_id: i64,
+) -> Result<Option<GlobSet>, String> {
+    let global: String = sqlx::query_scalar(
+        "SELECT value FROM settings WHERE key = 'file_scanner_global_excludes'",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .flatten()
+    .unwrap_or_default();
+
+    let per_path: String = sqlx::query_scalar("SELECT exclude_patterns FROM scanned_paths WHERE id = ?")
+        .bind(path_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .unwrap_or_default();
+
+    merge_compile_exclude_globs(&global, &per_path)
+}
+
+/// Collect all indexable files under a path, honouring optional exclude globs.
 /// - For kind="file": returns [(path, mime)] if supported, else empty.
-/// - For kind="folder": walks recursively, skips unsupported extensions.
-fn collect_files(path: &str, kind: &str) -> Vec<(String, &'static str)> {
-    let p = std::path::Path::new(path);
+/// - For kind="folder": walks recursively, skips unsupported extensions and excluded paths.
+fn collect_files(
+    path: &str,
+    kind: &str,
+    excludes: Option<&GlobSet>,
+) -> Result<Vec<(String, &'static str)>, std::io::Error> {
+    let p = Path::new(path);
+    let root_is_file = kind == "file";
+
     if kind == "file" {
-        return if let Some(mime) = mime_for_path(p) {
-            vec![(path.to_string(), mime)]
+        return Ok(if let Some(mime) = mime_for_path(p) {
+            let rel = normalize_scan_rel(p, p, true);
+            if excludes.is_some_and(|set| path_excluded_by_globs(&rel, set)) {
+                vec![]
+            } else {
+                vec![(path.to_string(), mime)]
+            }
         } else {
             vec![]
-        };
+        });
     }
 
     // Folder: walk recursively.
     let mut files = Vec::new();
-    let Ok(entries) = walkdir_collect(p) else { return files };
+    let entries = walkdir_collect(p, excludes, root_is_file)?;
     for entry in entries {
         if let Some(mime) = mime_for_path(&entry) {
             if let Some(s) = entry.to_str() {
@@ -98,26 +214,44 @@ fn collect_files(path: &str, kind: &str) -> Vec<(String, &'static str)> {
             }
         }
     }
-    files
+    Ok(files)
 }
 
-/// Recursively collect all file paths under `root`, following symlinks.
-fn walkdir_collect(root: &std::path::Path) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
+/// Recursively collect file paths under `root`, pruning directories that match `excludes`.
+fn walkdir_collect(
+    root: &Path,
+    excludes: Option<&GlobSet>,
+    root_is_file: bool,
+) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
     let mut result = Vec::new();
-    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) -> std::io::Result<()> {
+    fn walk(
+        dir: &Path,
+        root: &Path,
+        excludes: Option<&GlobSet>,
+        root_is_file: bool,
+        out: &mut Vec<std::path::PathBuf>,
+    ) -> std::io::Result<()> {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let ft = entry.file_type()?;
             let path = entry.path();
             if ft.is_dir() {
-                walk(&path, out)?;
+                let rel = normalize_scan_rel(root, &path, root_is_file);
+                if excludes.is_some_and(|set| path_excluded_by_globs(&rel, set)) {
+                    continue;
+                }
+                walk(&path, root, excludes, root_is_file, out)?;
             } else if ft.is_file() || ft.is_symlink() {
+                let rel = normalize_scan_rel(root, &path, root_is_file);
+                if excludes.is_some_and(|set| path_excluded_by_globs(&rel, set)) {
+                    continue;
+                }
                 out.push(path);
             }
         }
         Ok(())
     }
-    walk(root, &mut result)?;
+    walk(root, root, excludes, root_is_file, &mut result)?;
     Ok(result)
 }
 
@@ -143,6 +277,9 @@ async fn embed_scanned_chunks_with_progress(
     doc_texts: &[String],
     model: &str,
     cancel: Option<&Arc<AtomicBool>>,
+    max_retries: i64,
+    permanently_skipped_files: i64,
+    permanently_skipped_chunks: &mut i64,
 ) -> Result<Vec<Vec<f32>>, String> {
     let chunks_total = doc_texts.len();
     let label = file_display_name(file_path);
@@ -158,35 +295,72 @@ async fn embed_scanned_chunks_with_progress(
         "chunks_total": chunks_total,
         "current_file": label,
         "done": false,
+        "permanently_skipped": permanently_skipped_files,
+        "permanently_skipped_chunks": *permanently_skipped_chunks,
         "error": null,
     }));
 
     let bs = crate::vector::batch_size_for_model(model).max(1);
+    let embed_bulk_opts = crate::vector::EmbedBatchOptions {
+        skip_ollama_entry_eviction: true,
+    };
+    crate::vector::evict_ollama_models_except(model).await;
     let mut embeddings: Vec<Vec<f32>> = Vec::with_capacity(chunks_total);
     let mut offset = 0usize;
+    let mut embed_batch_idx: u32 = 0;
 
     while offset < chunks_total {
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             return Err("Indexing cancelled".into());
         }
+        if embed_batch_idx > 0 && embed_batch_idx % 10 == 0 {
+            crate::vector::evict_ollama_models_except(model).await;
+        }
 
         let end = (offset + bs).min(chunks_total);
         let slice = &doc_texts[offset..end];
 
-        match crate::vector::embed_batch(slice, model).await {
+        let mk_cancel = || cancel.map(|c| (c, "Indexing cancelled".to_string()));
+
+        const EMBED_RETRY_MAX_DELAY_MS: u64 = 800;
+        match crate::retry::with_retries_background(
+            max_retries,
+            mk_cancel(),
+            EMBED_RETRY_MAX_DELAY_MS,
+            || async {
+                crate::vector::embed_batch_with_options(slice, model, embed_bulk_opts).await
+            },
+        )
+        .await
+        {
             Ok(part) if part.len() == slice.len() => {
                 embeddings.extend(part);
                 offset = end;
             }
+            Err(e) if e == "Indexing cancelled" => return Err(e),
             Ok(_) | Err(_) => {
                 for j in offset..end {
                     if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
                         return Err("Indexing cancelled".into());
                     }
-                    let emb =
-                        crate::vector::embed_with_keep_alive(&doc_texts[j], model, 300)
-                            .await
-                            .unwrap_or_default();
+                    let emb_result = crate::retry::with_retries_background(
+                        max_retries,
+                        mk_cancel(),
+                        EMBED_RETRY_MAX_DELAY_MS,
+                        || async {
+                            crate::vector::embed_with_keep_alive(&doc_texts[j], model, 300)
+                                .await
+                        },
+                    )
+                    .await;
+                    let emb = match emb_result {
+                        Ok(e) if !e.is_empty() => e,
+                        Err(e) if e == "Indexing cancelled" => return Err(e),
+                        Ok(_) | Err(_) => {
+                            *permanently_skipped_chunks += 1;
+                            Vec::new()
+                        }
+                    };
                     embeddings.push(emb);
                     let emit_every = if chunks_total > 256 { 48usize } else { 1usize };
                     let at_slice_end = j + 1 == end;
@@ -202,6 +376,8 @@ async fn embed_scanned_chunks_with_progress(
                             "chunks_total": chunks_total,
                             "current_file": label,
                             "done": false,
+                            "permanently_skipped": permanently_skipped_files,
+                            "permanently_skipped_chunks": *permanently_skipped_chunks,
                             "error": null,
                         }));
                     }
@@ -209,6 +385,8 @@ async fn embed_scanned_chunks_with_progress(
                 offset = end;
             }
         }
+
+        embed_batch_idx = embed_batch_idx.saturating_add(1);
 
         let _ = app.emit("filescanner:progress", serde_json::json!({
             "path_id": path_id,
@@ -221,6 +399,8 @@ async fn embed_scanned_chunks_with_progress(
             "chunks_total": chunks_total,
             "current_file": label,
             "done": false,
+            "permanently_skipped": permanently_skipped_files,
+            "permanently_skipped_chunks": *permanently_skipped_chunks,
             "error": null,
         }));
     }
@@ -245,11 +425,17 @@ async fn index_path(
     model: &str,
     cancel: Option<Arc<AtomicBool>>,
     incremental: bool,
+    max_retries: i64,
 ) -> AppResult<()> {
-    let files = collect_files(path, kind);
+    let exclude_set = load_merge_exclude_globs(pool, path_id)
+        .await
+        .map_err(|msg| AppError::InvalidInput(msg))?;
+    let files = collect_files(path, kind, exclude_set.as_ref())?;
     let total = files.len();
     let mut scanned = 0usize;
     let mut skipped = 0usize;
+    let mut permanently_skipped_files: i64 = 0;
+    let mut permanently_skipped_chunks: i64 = 0;
 
     let known_mtime: HashMap<String, i64> = if incremental {
         sqlx::query_as::<_, (String, Option<i64>)>(
@@ -278,6 +464,8 @@ async fn index_path(
         "chunks_total": 0,
         "current_file": serde_json::Value::Null,
         "done": false,
+        "permanently_skipped": permanently_skipped_files,
+        "permanently_skipped_chunks": permanently_skipped_chunks,
         "error": null,
     }));
 
@@ -298,6 +486,8 @@ async fn index_path(
             "chunks_total": 0,
             "current_file": serde_json::Value::Null,
             "done": false,
+            "permanently_skipped": permanently_skipped_files,
+            "permanently_skipped_chunks": permanently_skipped_chunks,
             "error": null,
         }));
 
@@ -332,6 +522,8 @@ async fn index_path(
             "chunks_total": 0,
             "current_file": file_display_name(file_path),
             "done": false,
+            "permanently_skipped": permanently_skipped_files,
+            "permanently_skipped_chunks": permanently_skipped_chunks,
             "error": null,
         }));
 
@@ -350,6 +542,8 @@ async fn index_path(
                     "chunks_total": 0,
                     "current_file": serde_json::Value::Null,
                     "done": false,
+                    "permanently_skipped": permanently_skipped_files,
+                    "permanently_skipped_chunks": permanently_skipped_chunks,
                     "error": format!("Could not read {file_path}: {e}"),
                 }));
                 continue;
@@ -391,6 +585,9 @@ async fn index_path(
             &doc_texts,
             model,
             cancel.as_ref(),
+            max_retries,
+            permanently_skipped_files,
+            &mut permanently_skipped_chunks,
         )
         .await
         {
@@ -412,6 +609,8 @@ async fn index_path(
             "chunks_total": embeddings.len(),
             "current_file": file_display_name(file_path),
             "done": false,
+            "permanently_skipped": permanently_skipped_files,
+            "permanently_skipped_chunks": permanently_skipped_chunks,
             "error": null,
         }));
 
@@ -437,21 +636,40 @@ async fn index_path(
         }
 
         // Upsert into LanceDB.
-        if let Err(e) = crate::vector::scanned_file_upsert_batch(vdb, file_path, chunks).await {
-            let _ = app.emit("filescanner:progress", serde_json::json!({
-                "path_id": path_id,
-                "visited": visited,
-                "scanned": scanned,
-                "skipped": skipped,
-                "total": total,
-                "phase": "idle",
-                "chunks_embedded": 0,
-                "chunks_total": 0,
-                "current_file": serde_json::Value::Null,
-                "done": false,
-                "error": format!("Failed to index {file_path}: {e}"),
-            }));
-            continue;
+        let chunks_for_lance = chunks.clone();
+        let upsert_result = crate::retry::with_retries(
+            max_retries,
+            cancel.as_ref().map(|c| (c, "Indexing cancelled".to_string())),
+            || async {
+                crate::vector::scanned_file_upsert_batch(vdb, file_path, chunks_for_lance.clone())
+                    .await
+            },
+        )
+        .await;
+        match upsert_result {
+            Ok(()) => {}
+            Err(e) if e == "Indexing cancelled" => {
+                return Err(AppError::InvalidInput("Indexing cancelled".to_string()));
+            }
+            Err(e) => {
+                permanently_skipped_files += 1;
+                let _ = app.emit("filescanner:progress", serde_json::json!({
+                    "path_id": path_id,
+                    "visited": visited,
+                    "scanned": scanned,
+                    "skipped": skipped,
+                    "total": total,
+                    "phase": "idle",
+                    "chunks_embedded": 0,
+                    "chunks_total": 0,
+                    "current_file": serde_json::Value::Null,
+                    "done": false,
+                    "permanently_skipped": permanently_skipped_files,
+                    "permanently_skipped_chunks": permanently_skipped_chunks,
+                    "error": format!("Failed to index {file_path}: {e}"),
+                }));
+                continue;
+            }
         }
 
         // Get file mtime.
@@ -495,8 +713,31 @@ async fn index_path(
             "chunks_total": 0,
             "current_file": serde_json::Value::Null,
             "done": false,
+            "permanently_skipped": permanently_skipped_files,
+            "permanently_skipped_chunks": permanently_skipped_chunks,
             "error": null,
         }));
+    }
+
+    // Drop index rows for paths that are no longer part of this scan (e.g. new exclude globs).
+    let allowed: std::collections::HashSet<String> =
+        files.iter().map(|(p, _)| p.clone()).collect();
+    let indexed_rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT file_path FROM scanned_files WHERE path_id = ?",
+    )
+    .bind(path_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    for (fp,) in indexed_rows {
+        if !allowed.contains(&fp) {
+            let _ = crate::vector::scanned_file_remove(vdb, &fp).await;
+            let _ = sqlx::query("DELETE FROM scanned_files WHERE file_path = ? AND path_id = ?")
+                .bind(&fp)
+                .bind(path_id)
+                .execute(pool)
+                .await;
+        }
     }
 
     // ── Stale file cleanup (incremental only) ──────────────────────────────
@@ -522,6 +763,8 @@ async fn index_path(
                 "chunks_total": 0,
                 "current_file": serde_json::Value::Null,
                 "done": false,
+                "permanently_skipped": permanently_skipped_files,
+                "permanently_skipped_chunks": permanently_skipped_chunks,
                 "error": null,
             }));
         }
@@ -558,7 +801,7 @@ async fn index_path(
     let _ = app.emit("filescanner:progress", serde_json::json!({
         "path_id": path_id,
         "visited": total,
-        "scanned": total,
+        "scanned": scanned,
         "skipped": skipped,
         "total": total,
         "phase": "done",
@@ -566,6 +809,8 @@ async fn index_path(
         "chunks_total": 0,
         "current_file": serde_json::Value::Null,
         "done": true,
+        "permanently_skipped": permanently_skipped_files,
+        "permanently_skipped_chunks": permanently_skipped_chunks,
         "error": null,
     }));
 
@@ -582,7 +827,7 @@ pub async fn get_scanned_paths(
     pool: State<'_, SqlitePool>,
 ) -> AppResult<Vec<ScannedPath>> {
     sqlx::query_as::<_, ScannedPath>(
-        "SELECT id, path, kind, added_at, last_scanned_at, enabled, file_count, error_msg
+        "SELECT id, path, kind, added_at, last_scanned_at, enabled, file_count, error_msg, exclude_patterns
          FROM scanned_paths ORDER BY added_at DESC",
     )
     .fetch_all(pool.inner())
@@ -604,6 +849,7 @@ pub async fn add_scanned_path(
     config: State<'_, SharedConfig>,
     path: String,
     kind: String,
+    exclude_patterns: Option<String>,
 ) -> AppResult<ScannedPath> {
     if kind != "file" && kind != "folder" {
         return Err(AppError::InvalidInput(format!("Invalid kind '{kind}': must be 'file' or 'folder'")));
@@ -642,14 +888,17 @@ pub async fn add_scanned_path(
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
 
+    let excl = exclude_patterns.unwrap_or_default();
+
     let id = sqlx::query_scalar::<_, i64>(
-        "INSERT INTO scanned_paths (path, kind, added_at, enabled, file_count)
-         VALUES (?, ?, ?, 1, 0)
+        "INSERT INTO scanned_paths (path, kind, added_at, enabled, file_count, exclude_patterns)
+         VALUES (?, ?, ?, 1, 0, ?)
          RETURNING id",
     )
     .bind(&path)
     .bind(&kind)
     .bind(now)
+    .bind(&excl)
     .fetch_one(pool.inner())
     .await
     .map_err(|e| {
@@ -668,6 +917,7 @@ pub async fn add_scanned_path(
     let kind_clone = kind.clone();
     let cancel_map_clone = cancel_map.0.clone();
     let model_clone = config.read().unwrap().embedding_model.clone();
+    let max_retries = config.read().unwrap().background_max_retries;
     let pool_err   = pool.inner().clone();
 
     let cancel = Arc::new(AtomicBool::new(false));
@@ -677,7 +927,7 @@ pub async fn add_scanned_path(
     }
 
     tauri::async_runtime::spawn(async move {
-        let result = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path_clone, &kind_clone, &model_clone, Some(cancel), false).await;
+        let result = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path_clone, &kind_clone, &model_clone, Some(cancel), false, max_retries).await;
 
         if let Ok(mut map) = cancel_map_clone.lock() {
             map.remove(&id);
@@ -700,6 +950,8 @@ pub async fn add_scanned_path(
                     "skipped": 0,
                     "total": 0,
                     "done": true,
+                    "permanently_skipped": 0,
+                    "permanently_skipped_chunks": 0,
                     "error": null,
                 }));
 
@@ -722,6 +974,8 @@ pub async fn add_scanned_path(
                 "skipped": 0,
                 "total": 0,
                 "done": true,
+                "permanently_skipped": 0,
+                "permanently_skipped_chunks": 0,
                 "error": e_str,
             }));
         }
@@ -729,13 +983,118 @@ pub async fn add_scanned_path(
 
     // Return the newly created row immediately (indexing runs async).
     sqlx::query_as::<_, ScannedPath>(
-        "SELECT id, path, kind, added_at, last_scanned_at, enabled, file_count, error_msg
+        "SELECT id, path, kind, added_at, last_scanned_at, enabled, file_count, error_msg, exclude_patterns
          FROM scanned_paths WHERE id = ?",
     )
     .bind(id)
     .fetch_one(pool.inner())
     .await
     .map_err(Into::into)
+}
+
+/// Persist per-path newline-separated exclude globs (no automatic rescan).
+#[tauri::command]
+pub async fn update_scanned_path_excludes(
+    pool: State<'_, SqlitePool>,
+    id: i64,
+    patterns: String,
+) -> AppResult<()> {
+    let n = sqlx::query("UPDATE scanned_paths SET exclude_patterns = ? WHERE id = ?")
+        .bind(&patterns)
+        .bind(id)
+        .execute(pool.inner())
+        .await?
+        .rows_affected();
+    if n == 0 {
+        return Err(AppError::NotFound(format!("Scanned path {id} not found")));
+    }
+    Ok(())
+}
+
+/// Per-row staleness summary for the file scanner settings UI.
+#[derive(Debug, Serialize)]
+pub struct ScannedPathStaleSummary {
+    pub path_id: i64,
+    pub root_missing: bool,
+    pub missing_files: i64,
+}
+
+#[tauri::command]
+pub async fn get_scanned_path_stale_summary(
+    pool: State<'_, SqlitePool>,
+) -> AppResult<Vec<ScannedPathStaleSummary>> {
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT id, path FROM scanned_paths ORDER BY id",
+    )
+    .fetch_all(pool.inner())
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for (path_id, root_path) in rows {
+        let root = Path::new(&root_path);
+        let root_missing = !root.exists();
+        let missing_files = if root_missing {
+            0i64
+        } else {
+            let files: Vec<(String,)> = sqlx::query_as(
+                "SELECT file_path FROM scanned_files WHERE path_id = ?",
+            )
+            .bind(path_id)
+            .fetch_all(pool.inner())
+            .await
+            .unwrap_or_default();
+            files
+                .iter()
+                .filter(|(fp,)| !Path::new(fp).exists())
+                .count() as i64
+        };
+        out.push(ScannedPathStaleSummary {
+            path_id,
+            root_missing,
+            missing_files,
+        });
+    }
+    Ok(out)
+}
+
+/// Remove indexed rows whose files no longer exist on disk for one scanned path.
+#[tauri::command]
+pub async fn clear_stale_scanned_files(
+    pool: State<'_, SqlitePool>,
+    vdb: State<'_, VectorDb>,
+    id: i64,
+) -> AppResult<i64> {
+    let exists: Option<i64> = sqlx::query_scalar("SELECT id FROM scanned_paths WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool.inner())
+        .await?;
+    if exists.is_none() {
+        return Err(AppError::NotFound(format!("Scanned path {id} not found")));
+    }
+
+    let stale_rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT file_path FROM scanned_files WHERE path_id = ?",
+    )
+    .bind(id)
+    .fetch_all(pool.inner())
+    .await
+    .unwrap_or_default();
+
+    let mut removed: i64 = 0;
+    for (file_path,) in stale_rows {
+        if Path::new(&file_path).exists() {
+            continue;
+        }
+        let _ = crate::vector::scanned_file_remove(&vdb.0, &file_path).await;
+        let r = sqlx::query("DELETE FROM scanned_files WHERE file_path = ? AND path_id = ?")
+            .bind(&file_path)
+            .bind(id)
+            .execute(pool.inner())
+            .await?;
+        removed += r.rows_affected() as i64;
+    }
+
+    Ok(removed)
 }
 
 /// Remove a scanned path and all its indexed data.
@@ -829,6 +1188,7 @@ pub async fn rescan_path(
     let vdb_clone  = vdb.0.clone();
     let cancel_map_clone = cancel_map.0.clone();
     let model_clone = config.read().unwrap().embedding_model.clone();
+    let max_retries = config.read().unwrap().background_max_retries;
     let pool_err   = pool.inner().clone();
     let incremental = !full_rescan.unwrap_or(false);
 
@@ -839,7 +1199,7 @@ pub async fn rescan_path(
     }
 
     tauri::async_runtime::spawn(async move {
-        let result = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path, &kind, &model_clone, Some(cancel), incremental).await;
+        let result = index_path(&app_clone, &pool_clone, &vdb_clone, id, &path, &kind, &model_clone, Some(cancel), incremental, max_retries).await;
 
         if let Ok(mut map) = cancel_map_clone.lock() {
             map.remove(&id);
@@ -861,6 +1221,8 @@ pub async fn rescan_path(
                     "scanned": 0,
                     "total": 0,
                     "done": true,
+                    "permanently_skipped": 0,
+                    "permanently_skipped_chunks": 0,
                     "error": null,
                 }));
 
@@ -881,6 +1243,8 @@ pub async fn rescan_path(
                 "scanned": 0,
                 "total": 0,
                 "done": true,
+                "permanently_skipped": 0,
+                "permanently_skipped_chunks": 0,
                 "error": e_str,
             }));
         }

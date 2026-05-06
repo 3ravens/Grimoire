@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "captured_at": "2026-05-05T00:00:00Z",
+  "notes": "Fields below (except version, captured_at, notes, degrade_thresholds) must match the JSON from Run indexing benchmark / benchmark_wikipedia_indexing. Replace values after a stable reference run on your machine.",
+  "degrade_thresholds": {
+    "total_ms_pct": 15.0,
+    "entries_per_sec_pct": -15.0,
+    "accepted_per_sec_pct": -15.0,
+    "embedded_per_sec_pct": -15.0
+  },
+  "model": "mxbai-embed-large",
+  "total_entries_in_zim": 388,
+  "benchmark_entries": 388,
+  "scanned_entries": 388,
+  "accepted_articles": 143,
+  "embedded_articles": 143,
+  "windows": 1,
+  "total_ms": 20058,
+  "read_ms": 7,
+  "parse_ms": 45,
+  "embed_ms": 20005,
+  "entries_per_sec": 19.343902682221557,
+  "accepted_per_sec": 7.129324957622893,
+  "embedded_per_sec": 7.129324957622893
+}

@@ -17,6 +17,8 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
 <script>
   import { invoke } from '@tauri-apps/api/core';
+  import { save } from '@tauri-apps/plugin-dialog';
+  import { onMount } from 'svelte';
   import ConfirmModal from './ConfirmModal.svelte';
 
   // ---------------------------------------------------------------------------
@@ -33,6 +35,8 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   let searchQuery = $state('');  // debounced version of searchInput
   let loading     = $state(false);
   let showClear   = $state(false);
+  /** Last export status message */
+  let exportStatus = $state('');
 
   let debounceTimer;
 
@@ -78,6 +82,12 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     return () => clearInterval(interval);
   });
 
+  onMount(() => {
+    const onPruned = () => load();
+    window.addEventListener('grimoire:audit-pruned', onPruned);
+    return () => window.removeEventListener('grimoire:audit-pruned', onPruned);
+  });
+
   // Debounce the raw search input by 300 ms.
   function onSearchInput(e) {
     searchInput = e.target.value;
@@ -102,6 +112,38 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     showClear = false;
     page      = 1;
     load();
+  }
+
+  async function exportAudit(format) {
+    exportStatus = '';
+    try {
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const ext = format === 'csv' ? 'csv' : 'json';
+      const path = await save({
+        title: 'Export audit log',
+        defaultPath: `grimoire-audit-${dateStr}.${ext}`,
+        filters: [
+          format === 'csv'
+            ? { name: 'CSV', extensions: ['csv'] }
+            : { name: 'JSON', extensions: ['json'] },
+        ],
+      });
+      if (!path) return;
+      const result = await invoke('export_audit_log', {
+        format,
+        actionFilter: filter,
+        search: searchQuery || null,
+        destPath: path,
+      });
+      const skipped = result?.skipped_locked ?? result?.skippedLocked ?? 0;
+      const exported = result?.exported ?? 0;
+      exportStatus =
+        skipped > 0
+          ? `Exported ${exported} entr${exported === 1 ? 'y' : 'ies'}. Skipped ${skipped} locked-folder note row${skipped === 1 ? '' : 's'}.`
+          : `Exported ${exported} entr${exported === 1 ? 'y' : 'ies'}.`;
+    } catch (e) {
+      exportStatus = `Export failed: ${e?.message ?? e}`;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -166,10 +208,32 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       aria-label="Search audit log"
     />
 
+    <button
+      type="button"
+      class="export-btn"
+      onclick={() => exportAudit('csv')}
+      disabled={loading || totalCount === 0}
+      title="Export all rows matching the current filter as CSV"
+    >
+      Export CSV
+    </button>
+    <button
+      type="button"
+      class="export-btn"
+      onclick={() => exportAudit('json')}
+      disabled={loading || totalCount === 0}
+      title="Export all rows matching the current filter as JSON"
+    >
+      Export JSON
+    </button>
     <button class="clear-btn" onclick={() => (showClear = true)} disabled={totalCount === 0}>
       Clear log
     </button>
   </div>
+
+  {#if exportStatus}
+    <p class="export-status">{exportStatus}</p>
+  {/if}
 
   <!-- Table -->
   {#if loading && entries.length === 0}
@@ -259,6 +323,34 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   .search-input {
     flex: 1;
     min-width: 0;
+  }
+
+  .export-btn {
+    height: 28px;
+    padding: 0 10px;
+    font: 13px var(--sans);
+    color: var(--text);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .export-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--text-h);
+  }
+
+  .export-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  .export-status {
+    margin: 0;
+    font: 12px var(--sans);
+    color: var(--text-muted);
   }
 
   .clear-btn {

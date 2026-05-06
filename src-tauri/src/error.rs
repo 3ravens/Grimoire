@@ -24,7 +24,7 @@ use std::fmt;
 use serde::Serialize;
 
 /// All failure categories that can be returned by a Tauri command.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", content = "message")]
 pub enum AppError {
     /// SQLite query or connection failure.

@@ -13,6 +13,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
+use chardetng::EncodingDetector;
 use epub::doc::{EpubDoc, NavPoint};
 use roxmltree::Node;
 use scraper::{Html, Selector};
@@ -48,8 +49,9 @@ pub fn extract(path: &Path) -> AppResult<ScanExtract> {
         .map(|s| s.to_ascii_lowercase());
 
     match ext.as_deref() {
-        Some("txt") | Some("md") => Ok(ScanExtract::FullText(read_utf8(path)?)),
-        Some("log") => Ok(ScanExtract::FullText(read_log_with_fallback(path)?)),
+        Some("txt") | Some("md") | Some("log") => {
+            Ok(ScanExtract::FullText(read_text_auto_detect(path)?))
+        }
         Some("pdf") => pdf_to_scan_extract(path),
         Some("csv") => extract_csv(path),
         Some("html") | Some("htm") => Ok(ScanExtract::FullText(html_file_to_structured(path)?)),
@@ -63,23 +65,42 @@ pub fn extract(path: &Path) -> AppResult<ScanExtract> {
     }
 }
 
-fn read_utf8(path: &Path) -> AppResult<String> {
-    std::fs::read_to_string(path).map_err(Into::into)
+/// Read a text file with BOM sniff (UTF-8 / UTF-16), then `chardetng`, then UTF-8 lossy fallback
+/// when the detected decode yields only whitespace but bytes are non-empty.
+pub fn read_text_auto_detect(path: &Path) -> AppResult<String> {
+    let bytes = std::fs::read(path)?;
+    Ok(decode_bytes_auto_detect(&bytes))
 }
 
-/// UTF-8 first; if invalid, try Windows-1252 (minimal fallback for `.log` only).
-/// `encoding_rs` does not expose ISO-8859-1 (see Encoding Standard); CP1252 is the usual Windows log fallback.
-fn read_log_with_fallback(path: &Path) -> AppResult<String> {
-    let bytes = std::fs::read(path)?;
-    if let Ok(s) = std::str::from_utf8(&bytes) {
-        return Ok(s.to_string());
+fn decode_bytes_auto_detect(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
     }
-    let cow = encoding_rs::WINDOWS_1252.decode(&bytes).0;
+    // UTF-8 BOM
+    if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
+        let (cow, _, _) = encoding_rs::UTF_8.decode(&bytes[3..]);
+        return cow.into_owned();
+    }
+    // UTF-16 LE BOM
+    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+        let (cow, _, _) = encoding_rs::UTF_16LE.decode(&bytes[2..]);
+        return cow.into_owned();
+    }
+    // UTF-16 BE BOM
+    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+        let (cow, _, _) = encoding_rs::UTF_16BE.decode(&bytes[2..]);
+        return cow.into_owned();
+    }
+
+    let mut detector = EncodingDetector::new();
+    detector.feed(bytes, true);
+    let enc = detector.guess(None, true);
+    let (cow, _, _) = enc.decode(bytes);
     let s = cow.into_owned();
-    if !s.trim().is_empty() {
-        return Ok(s);
+    if s.trim().is_empty() && !bytes.is_empty() {
+        return String::from_utf8_lossy(bytes).into_owned();
     }
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    s
 }
 
 fn pdf_to_scan_extract(path: &Path) -> AppResult<ScanExtract> {
@@ -94,7 +115,9 @@ fn pdf_to_scan_extract(path: &Path) -> AppResult<ScanExtract> {
 }
 
 fn extract_csv(path: &Path) -> AppResult<ScanExtract> {
-    let mut rdr = csv::Reader::from_path(path).map_err(|e| AppError::Io(e.to_string()))?;
+    let bytes = std::fs::read(path)?;
+    let decoded = decode_bytes_auto_detect(&bytes);
+    let mut rdr = csv::Reader::from_reader(decoded.as_bytes());
     let mut rows: Vec<String> = Vec::new();
     for result in rdr.records() {
         let record = result.map_err(|e| AppError::Io(e.to_string()))?;
@@ -217,8 +240,7 @@ fn collect_descendant_text(node: Node<'_, '_>) -> String {
 }
 
 fn html_file_to_structured(path: &Path) -> AppResult<String> {
-    let bytes = std::fs::read(path)?;
-    let raw = String::from_utf8_lossy(&bytes).into_owned();
+    let raw = read_text_auto_detect(path)?;
     Ok(html_to_structured_plain(&raw))
 }
 
@@ -345,8 +367,7 @@ fn extract_epub(path: &Path) -> AppResult<ScanExtract> {
 }
 
 fn extract_rtf(path: &Path) -> AppResult<String> {
-    let bytes = std::fs::read(path)?;
-    let rtf_str = String::from_utf8_lossy(&bytes).into_owned();
+    let rtf_str = read_text_auto_detect(path)?;
     let document = rtf_parser::RtfDocument::try_from(rtf_str)
         .map_err(|e| AppError::Io(format!("RTF: {e}")))?;
     let text = document.get_text();

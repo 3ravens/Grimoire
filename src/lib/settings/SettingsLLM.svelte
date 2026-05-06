@@ -12,7 +12,10 @@
   let initialEmbeddingModel = $state('nomic-embed-text'); // model the current index was built with
   let reindexStatus   = $state(''); // '', 'clearing', 'reindexing', 'done', 'error'
   let reindexError    = $state('');
-  let reindexProgress = $state({ indexed: 0, processed: 0, total: 0 });
+  let reindexSummaryText = $state('');
+  let reindexProgress = $state({ indexed: 0, processed: 0, total: 0, permanently_skipped: 0 });
+  /** Retries for transient embed / vector-store failures in background tasks (0–10). */
+  let backgroundMaxRetries = $state(2);
   let chatTemperature = $state(0.8);
   let chatTopP        = $state(0.9);
   let chatTopK        = $state(40);
@@ -21,7 +24,7 @@
   let verbosity       = $state('concise');
 
   onMount(async () => {
-    const [model, embed, temp, top_p, top_k, repeat, ctx, verb] = await Promise.all([
+    const [model, embed, temp, top_p, top_k, repeat, ctx, verb, maxRetries] = await Promise.all([
       invoke('get_setting', { key: 'chat_model' }),
       invoke('get_setting', { key: 'embedding_model' }),
       invoke('get_setting', { key: 'chat_temperature' }),
@@ -30,6 +33,7 @@
       invoke('get_setting', { key: 'chat_repeat_penalty' }),
       invoke('get_setting', { key: 'chat_num_ctx' }),
       invoke('get_setting', { key: 'chat_verbosity' }),
+      invoke('get_setting', { key: 'background_max_retries' }),
     ]);
 
     if (model)  chatModel       = model;
@@ -40,6 +44,10 @@
     if (repeat) chatRepeatPenalty = parseFloat(repeat);
     if (ctx)    chatNumCtx      = parseInt(ctx, 10);
     if (verb)   verbosity       = verb;
+    if (maxRetries !== null && maxRetries !== undefined && maxRetries !== '') {
+      const n = parseInt(String(maxRetries), 10);
+      if (!Number.isNaN(n)) backgroundMaxRetries = Math.min(10, Math.max(0, n));
+    }
   });
 
   function save(key, value) {
@@ -49,7 +57,8 @@
   async function clearAndReindex() {
     reindexStatus = 'clearing';
     reindexError = '';
-    reindexProgress = { indexed: 0, processed: 0, total: 0 };
+    reindexSummaryText = '';
+    reindexProgress = { indexed: 0, processed: 0, total: 0, permanently_skipped: 0 };
     let unlisten = null;
     try {
       await Promise.all([
@@ -59,9 +68,15 @@
       ]);
       reindexStatus = 'reindexing';
       unlisten = await listen('reindex:progress', (ev) => {
-        reindexProgress = ev.payload;
+        const pl = ev.payload;
+        reindexProgress = {
+          indexed: pl.indexed ?? 0,
+          processed: pl.processed ?? 0,
+          total: pl.total ?? 0,
+          permanently_skipped: pl.permanently_skipped ?? 0,
+        };
       });
-      await invoke('reindex_all');
+      reindexSummaryText = await invoke('reindex_all');
       initialEmbeddingModel = embeddingModel;
       reindexStatus = 'done';
     } catch (e) {
@@ -137,16 +152,43 @@
       <p class="reindex-msg">Clearing all indexes…</p>
     {:else if reindexStatus === 'reindexing'}
       {@const pct = reindexProgress.total > 0 ? Math.round((reindexProgress.processed / reindexProgress.total) * 100) : 0}
-      <p class="reindex-msg">Re-indexing notes with {embeddingModel}… {reindexProgress.processed}/{reindexProgress.total} ({pct}%)</p>
+      {@const sk = reindexProgress.permanently_skipped ?? 0}
+      <p class="reindex-msg">
+        Re-indexing notes with {embeddingModel}… {reindexProgress.processed}/{reindexProgress.total} ({pct}%){sk > 0 ? ` · ${sk} skipped after retries` : ''}
+      </p>
       <div class="reindex-bar-track"><div class="reindex-bar-fill" style="width: {pct}%"></div></div>
     {:else if reindexStatus === 'done'}
-      <p class="reindex-msg reindex-done">Notes re-indexed. Wikipedia and file scanner indexes were cleared — re-index them from their respective settings panels.</p>
+      <p class="reindex-msg reindex-done">
+        {reindexSummaryText || 'Notes re-indexed.'}{' '}
+        Wikipedia and file scanner indexes were cleared — re-index them from their respective settings panels.
+      </p>
     {:else if reindexStatus === 'error'}
       <p class="reindex-msg reindex-error">Re-index failed: {reindexError}</p>
       <button class="settings-action-btn reindex-btn" onclick={clearAndReindex}>Retry</button>
     {/if}
   </div>
 {/if}
+
+<h4 class="settings-subsection">Reliability</h4>
+
+<div class="setting-row">
+  <div class="setting-label">
+    <span class="setting-name">Background retries</span>
+    <span class="setting-desc">
+      Retry transient failures (embedding / vector store) up to this many times before skipping, for Wikipedia indexing,
+      file scanner, and note re-index. 0 means no retry.
+    </span>
+  </div>
+  <input
+    type="number"
+    class="setting-num"
+    bind:value={backgroundMaxRetries}
+    min="0"
+    max="10"
+    step="1"
+    onchange={() => save('background_max_retries', Math.min(10, Math.max(0, parseInt(String(backgroundMaxRetries), 10) || 0)))}
+  />
+</div>
 
 <h4 class="settings-subsection">Inference parameters</h4>
 

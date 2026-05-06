@@ -59,6 +59,35 @@ async fn read_bool_setting(pool: &SqlitePool, key: &str, default: bool) -> bool 
         .unwrap_or(default)
 }
 
+async fn read_i64_setting(pool: &SqlitePool, key: &str, default: i64) -> i64 {
+    sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ? LIMIT 1")
+        .bind(key)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+/// Delete audit rows older than the configured retention window.
+/// Called at startup; errors are ignored so logging never blocks boot.
+pub async fn prune_if_configured(pool: &SqlitePool) {
+    let days = read_i64_setting(pool, "audit_retention_days", 0).await;
+    if days <= 0 {
+        return;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let cutoff = now.saturating_sub(days.saturating_mul(86400));
+    let _ = sqlx::query("DELETE FROM audit_log WHERE created_at < ?")
+        .bind(cutoff)
+        .execute(pool)
+        .await;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------

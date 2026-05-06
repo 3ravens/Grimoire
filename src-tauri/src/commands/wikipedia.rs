@@ -30,15 +30,16 @@
 //! only outbound network call. Downloads go to a user-specified local path.
 
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
+use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use tauri::{AppHandle, Emitter, State};
 use tauri::Manager;
 use futures::StreamExt;
 use rayon::prelude::*;
 use std::io::Write;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use crate::{AppError, AppResult};
 use crate::config::SharedConfig;
@@ -54,6 +55,7 @@ fn wiki_rrf_score(rank: usize) -> f64 {
 }
 
 /// Best-effort: populate FTS rows for one indexing window (same articles as phase 2).
+/// Uses one SQLite transaction per call so inserts stay bounded and predictable.
 async fn wiki_fts_insert_articles_batch(
     pool: &SqlitePool,
     bundle_id: &str,
@@ -65,22 +67,21 @@ async fn wiki_fts_insert_articles_batch(
     let Ok(mut tx) = pool.begin().await else {
         return;
     };
-    for (_, article_id, title, content) in articles {
+    let mut qb = QueryBuilder::<Sqlite>::new(
+        "INSERT INTO wikipedia_articles_fts(article_id, bundle_id, article_path, title, content) ",
+    );
+    qb.push_values(articles.iter(), |mut b, (_, article_id, title, content)| {
         let article_path = article_id
             .strip_prefix(bundle_id)
             .and_then(|s| s.strip_prefix('/'))
             .unwrap_or(article_id.as_str());
-        let _ = sqlx::query(
-            "INSERT INTO wikipedia_articles_fts(article_id, bundle_id, article_path, title, content) VALUES (?,?,?,?,?)",
-        )
-        .bind(article_id)
-        .bind(bundle_id)
-        .bind(article_path)
-        .bind(title)
-        .bind(content)
-        .execute(&mut *tx)
-        .await;
-    }
+        b.push_bind(article_id)
+            .push_bind(bundle_id)
+            .push_bind(article_path)
+            .push_bind(title)
+            .push_bind(content);
+    });
+    let _ = qb.build().execute(&mut *tx).await;
     let _ = tx.commit().await;
 }
 
@@ -95,23 +96,89 @@ async fn wiki_fts_backfill_chunk(
     let Ok(mut tx) = pool.begin().await else {
         return;
     };
-    for (article_id, title, content) in rows {
+    let mut qb = QueryBuilder::<Sqlite>::new(
+        "INSERT INTO wikipedia_articles_fts(article_id, bundle_id, article_path, title, content) ",
+    );
+    qb.push_values(rows.into_iter(), |mut b, (article_id, title, content)| {
         let article_path = article_id
             .strip_prefix(bundle_id)
             .and_then(|s| s.strip_prefix('/'))
-            .unwrap_or(article_id.as_str());
-        let _ = sqlx::query(
-            "INSERT INTO wikipedia_articles_fts(article_id, bundle_id, article_path, title, content) VALUES (?,?,?,?,?)",
-        )
-        .bind(&article_id)
-        .bind(bundle_id)
-        .bind(article_path)
-        .bind(&title)
-        .bind(&content)
-        .execute(&mut *tx)
-        .await;
-    }
+            .unwrap_or(article_id.as_str())
+            .to_string();
+        b.push_bind(article_id)
+            .push_bind(bundle_id)
+            .push_bind(article_path)
+            .push_bind(title)
+            .push_bind(content);
+    });
+    let _ = qb.build().execute(&mut *tx).await;
     let _ = tx.commit().await;
+}
+
+async fn wiki_append_with_salvage(
+    conn: &lancedb::Connection,
+    rows: Vec<(String, String, String, String, Vec<f32>)>,
+    max_retries: i64,
+    cancel: &Arc<std::sync::atomic::AtomicBool>,
+    lance_retry_extra_out: &mut u32,
+) -> Result<(i64, i64), AppError> {
+    if rows.is_empty() {
+        return Ok((0, 0));
+    }
+    const MIN_SPLIT_BATCH: usize = 64;
+    const LANCE_RETRY_MAX_DELAY_MS: u64 = 800;
+    let mut indexed: i64 = 0;
+    let mut skipped: i64 = 0;
+    let mut queue = vec![rows];
+    while let Some(batch) = queue.pop() {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(AppError::InvalidInput("Indexing cancelled".to_string()));
+        }
+        let batch_len = batch.len();
+        let append_result = crate::retry::with_retries_counting_background(
+            max_retries,
+            Some((
+                cancel,
+                AppError::InvalidInput("Indexing cancelled".to_string()),
+            )),
+            LANCE_RETRY_MAX_DELAY_MS,
+            || {
+                let b = batch.clone();
+                async move {
+                    crate::vector::wikipedia_append_batch(conn, b).await.map_err(|e| {
+                        AppError::VectorStore(format!("Failed to append wikipedia window batch: {e}"))
+                    })
+                }
+            },
+        )
+        .await;
+        match append_result {
+            Ok(((), attempt)) => {
+                *lance_retry_extra_out += attempt.saturating_sub(1);
+                indexed += batch_len as i64;
+            }
+            Err(AppError::InvalidInput(m)) if m == "Indexing cancelled" => {
+                return Err(AppError::InvalidInput(m));
+            }
+            Err(e) => {
+                if batch_len >= MIN_SPLIT_BATCH {
+                    let mid = batch_len / 2;
+                    let left = batch[..mid].to_vec();
+                    let right = batch[mid..].to_vec();
+                    queue.push(right);
+                    queue.push(left);
+                } else {
+                    log::warn!(
+                        "wikipedia_append_batch failed after retries ({} articles): {}",
+                        batch_len,
+                        e
+                    );
+                    skipped += batch_len as i64;
+                }
+            }
+        }
+    }
+    Ok((indexed, skipped))
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -949,9 +1016,12 @@ pub async fn index_wikipedia_bundle(
     };
     let cancel_clone = cancel.clone();
 
+    let max_retries = config.read().unwrap().background_max_retries;
+    let permanently_skipped_arc = Arc::new(AtomicI64::new(0));
+    let permanently_skipped_inner = permanently_skipped_arc.clone();
+
     let result: AppResult<()> = tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Handle::current();
-
         use zim_rs::archive::Archive;
         let archive = Archive::new(&zim_path)
             .map_err(|_| AppError::Io(format!("Failed to open ZIM file: {zim_path}")))?;
@@ -974,6 +1044,11 @@ pub async fn index_wikipedia_bundle(
         ?;
 
         let model = embedding_model;
+        let embed_bulk_opts = crate::vector::EmbedBatchOptions {
+            skip_ollama_entry_eviction: true,
+        };
+
+        rt.block_on(crate::vector::evict_ollama_models_except(&model));
 
         let mut indexed = base_indexed;
         let mut last_checkpoint_idx = start_entry;
@@ -989,9 +1064,12 @@ pub async fn index_wikipedia_bundle(
         // window so we use smaller batches and shorter input texts to avoid
         // Ollama returning HTTP 400 (truncate=true in vector.rs is a safety
         // net, but pre-truncating here avoids wasted tokens entirely).
-        let batch_size: usize = crate::vector::batch_size_for_model(&model);
+        let base_batch_size: usize = crate::vector::batch_size_for_model(&model).max(8);
         let content_chars: usize = crate::vector::content_chars_for_model(&model);
         const SCAN_WINDOW: usize = 1024; // ZIM entries read per iteration
+        // Re-check Ollama for competing models every N completed windows; bulk embed
+        // skips per-batch eviction (see EmbedBatchOptions::skip_ollama_entry_eviction).
+        const WIKI_INDEX_OLLAMA_EVICT_EVERY_WINDOWS: u64 = 10;
 
         let mut window_idx: u64 = 0;
         let mut total_read_ms: u128 = 0;
@@ -1004,6 +1082,9 @@ pub async fn index_wikipedia_bundle(
         while scan_pos < total_entries {
             if cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
                 return Err(AppError::InvalidInput("Indexing cancelled".to_string()));
+            }
+            if window_idx > 0 && window_idx % WIKI_INDEX_OLLAMA_EVICT_EVERY_WINDOWS == 0 {
+                rt.block_on(crate::vector::evict_ollama_models_except(&model));
             }
             let window_end = (scan_pos + SCAN_WINDOW as u32).min(total_entries);
 
@@ -1053,7 +1134,8 @@ pub async fn index_wikipedia_bundle(
                         }
                     }
                     let text = html_to_text(&String::from_utf8_lossy(&html_bytes));
-                    if text.chars().count() < 200 { return None; }
+                    let content: String = text.chars().take(content_chars).collect();
+                    if content.chars().count() < 200 { return None; }
                     // Skip disambiguation pages. Wikipedia marks them with
                     // "(disambiguation)" in the title / path. Do NOT check body
                     // text for the word "disambiguation" — nearly every real article
@@ -1065,17 +1147,6 @@ pub async fn index_wikipedia_bundle(
                     {
                         return None;
                     }
-                    // "may refer to:" is the opening line of disambiguation pages.
-                    // Only check the first ~300 bytes to avoid false positives in
-                    // article body prose. Walk back from byte 300 to the nearest
-                    // char boundary so multi-byte characters (e.g. en-dash) don't panic.
-                    let cap = 300.min(text.len());
-                    let head_end = (0..=cap).rev().find(|&i| text.is_char_boundary(i)).unwrap_or(0);
-                    let text_head = &text[..head_end];
-                    if text_head.contains("may refer to:") {
-                        return None;
-                    }
-                    let content: String = text.chars().take(content_chars).collect();
                     Some((idx, format!("{bundle_id_clone}/{path}"), title, content))
                 })
                 .collect();
@@ -1088,13 +1159,20 @@ pub async fn index_wikipedia_bundle(
             ));
 
             // ── Phase 3 + 4: embed in batches, then bulk-upsert to LanceDB ──────
+            let (split_win_t0, single_win_t0) = crate::vector::snapshot_embed_batch_telemetry();
             let mut embed_ms: u128 = 0;
             let mut upsert_ms: u128 = 0;
             let mut batch_count: u64 = 0;
+            let mut window_embed_retries_extra: u32 = 0;
+            let mut window_lance_retries_extra: u32 = 0;
             let mut window_upsert_batch: Vec<(String, String, String, String, Vec<f32>)> = Vec::new();
             let mut window_indexed_delta: i64 = 0;
             let mut window_last_checkpoint_idx: u32 = last_checkpoint_idx;
-            for chunk in articles.chunks(batch_size) {
+            let mut dynamic_batch_size = base_batch_size;
+            let mut batch_cursor = 0usize;
+            while batch_cursor < articles.len() {
+                let chunk_end = (batch_cursor + dynamic_batch_size).min(articles.len());
+                let chunk = &articles[batch_cursor..chunk_end];
                 batch_count += 1;
                 let doc_texts: Vec<String> =
                     chunk
@@ -1102,17 +1180,79 @@ pub async fn index_wikipedia_bundle(
                         .map(|(_, _, title, content)| format!("search_document: {title}\n{content}"))
                         .collect();
                 let phase_embed_t0 = Instant::now();
-                let embeddings =
-                    match rt.block_on(crate::vector::embed_batch(&doc_texts, &model)) {
-                        Ok(e) => e,
-                        Err(_) => chunk.iter()
-                            .map(|(_, _, title, content)| {
-                                let doc_text = format!("search_document: {title}\n{content}");
-                                rt.block_on(crate::vector::embed(&doc_text, &model)).unwrap_or_default()
-                            })
-                            .collect(),
-                    };
+                let (splits_before, singles_before) = crate::vector::snapshot_embed_batch_telemetry();
+                const EMBED_RETRY_MAX_DELAY_MS: u64 = 800;
+                let embeddings: Vec<Vec<f32>> = match rt.block_on(
+                    crate::retry::with_retries_counting_background(
+                        max_retries,
+                        Some((
+                            &cancel_clone,
+                            AppError::InvalidInput("Indexing cancelled".to_string()),
+                        )),
+                        EMBED_RETRY_MAX_DELAY_MS,
+                        || async {
+                            crate::vector::embed_batch_with_options(
+                                &doc_texts,
+                                &model,
+                                embed_bulk_opts,
+                            )
+                            .await
+                            .map_err(AppError::EmbeddingFailed)
+                        },
+                    ),
+                ) {
+                    Ok((embs, attempt)) => {
+                        window_embed_retries_extra += attempt.saturating_sub(1);
+                        embs
+                    }
+                    Err(AppError::InvalidInput(m)) if m == "Indexing cancelled" => {
+                        return Err(AppError::InvalidInput(m));
+                    }
+                    Err(_) => {
+                        let mut out = Vec::with_capacity(chunk.len());
+                        for (_, _, title, content) in chunk.iter() {
+                            if cancel_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                                return Err(AppError::InvalidInput("Indexing cancelled".to_string()));
+                            }
+                            let doc_text = format!("search_document: {title}\n{content}");
+                            match rt.block_on(crate::retry::with_retries_counting_background(
+                                max_retries,
+                                Some((
+                                    &cancel_clone,
+                                    AppError::InvalidInput("Indexing cancelled".to_string()),
+                                )),
+                                EMBED_RETRY_MAX_DELAY_MS,
+                                || async {
+                                    crate::vector::embed_with_keep_alive(&doc_text, &model, 300)
+                                        .await
+                                        .map_err(AppError::EmbeddingFailed)
+                                },
+                            )) {
+                                Ok((v, attempt)) => {
+                                    window_embed_retries_extra += attempt.saturating_sub(1);
+                                    if v.is_empty() {
+                                        permanently_skipped_inner.fetch_add(1, Ordering::Relaxed);
+                                        out.push(Vec::new());
+                                    } else {
+                                        out.push(v);
+                                    }
+                                }
+                                Err(AppError::InvalidInput(m)) if m == "Indexing cancelled" => {
+                                    return Err(AppError::InvalidInput(m));
+                                }
+                                Err(_) => {
+                                    permanently_skipped_inner.fetch_add(1, Ordering::Relaxed);
+                                    out.push(Vec::new());
+                                }
+                            }
+                        }
+                        out
+                    }
+                };
                 embed_ms += phase_embed_t0.elapsed().as_millis();
+                let (splits_after, singles_after) = crate::vector::snapshot_embed_batch_telemetry();
+                let split_delta = splits_after.saturating_sub(splits_before);
+                let single_delta = singles_after.saturating_sub(singles_before);
 
                 // Collect the valid articles as a single batch for LanceDB.
                 let phase_upsert_t0 = Instant::now();
@@ -1129,15 +1269,50 @@ pub async fn index_wikipedia_bundle(
                 window_indexed_delta += upsert_batch.len() as i64;
                 window_upsert_batch.extend(upsert_batch);
                 upsert_ms += phase_upsert_t0.elapsed().as_millis();
+                if split_delta > 0 || single_delta > 0 {
+                    dynamic_batch_size = (dynamic_batch_size / 2).max(8);
+                } else if dynamic_batch_size < base_batch_size {
+                    dynamic_batch_size = (dynamic_batch_size + 8).min(base_batch_size);
+                } else {
+                    dynamic_batch_size = (dynamic_batch_size + 8).min(128);
+                }
+                batch_cursor = chunk_end;
             }
+
+            let (split_win_t1, single_win_t1) = crate::vector::snapshot_embed_batch_telemetry();
+            let window_split_delta =
+                split_win_t1.saturating_sub(split_win_t0);
+            let window_single_fallback_delta =
+                single_win_t1.saturating_sub(single_win_t0);
 
             if !window_upsert_batch.is_empty() {
                 let phase_upsert_write_t0 = Instant::now();
-                rt.block_on(crate::vector::wikipedia_append_batch(&vdb_conn, window_upsert_batch))
-                    .map_err(|e| AppError::VectorStore(format!("Failed to append wikipedia window batch: {e}")))?;
-                indexed += window_indexed_delta;
-                last_checkpoint_idx = window_last_checkpoint_idx;
+                let append_result = rt.block_on(wiki_append_with_salvage(
+                    &vdb_conn,
+                    window_upsert_batch,
+                    max_retries,
+                    &cancel_clone,
+                    &mut window_lance_retries_extra,
+                ));
                 upsert_ms += phase_upsert_write_t0.elapsed().as_millis();
+
+                match append_result {
+                    Ok((indexed_ok, skipped)) => {
+                        indexed += indexed_ok;
+                        if skipped > 0 {
+                            permanently_skipped_inner.fetch_add(skipped, Ordering::Relaxed);
+                        }
+                        last_checkpoint_idx = window_last_checkpoint_idx;
+                    }
+                    Err(AppError::InvalidInput(m)) if m == "Indexing cancelled" => {
+                        return Err(AppError::InvalidInput(m));
+                    }
+                    Err(e) => {
+                        log::warn!("wikipedia_append_with_salvage failed: {}", e);
+                        permanently_skipped_inner.fetch_add(window_indexed_delta, Ordering::Relaxed);
+                        last_checkpoint_idx = window_last_checkpoint_idx;
+                    }
+                }
             }
 
             // ── Checkpoint + progress at each window boundary ──────────────────
@@ -1156,25 +1331,35 @@ pub async fn index_wikipedia_bundle(
 
             let phase_emit_t0 = Instant::now();
             let (batch_splits, single_fallbacks) = crate::vector::snapshot_embed_batch_telemetry();
-            let _ = app_clone.emit("wikipedia:index-progress", serde_json::json!({
+            let mut payload = serde_json::json!({
                 "bundle_id": bundle_id_clone,
                 "indexed": indexed,
                 "scanned": window_end,
                 "total": total_entries,
                 "article_count": article_count,
+                "permanently_skipped": permanently_skipped_inner.load(Ordering::Relaxed),
                 "batch_splits": batch_splits,
                 "single_fallbacks": single_fallbacks,
-                "timings_ms": {
+                "done": false,
+                "error": null,
+            });
+            if perf_logging_enabled {
+                payload["timings_ms"] = serde_json::json!({
                     "read": read_ms,
                     "parse": parse_ms,
                     "embed": embed_ms,
                     "upsert": upsert_ms,
                     "checkpoint": checkpoint_ms,
-                },
-                "batch_count": batch_count,
-                "done": false,
-                "error": null,
-            }));
+                });
+                payload["batch_count"] = serde_json::json!(batch_count);
+                payload["last_window_articles"] = serde_json::json!(articles.len());
+                payload["last_window_embed_ms"] = serde_json::json!(embed_ms);
+                payload["last_window_embed_retries_extra"] = serde_json::json!(window_embed_retries_extra);
+                payload["last_window_lance_retries_extra"] = serde_json::json!(window_lance_retries_extra);
+                payload["last_window_split_delta"] = serde_json::json!(window_split_delta);
+                payload["last_window_single_fallback_delta"] = serde_json::json!(window_single_fallback_delta);
+            }
+            let _ = app_clone.emit("wikipedia:index-progress", payload);
             let emit_ms = phase_emit_t0.elapsed().as_millis();
             let checkpoint_emit_ms = checkpoint_ms + emit_ms;
 
@@ -1192,7 +1377,8 @@ pub async fn index_wikipedia_bundle(
                 let avg_upsert = total_upsert_ms as f64 / window_idx as f64;
                 let avg_checkpoint_emit = total_checkpoint_emit_ms as f64 / window_idx as f64;
                 log::info!(
-                    "[wiki_index_perf] bundle={} windows={} avg_ms read={:.1} parse={:.1} embed={:.1} upsert={:.1} checkpoint_emit={:.1}",
+                    "[wiki_index_perf] bundle={} windows={} avg_ms read={:.1} parse={:.1} embed={:.1} upsert={:.1} checkpoint_emit={:.1} \
+                     last_win_embed_ms={} last_win_articles={} last_win_batches={} embed_retries_x={} lance_retries_x={} split_d={} single_fb_d={}",
                     bundle_id_clone,
                     window_idx,
                     avg_read,
@@ -1200,6 +1386,13 @@ pub async fn index_wikipedia_bundle(
                     avg_embed,
                     avg_upsert,
                     avg_checkpoint_emit,
+                    embed_ms,
+                    articles.len(),
+                    batch_count,
+                    window_embed_retries_extra,
+                    window_lance_retries_extra,
+                    window_split_delta,
+                    window_single_fallback_delta,
                 );
 
                 if let Some(path) = perf_log_path.as_ref() {
@@ -1213,7 +1406,8 @@ pub async fn index_wikipedia_bundle(
                     {
                         let _ = writeln!(
                             file,
-                            "[wiki_index_perf] bundle={} windows={} avg_ms read={:.1} parse={:.1} embed={:.1} upsert={:.1} checkpoint_emit={:.1}",
+                            "[wiki_index_perf] bundle={} windows={} avg_ms read={:.1} parse={:.1} embed={:.1} upsert={:.1} checkpoint_emit={:.1} \
+                             last_win_embed_ms={} last_win_articles={} last_win_batches={} embed_retries_x={} lance_retries_x={} split_d={} single_fb_d={}",
                             bundle_id_clone,
                             window_idx,
                             avg_read,
@@ -1221,6 +1415,13 @@ pub async fn index_wikipedia_bundle(
                             avg_embed,
                             avg_upsert,
                             avg_checkpoint_emit,
+                            embed_ms,
+                            articles.len(),
+                            batch_count,
+                            window_embed_retries_extra,
+                            window_lance_retries_extra,
+                            window_split_delta,
+                            window_single_fallback_delta,
                         );
                     }
                 }
@@ -1265,6 +1466,7 @@ pub async fn index_wikipedia_bundle(
                 "bundle_id": bundle_id,
                 "batch_splits": batch_splits,
                 "single_fallbacks": single_fallbacks,
+                "permanently_skipped": permanently_skipped_arc.load(Ordering::Relaxed),
                 "done": true,
                 "error": null,
             }));
@@ -1288,6 +1490,7 @@ pub async fn index_wikipedia_bundle(
                     "bundle_id": bundle_id,
                     "batch_splits": batch_splits,
                     "single_fallbacks": single_fallbacks,
+                    "permanently_skipped": permanently_skipped_arc.load(Ordering::Relaxed),
                     "done": true,
                     "error": null,
                 }));
@@ -1305,6 +1508,7 @@ pub async fn index_wikipedia_bundle(
                     "bundle_id": bundle_id,
                     "batch_splits": batch_splits,
                     "single_fallbacks": single_fallbacks,
+                    "permanently_skipped": permanently_skipped_arc.load(Ordering::Relaxed),
                     "done": true,
                     "error": e.to_string(),
                 }));
@@ -2022,6 +2226,319 @@ pub async fn test_zim_parse(zim_path: String) -> AppResult<serde_json::Value> {
     let result = tokio::task::spawn_blocking(move || run_zim_poc(&zim_path))
         .await
         .map_err(|e| AppError::Io(format!("Task panicked: {e}")))??;
+    Ok(result)
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Deserialize)]
+pub struct WikiEvalCase {
+    pub query: String,
+    pub expected_article_ids: Vec<String>,
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Serialize)]
+pub struct WikiEvalSummary {
+    pub total_cases: usize,
+    pub recall_at_k: f64,
+    pub mrr_at_k: f64,
+    pub hits_at_k: usize,
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Serialize)]
+pub struct WikiEvalCaseResult {
+    pub query: String,
+    pub hit: bool,
+    pub reciprocal_rank: f64,
+    pub matched_article_id: Option<String>,
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Serialize)]
+pub struct WikiIndexBenchmarkResult {
+    pub model: String,
+    pub total_entries_in_zim: u32,
+    pub benchmark_entries: u32,
+    pub scanned_entries: u32,
+    pub accepted_articles: u32,
+    pub embedded_articles: u32,
+    pub windows: u32,
+    pub total_ms: u128,
+    pub read_ms: u128,
+    pub parse_ms: u128,
+    pub embed_ms: u128,
+    pub entries_per_sec: f64,
+    pub accepted_per_sec: f64,
+    pub embedded_per_sec: f64,
+}
+
+/// Benchmark helper for developer mode:
+/// evaluates wikipedia retrieval quality on a fixed query set using Recall@K and MRR@K.
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub async fn benchmark_wikipedia_quality(
+    pool: State<'_, SqlitePool>,
+    vdb: State<'_, crate::vector::VectorDb>,
+    config: State<'_, SharedConfig>,
+    cases: Vec<WikiEvalCase>,
+    k: Option<usize>,
+) -> AppResult<serde_json::Value> {
+    let k = k.unwrap_or(5).clamp(1, 20);
+    let mut hits = 0usize;
+    let mut mrr_sum = 0.0f64;
+    let mut per_case: Vec<WikiEvalCaseResult> = Vec::with_capacity(cases.len());
+
+    for case in cases {
+        let query = case.query.trim().to_string();
+        if query.is_empty() {
+            per_case.push(WikiEvalCaseResult {
+                query: case.query,
+                hit: false,
+                reciprocal_rank: 0.0,
+                matched_article_id: None,
+            });
+            continue;
+        }
+        let expected: HashSet<String> = case.expected_article_ids.into_iter().collect();
+        if expected.is_empty() {
+            per_case.push(WikiEvalCaseResult {
+                query: case.query,
+                hit: false,
+                reciprocal_rank: 0.0,
+                matched_article_id: None,
+            });
+            continue;
+        }
+
+        let fts_fut = wiki_fts_search_inner(pool.inner(), &query, 40);
+        let sem_fut = async {
+            let model = config.read().unwrap().embedding_model.clone();
+            match super::rag::embed_query(&query, &model).await {
+                Ok(emb) => crate::vector::wikipedia_search(&vdb.0, emb, 40)
+                    .await
+                    .unwrap_or_default(),
+                Err(_) => vec![],
+            }
+        };
+        let (fts_rows, semantic) = tokio::join!(fts_fut, sem_fut);
+        let fts_rows = fts_rows.unwrap_or_default();
+
+        let mut scores: HashMap<String, f64> = HashMap::new();
+        for (rank, r) in fts_rows.iter().enumerate() {
+            *scores.entry(r.article_id.clone()).or_insert(0.0) += wiki_rrf_score(rank + 1);
+        }
+        for (rank, r) in semantic.iter().enumerate() {
+            *scores.entry(r.article_id.clone()).or_insert(0.0) += wiki_rrf_score(rank + 1);
+        }
+        let mut ranked: Vec<(String, f64)> = scores.into_iter().collect();
+        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        ranked.truncate(k);
+
+        let mut hit = false;
+        let mut reciprocal_rank = 0.0;
+        let mut matched_article_id: Option<String> = None;
+        for (idx, (article_id, _)) in ranked.iter().enumerate() {
+            if expected.contains(article_id) {
+                hit = true;
+                reciprocal_rank = 1.0 / (idx + 1) as f64;
+                matched_article_id = Some(article_id.clone());
+                break;
+            }
+        }
+        if hit {
+            hits += 1;
+            mrr_sum += reciprocal_rank;
+        }
+        per_case.push(WikiEvalCaseResult {
+            query: case.query,
+            hit,
+            reciprocal_rank,
+            matched_article_id,
+        });
+    }
+
+    let total = per_case.len().max(1);
+    let summary = WikiEvalSummary {
+        total_cases: per_case.len(),
+        recall_at_k: hits as f64 / total as f64,
+        mrr_at_k: mrr_sum / total as f64,
+        hits_at_k: hits,
+    };
+    Ok(serde_json::json!({
+        "summary": summary,
+        "cases": per_case,
+        "k": k
+    }))
+}
+
+/// Developer benchmark helper for indexing performance regression checks.
+///
+/// Runs a bounded wikipedia indexing simulation (read + parse + embed) over a local
+/// ZIM file without writing to SQLite/LanceDB. Use this to snapshot a stable
+/// baseline and detect performance regressions after feature changes.
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub async fn benchmark_wikipedia_indexing(
+    config: State<'_, SharedConfig>,
+    zim_path: String,
+    max_entries: Option<u32>,
+) -> AppResult<WikiIndexBenchmarkResult> {
+    let embedding_model = config.read().unwrap().embedding_model.clone();
+    let scan_budget = max_entries.unwrap_or(20_000).max(1);
+    let model_for_task = embedding_model.clone();
+    let path_for_task = zim_path.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        use zim_rs::archive::Archive;
+
+        let rt = tokio::runtime::Handle::current();
+        let archive = Archive::new(&path_for_task)
+            .map_err(|_| AppError::Io(format!("Failed to open ZIM file: {path_for_task}")))?;
+
+        let total_entries = archive.get_all_entrycount();
+        let limit = total_entries.min(scan_budget);
+        let batch_size: usize = crate::vector::batch_size_for_model(&model_for_task).max(8);
+        let content_chars: usize = crate::vector::content_chars_for_model(&model_for_task);
+        const SCAN_WINDOW: usize = 1024;
+
+        let mut scan_pos: u32 = 0;
+        let mut windows: u32 = 0;
+        let mut scanned_entries: u32 = 0;
+        let mut accepted_articles: u32 = 0;
+        let mut embedded_articles: u32 = 0;
+        let mut total_read_ms: u128 = 0;
+        let mut total_parse_ms: u128 = 0;
+        let mut total_embed_ms: u128 = 0;
+        let total_t0 = Instant::now();
+
+        let embed_bulk_opts = crate::vector::EmbedBatchOptions {
+            skip_ollama_entry_eviction: true,
+        };
+        rt.block_on(crate::vector::evict_ollama_models_except(&model_for_task));
+
+        while scan_pos < limit {
+            if windows > 0 && windows % 10 == 0 {
+                rt.block_on(crate::vector::evict_ollama_models_except(&model_for_task));
+            }
+            let window_end = (scan_pos + SCAN_WINDOW as u32).min(limit);
+            let window_len = window_end - scan_pos;
+            scanned_entries = scanned_entries.saturating_add(window_len);
+
+            let phase_read_t0 = Instant::now();
+            let raw: Vec<(String, String, Vec<u8>)> = (scan_pos..window_end)
+                .filter_map(|idx| {
+                    let entry = archive.get_entry_bypath_index(idx).ok()?;
+                    if entry.is_redirect() {
+                        return None;
+                    }
+                    let item = entry.get_item(false).ok()?;
+                    if !item.get_mimetype().unwrap_or_default().starts_with("text/html") {
+                        return None;
+                    }
+                    let html = item.get_data().ok()?.data().to_vec();
+                    Some((entry.get_path(), entry.get_title(), html))
+                })
+                .collect();
+            total_read_ms += phase_read_t0.elapsed().as_millis();
+
+            let phase_parse_t0 = Instant::now();
+            let articles: Vec<(String, String)> = raw
+                .into_par_iter()
+                .filter_map(|(path, title, html_bytes)| {
+                    let path_lower = path.to_lowercase();
+                    if (path.starts_with('.') && !path.starts_with("./"))
+                        || path.starts_with("-/")
+                        || path_lower.contains("mediawiki:")
+                        || path_lower.contains("module:")
+                        || path_lower.contains("template:")
+                        || path_lower.contains("wikipedia:")
+                        || path_lower.contains("file:")
+                    {
+                        return None;
+                    }
+                    if html_bytes.len() < 800 {
+                        let s = String::from_utf8_lossy(&html_bytes).to_lowercase();
+                        if s.contains("http-equiv") && s.contains("refresh") {
+                            return None;
+                        }
+                    }
+                    let text = html_to_text(&String::from_utf8_lossy(&html_bytes));
+                    let content: String = text.chars().take(content_chars).collect();
+                    if content.chars().count() < 200 {
+                        return None;
+                    }
+                    let title_lower = title.to_lowercase();
+                    if title_lower.ends_with("(disambiguation)")
+                        || path_lower.contains("_(disambiguation)")
+                    {
+                        return None;
+                    }
+                    Some((title, content))
+                })
+                .collect();
+            total_parse_ms += phase_parse_t0.elapsed().as_millis();
+
+            accepted_articles = accepted_articles.saturating_add(articles.len() as u32);
+
+            let phase_embed_t0 = Instant::now();
+            for chunk in articles.chunks(batch_size) {
+                let doc_texts: Vec<String> = chunk
+                    .iter()
+                    .map(|(title, content)| format!("search_document: {title}\n{content}"))
+                    .collect();
+                let n = match rt.block_on(crate::vector::embed_batch_with_options(
+                    &doc_texts,
+                    &model_for_task,
+                    embed_bulk_opts,
+                )) {
+                    Ok(v) => v.into_iter().filter(|e| !e.is_empty()).count(),
+                    Err(_) => {
+                        let mut ok = 0usize;
+                        for t in &doc_texts {
+                            if let Ok(v) = rt.block_on(crate::vector::embed_with_keep_alive(
+                                t,
+                                &model_for_task,
+                                300,
+                            )) {
+                                if !v.is_empty() {
+                                    ok += 1;
+                                }
+                            }
+                        }
+                        ok
+                    }
+                };
+                embedded_articles = embedded_articles.saturating_add(n as u32);
+            }
+            total_embed_ms += phase_embed_t0.elapsed().as_millis();
+
+            windows = windows.saturating_add(1);
+            scan_pos = window_end;
+        }
+
+        let total_ms = total_t0.elapsed().as_millis();
+        let total_secs = (total_ms as f64 / 1000.0).max(0.001);
+        Ok::<WikiIndexBenchmarkResult, AppError>(WikiIndexBenchmarkResult {
+            model: model_for_task,
+            total_entries_in_zim: total_entries,
+            benchmark_entries: limit,
+            scanned_entries,
+            accepted_articles,
+            embedded_articles,
+            windows,
+            total_ms,
+            read_ms: total_read_ms,
+            parse_ms: total_parse_ms,
+            embed_ms: total_embed_ms,
+            entries_per_sec: scanned_entries as f64 / total_secs,
+            accepted_per_sec: accepted_articles as f64 / total_secs,
+            embedded_per_sec: embedded_articles as f64 / total_secs,
+        })
+    })
+    .await
+    .map_err(|e| AppError::Io(format!("Task panicked: {e}")))??;
+
     Ok(result)
 }
 

@@ -22,6 +22,20 @@ npm install
 npm run tauri dev
 ```
 
+## Benchmark Baseline (Wikipedia Indexing)
+
+- In **dev builds**, open Settings → **Developer**. Enter a ZIM path, optional max entries cap, then **Run indexing benchmark**. Use **Copy result JSON** to save the run.
+- Or call the debug command `benchmark_wikipedia_indexing` from code with the same parameters.
+- **Baseline file** [`benchmarks/wikipedia_index_baseline.json`](benchmarks/wikipedia_index_baseline.json) uses **schema v2**: one JSON object with `version`, `captured_at`, `notes`, `degrade_thresholds`, plus **the same fields** as the benchmark output (`model`, `total_entries_in_zim`, `benchmark_entries`, `scanned_entries`, `accepted_articles`, `embedded_articles`, `windows`, `total_ms`, `read_ms`, `parse_ms`, `embed_ms`, `entries_per_sec`, `accepted_per_sec`, `embedded_per_sec`). Optionally wrap a pasted benchmark under `"benchmark": { ... }` instead of merging into the root.
+- Compare current vs baseline (`--verbose` prints every field):
+
+```bash
+python scripts/compare_wiki_benchmark.py --current path/to/current_benchmark.json
+python scripts/compare_wiki_benchmark.py --current path/to/current_benchmark.json --verbose
+```
+
+- The script exits with code `1` when configured regression thresholds are exceeded.
+
 ## Some notes
 Project is in early stages.
 Not accepting contributions yet.

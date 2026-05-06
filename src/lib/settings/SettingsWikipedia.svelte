@@ -77,6 +77,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         scanned,
         total,
         article_count,
+        permanently_skipped,
         batch_splits,
         single_fallbacks,
         done,
@@ -95,6 +96,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
           scanned: scanned ?? 0,
           total: total ?? 0,
           article_count: article_count ?? null,
+          permanently_skipped: permanently_skipped ?? 0,
           batch_splits: batch_splits ?? 0,
           single_fallbacks: single_fallbacks ?? 0,
           done: !!done,
@@ -170,11 +172,24 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     return `${s}s`;
   }
 
+  /**
+   * Linear indexing progress is driven by the ZIM scan (scanned / total entries).
+   * Article embed count lags behind that because many ZIM paths are skipped
+   * (redirects, non-HTML, templates, short stubs, …). ETA uses scan rate, so
+   * % and the bar must use the same basis or they disagree near the end.
+   */
+  function scanProgressFraction(p) {
+    const t = p?.total ?? 0;
+    const s = p?.scanned ?? 0;
+    if (t <= 0) return null;
+    return Math.max(0, Math.min(1, s / t));
+  }
+
   function stateLabel(bundle) {
     const p = progress[bundle.id];
     if (p && !p.done) {
-      const totalArticles = p.article_count || bundle.article_count || 0;
-      const pct = totalArticles > 0 ? `${Math.floor((p.indexed / totalArticles) * 100)}%` : '';
+      const frac = scanProgressFraction(p);
+      const pct = frac != null ? `${Math.floor(frac * 100)}%` : '';
 
       let etaPart = '';
       const start = indexingStarts[bundle.id];
@@ -188,13 +203,24 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         }
       }
 
-      const pctPart = pct ? `${pct}` : '';
-      const indexedPart = totalArticles > 0
-        ? ` · ${p.indexed.toLocaleString()} of ${totalArticles.toLocaleString()} articles indexed`
-        : ` · ${p.indexed.toLocaleString()} articles embedded`;
-      return `Indexing… ${pctPart}${indexedPart}${etaPart}`;
+      const entriesPart =
+        p.total > 0
+          ? ` · ${(p.scanned ?? 0).toLocaleString()} / ${p.total.toLocaleString()} ZIM entries`
+          : '';
+      // Article total in the bundle header is catalogue metadata; embedded count
+      // can differ (filters, skips). Show live embedded count only here.
+      const articlesPart = ` · ${(p.indexed ?? 0).toLocaleString()} articles embedded`;
+      const pctSeg = pct ? ` ${pct}` : '';
+      return `Indexing…${pctSeg}${articlesPart}${entriesPart}${etaPart}`;
     }
-    if (bundle.indexing_state === 'done') return 'Indexed';
+    if (bundle.indexing_state === 'done') {
+      const p = progress[bundle.id];
+      const skipped = p?.permanently_skipped ?? 0;
+      if (p?.done && skipped > 0) {
+        return `Indexed (${skipped} items skipped after retries)`;
+      }
+      return 'Indexed';
+    }
     if (bundle.indexing_state === 'error') return 'Error';
     if (bundle.indexing_state === 'indexing') return 'Indexing…';
     return 'Not indexed';
@@ -217,12 +243,13 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   function progressBarPercent(bundle) {
     const p = progress[bundle.id];
     if (!p) return 0;
+    const frac = scanProgressFraction(p);
+    if (frac != null) {
+      return frac * 100;
+    }
     const totalArticles = p.article_count || bundle.article_count || 0;
     if (totalArticles > 0) {
       return ((p.indexed ?? 0) / totalArticles) * 100;
-    }
-    if ((p.total ?? 0) > 0) {
-      return ((p.scanned ?? 0) / p.total) * 100;
     }
     return 0;
   }

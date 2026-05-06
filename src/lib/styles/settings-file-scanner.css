@@ -43,6 +43,115 @@
   color: var(--text-muted);
 }
 
+/* ── Global excludes ─────────────────────────────────────────────────────── */
+
+.fs-global-excludes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+}
+
+.fs-collapse-toggle {
+  align-self: flex-start;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: var(--sans);
+  color: var(--text);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.fs-collapse-toggle:hover {
+  color: var(--text-h);
+  border-color: var(--accent);
+}
+
+.fs-subheading {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.fs-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.fs-hint code {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg3);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.fs-exclude-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 72px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+}
+
+.fs-excludes-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+.fs-excludes-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.fs-stale-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.fs-stale-badge.fs-stale-root {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg2));
+}
+
+.fs-stale-root-msg {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.fs-remove-emphasis {
+  font-weight: 700;
+  border-width: 2px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent);
+}
+
 .fs-add-buttons {
   display: flex;
   gap: 8px;

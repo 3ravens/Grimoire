@@ -23,8 +23,21 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
   // ── State ────────────────────────────────────────────────────────────────
 
-  // ScannedPath shape: { id, path, kind, added_at, last_scanned_at, enabled, file_count, error_msg }
+  // ScannedPath shape: { id, path, kind, added_at, last_scanned_at, enabled, file_count, error_msg, exclude_patterns }
   let paths = $state([]);
+
+  /** Global newline-separated globs (settings key `file_scanner_global_excludes`). */
+  let globalExcludes = $state('');
+  let showGlobalExcludes = $state(false);
+
+  /** `path_id` → { root_missing, missing_files } */
+  let staleById = $state({});
+
+  /** Which path row has the per-path excludes editor open (id or null). */
+  let showExcludesFor = $state(null);
+
+  /** Draft text while editing excludes per path (keyed by id). */
+  let excludeDraft = $state({});
 
   // progress[path_id] — scanning state including chunk-level embedding progress (EPUBs, large files).
   let progress = $state({});
@@ -48,6 +61,8 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
   onMount(async () => {
     await loadPaths();
+    await loadGlobalExcludes();
+    await loadStaleSummary();
 
     unlisten = await listen('filescanner:progress', (ev) => {
       const payload = ev.payload;
@@ -73,6 +88,12 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         next.chunks_total = payload.chunks_total;
       }
       if (payload.current_file !== undefined) next.current_file = payload.current_file;
+      if (payload.permanently_skipped !== undefined && payload.permanently_skipped !== null) {
+        next.permanently_skipped = payload.permanently_skipped;
+      }
+      if (payload.permanently_skipped_chunks !== undefined && payload.permanently_skipped_chunks !== null) {
+        next.permanently_skipped_chunks = payload.permanently_skipped_chunks;
+      }
 
       const ct = payload.chunks_total ?? next.chunks_total ?? 0;
       if (ct === 0) {
@@ -99,6 +120,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         delete es[path_id];
         embedStarts = es;
         loadPaths();
+        loadStaleSummary();
       }
     });
   });
@@ -111,6 +133,61 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
   async function loadPaths() {
     paths = await invoke('get_scanned_paths').catch(() => []);
+  }
+
+  async function loadGlobalExcludes() {
+    globalExcludes =
+      (await invoke('get_setting', { key: 'file_scanner_global_excludes' }).catch(() => '')) || '';
+  }
+
+  async function saveGlobalExcludes() {
+    try {
+      await invoke('set_setting', { key: 'file_scanner_global_excludes', value: globalExcludes });
+    } catch (e) {
+      alert(`Could not save global excludes: ${e?.message ?? e}`);
+    }
+  }
+
+  async function loadStaleSummary() {
+    const rows = await invoke('get_scanned_path_stale_summary').catch(() => []);
+    const m = {};
+    for (const r of rows) {
+      m[r.path_id] = { root_missing: !!r.root_missing, missing_files: r.missing_files ?? 0 };
+    }
+    staleById = m;
+  }
+
+  function toggleExcludesEditor(p) {
+    if (showExcludesFor === p.id) {
+      showExcludesFor = null;
+    } else {
+      excludeDraft = { ...excludeDraft, [p.id]: p.exclude_patterns ?? '' };
+      showExcludesFor = p.id;
+    }
+  }
+
+  async function savePathExcludes(id) {
+    const patterns = excludeDraft[id] ?? '';
+    try {
+      await invoke('update_scanned_path_excludes', { id, patterns });
+      showExcludesFor = null;
+      await loadPaths();
+    } catch (e) {
+      alert(`Could not save excludes: ${e?.message ?? e}`);
+    }
+  }
+
+  async function clearStaleFiles(id) {
+    try {
+      const n = await invoke('clear_stale_scanned_files', { id });
+      await loadPaths();
+      await loadStaleSummary();
+      if (n > 0) {
+        alert(`Removed ${n} missing file${n === 1 ? '' : 's'} from the index.`);
+      }
+    } catch (e) {
+      alert(`Clean up failed: ${e?.message ?? e}`);
+    }
   }
 
   async function addFile() {
@@ -166,6 +243,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       const next = { ...progress };
       delete next[id];
       progress = next;
+      await loadStaleSummary();
     } catch (e) {
       console.error('[remove_scanned_path]', e);
       alert(`Could not remove path: ${e?.message ?? e}`);
@@ -382,6 +460,29 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     </div>
   </div>
 
+  <div class="fs-global-excludes">
+    <button
+      type="button"
+      class="fs-collapse-toggle"
+      onclick={() => (showGlobalExcludes = !showGlobalExcludes)}
+      aria-expanded={showGlobalExcludes}
+      title="Show or hide global exclude patterns"
+    >
+      {showGlobalExcludes ? 'Hide' : 'Show'} global exclude patterns
+    </button>
+
+    {#if showGlobalExcludes}
+      <h3 class="fs-subheading">Global exclude patterns</h3>
+      <p class="fs-hint">
+        Newline-separated globs (merged with each path). Filename-only patterns match at any depth.
+        Use forward slashes. Example: <code>node_modules</code>, <code>*.tmp</code>, <code>draft.txt</code>.
+        Save here, then use <strong>Rescan</strong> on each path to apply.
+      </p>
+      <textarea class="fs-exclude-textarea" bind:value={globalExcludes} rows="4" spellcheck="false"></textarea>
+      <button type="button" class="fs-add-btn" onclick={saveGlobalExcludes}>Save global excludes</button>
+    {/if}
+  </div>
+
   {#if rescanAllStatus}
     <p class="fs-bulk-status">{rescanAllStatus}</p>
   {/if}
@@ -395,6 +496,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       {#each paths as p (p.id)}
         {@const prog = progress[p.id]}
         {@const scanning = isScanning(p.id)}
+        {@const stale = staleById[p.id]}
 
         <div class="fs-row" class:disabled={!p.enabled}>
           <div class="fs-row-main">
@@ -403,12 +505,28 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
           </div>
 
           <div class="fs-row-meta">
+            {#if stale?.root_missing}
+              <span class="fs-stale-badge fs-stale-root" title="The scanned path no longer exists on disk">
+                Path missing on disk
+              </span>
+            {:else if stale && stale.missing_files > 0}
+              <span class="fs-stale-badge" title="Some indexed files were deleted or moved">
+                Stale: {stale.missing_files} missing
+              </span>
+            {/if}
             {#if p.error_msg && !scanning}
               <span class="fs-error" title={p.error_msg}>Error</span>
             {/if}
             <span class="fs-file-count">{p.file_count} file{p.file_count !== 1 ? 's' : ''}</span>
             <span class="fs-scanned-at" title="Last scanned">{formatDate(p.last_scanned_at)}</span>
           </div>
+
+          {#if stale?.root_missing}
+            <p class="fs-stale-root-msg">
+              This index entry points at a path that is gone. Use <strong>Remove</strong> to delete the entry
+              and its vectors (no separate clean-up needed).
+            </p>
+          {/if}
 
           {#if scanning}
             <div class="fs-progress-stack">
@@ -434,6 +552,12 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                 {/if}
               {/if}
             </div>
+          {/if}
+
+          {#if prog?.done && ((prog?.permanently_skipped ?? 0) > 0 || (prog?.permanently_skipped_chunks ?? 0) > 0)}
+            <p class="fs-hint fs-skip-summary">
+              Indexed with {prog.permanently_skipped} skipped file(s), {prog.permanently_skipped_chunks} skipped chunk(s).
+            </p>
           {/if}
 
           <div class="fs-row-actions">
@@ -481,7 +605,25 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
               Rescan
             </button>
             <button
+              type="button"
+              class="fs-action-btn"
+              onclick={() => clearStaleFiles(p.id)}
+              disabled={scanning || stale?.root_missing || !stale || stale.missing_files === 0}
+              title="Remove index rows for files that no longer exist on disk"
+            >
+              Clean up
+            </button>
+            <button
+              type="button"
+              class="fs-action-btn"
+              onclick={() => toggleExcludesEditor(p)}
+              title="Edit per-path exclude globs (Rescan to apply)"
+            >
+              {showExcludesFor === p.id ? 'Hide excludes' : 'Excludes'}
+            </button>
+            <button
               class="fs-action-btn fs-remove-btn"
+              class:fs-remove-emphasis={stale?.root_missing}
               onclick={() => removePath(p.id)}
               disabled={scanning}
               title="Remove this path and delete its indexed data"
@@ -489,6 +631,25 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
               Remove
             </button>
           </div>
+
+          {#if showExcludesFor === p.id}
+            <div class="fs-excludes-panel">
+              <p class="fs-hint">One pattern per line. Merged with global excludes. Save, then Rescan.</p>
+              <textarea
+                class="fs-exclude-textarea"
+                rows="4"
+                spellcheck="false"
+                value={excludeDraft[p.id] ?? ''}
+                oninput={(e) => {
+                  excludeDraft = { ...excludeDraft, [p.id]: /** @type {HTMLTextAreaElement} */ (e.target).value };
+                }}
+              ></textarea>
+              <div class="fs-excludes-actions">
+                <button type="button" class="fs-add-btn" onclick={() => savePathExcludes(p.id)}>Save excludes</button>
+                <button type="button" class="fs-action-btn" onclick={() => { showExcludesFor = null; }}>Cancel</button>
+              </div>
+            </div>
+          {/if}
         </div>
       {/each}
     </div>

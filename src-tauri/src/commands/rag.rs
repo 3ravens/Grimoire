@@ -102,6 +102,7 @@ pub async fn index_note(
     }
 
     let model = config.read().unwrap().embedding_model.clone();
+    let max_retries = config.read().unwrap().background_max_retries;
 
     // Prefix every chunk with the document search prefix expected by nomic-embed-text.
     let doc_texts: Vec<String> = raw_chunks
@@ -111,13 +112,22 @@ pub async fn index_note(
 
     // Embed all chunks in a single batch request instead of one-by-one.
     // For large files this is orders of magnitude faster.
-    let embeddings = match crate::vector::embed_batch(&doc_texts, &model).await {
+    let embeddings = match crate::retry::with_retries(max_retries, None, || async {
+        crate::vector::embed_batch(&doc_texts, &model)
+            .await
+            .map_err(AppError::EmbeddingFailed)
+    })
+    .await
+    {
         Ok(e) => e,
         Err(_) => {
             // Fall back to sequential embedding if batch fails.
             let mut fallback = Vec::with_capacity(raw_chunks.len());
             for chunk in &raw_chunks {
-                let emb = embed_document(chunk, &model).await?;
+                let emb = crate::retry::with_retries(max_retries, None, || async {
+                    embed_document(chunk, &model).await
+                })
+                .await?;
                 fallback.push(emb);
             }
             fallback
@@ -131,7 +141,16 @@ pub async fn index_note(
         .map(|((i, chunk_text), embedding)| (i as i32, chunk_text, embedding))
         .collect();
 
-    crate::vector::upsert(&vdb.0, note_id, &title, chunks).await.map_err(|e| AppError::VectorStore(e))
+    crate::retry::with_retries(max_retries, None, || {
+        let ch = chunks.clone();
+        async {
+            crate::vector::upsert(&vdb.0, note_id, &title, ch)
+                .await
+                .map_err(AppError::VectorStore)
+        }
+    })
+    .await?;
+    Ok(())
 }
 
 /// Remove a note from the vector index. Called when a note is deleted.
@@ -221,10 +240,12 @@ pub async fn reindex_all(
     let notes = store.list_notes(None, true).await?;
 
     let model = config.read().unwrap().embedding_model.clone();
+    let max_retries = config.read().unwrap().background_max_retries;
     let total = notes.len();
     let mut count = 0usize;
     let mut processed = 0usize;
     let mut failed: Vec<String> = Vec::new();
+    let mut permanently_skipped: usize = 0;
 
     for note in notes {
         if note.locked {
@@ -244,23 +265,59 @@ pub async fn reindex_all(
             processed += 1;
             continue;
         }
+        // Use batch embedding first for reindex_all as well; this avoids the
+        // very slow per-chunk keep_alive=0 path.
+        let doc_texts: Vec<String> = raw_chunks
+            .iter()
+            .map(|chunk| format!("search_document: {}\n{}", note.title, chunk))
+            .collect();
+        let embeddings = match crate::retry::with_retries(max_retries, None, || async {
+            crate::vector::embed_batch(&doc_texts, &model)
+                .await
+                .map_err(AppError::EmbeddingFailed)
+        })
+        .await
+        {
+            Ok(e) => e,
+            Err(_) => {
+                let mut fallback = Vec::with_capacity(raw_chunks.len());
+                for chunk in &raw_chunks {
+                    let emb = crate::retry::with_retries(max_retries, None, || async {
+                        embed_document(chunk, &model).await
+                    })
+                    .await?;
+                    fallback.push(emb);
+                }
+                fallback
+            }
+        };
         let mut chunks: Vec<(i32, String, Vec<f32>)> = Vec::new();
         let mut note_ok = true;
-        for (i, chunk_text) in raw_chunks.into_iter().enumerate() {
-            match embed_document(&chunk_text, &model).await {
-                Ok(embedding) => chunks.push((i as i32, chunk_text, embedding)),
-                Err(e) => {
-                    failed.push(format!("\"{}\" — {}", note.title, e));
-                    note_ok = false;
-                    break;
-                }
+        for ((i, chunk_text), embedding) in raw_chunks.into_iter().enumerate().zip(embeddings) {
+            if embedding.is_empty() {
+                permanently_skipped += 1;
+                failed.push(format!("\"{}\" — empty embedding", note.title));
+                note_ok = false;
+                break;
             }
+            chunks.push((i as i32, chunk_text, embedding));
         }
         if note_ok {
-            if let Err(e) = crate::vector::upsert(&vdb.0, note.id, &note.title, chunks).await {
-                failed.push(format!("\"{}\" (upsert) — {}", note.title, e));
-            } else {
-                count += 1;
+            match crate::retry::with_retries(max_retries, None, || {
+                let ch = chunks.clone();
+                async {
+                    crate::vector::upsert(&vdb.0, note.id, &note.title, ch)
+                        .await
+                        .map_err(AppError::VectorStore)
+                }
+            })
+            .await
+            {
+                Ok(()) => count += 1,
+                Err(e) => {
+                    permanently_skipped += 1;
+                    failed.push(format!("\"{}\" (upsert) — {}", note.title, e));
+                }
             }
         }
         processed += 1;
@@ -268,13 +325,27 @@ pub async fn reindex_all(
             "indexed": count,
             "processed": processed,
             "total": total,
+            "permanently_skipped": permanently_skipped,
         }));
     }
 
     let summary = if failed.is_empty() {
-        format!("{count} notes indexed")
+        if permanently_skipped == 0 {
+            format!("{count} notes indexed")
+        } else {
+            format!("{count} notes indexed, {permanently_skipped} skipped after retries")
+        }
     } else {
-        format!("{count} notes indexed, {} failed:\n{}", failed.len(), failed.join("\n"))
+        let skip_part = if permanently_skipped > 0 {
+            format!(", {permanently_skipped} skipped after retries")
+        } else {
+            String::new()
+        };
+        format!(
+            "{count} notes indexed{skip_part}, {} failed:\n{}",
+            failed.len(),
+            failed.join("\n")
+        )
     };
     Ok(summary)
 }
