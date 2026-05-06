@@ -506,67 +506,69 @@
                     {#if folderCount > 0}<span class="folder-count"
                             >{folderCount}</span
                         >{/if}
-                    {#if unlockedFolderIds?.has(folder.id)}
+                {/if}
+                <div class="folder-row-trailing-icons">
+                    {#if !folder.locked && !(fs.inlineRenaming?.id === folder.id && fs.inlineRenaming?.type === "folder")}
+                        {#if unlockedFolderIds?.has(folder.id)}
+                            <button
+                                class="icon-btn"
+                                title="Lock folder for this session"
+                                onclick={() => onLockFolderSession?.(folder.id)}
+                            >
+                                <LockClosedIcon />
+                            </button>
+                            <button
+                                class="icon-btn"
+                                title="Remove folder password"
+                                onclick={() =>
+                                    fs.openFolderPwModal(folder.id, "remove")}
+                            >
+                                <LockRemovePasswordIcon />
+                            </button>
+                        {:else}
+                            <button
+                                class="icon-btn"
+                                title="Set folder password"
+                                onclick={() =>
+                                    fs.openFolderPwModal(folder.id, "set")}
+                            >
+                                <LockClosedIcon />
+                            </button>
+                        {/if}
                         <button
                             class="icon-btn"
-                            title="Lock folder for this session"
-                            onclick={() => onLockFolderSession?.(folder.id)}
+                            onclick={() => {
+                                fs.inlineRenaming = {
+                                    id: folder.id,
+                                    type: "folder",
+                                    value: folder.name,
+                                };
+                            }}
+                            title="Rename folder"
+                            aria-label="Rename folder {folder.name}"
                         >
-                            <LockClosedIcon />
-                        </button>
-                        <button
-                            class="icon-btn"
-                            title="Remove folder password"
-                            onclick={() =>
-                                fs.openFolderPwModal(folder.id, "remove")}
-                        >
-                            <LockRemovePasswordIcon />
-                        </button>
-                    {:else}
-                        <button
-                            class="icon-btn"
-                            title="Set folder password"
-                            onclick={() =>
-                                fs.openFolderPwModal(folder.id, "set")}
-                        >
-                            <LockClosedIcon />
+                            <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 15 15"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.5"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+                                <path d="M10 2 L13 5 L5 13 L2 13 L2 10 Z" />
+                                <line x1="8" y1="4" x2="11" y2="7" />
+                            </svg>
                         </button>
                     {/if}
-                {/if}
-                {#if !folder.locked && !(fs.inlineRenaming?.id === folder.id && fs.inlineRenaming?.type === "folder")}
                     <button
-                        class="icon-btn"
-                        onclick={() => {
-                            fs.inlineRenaming = {
-                                id: folder.id,
-                                type: "folder",
-                                value: folder.name,
-                            };
-                        }}
-                        title="Rename folder"
-                        aria-label="Rename folder {folder.name}"
+                        class="icon-btn danger"
+                        onclick={() => onDeleteFolder?.(folder.id)}
+                        title="Delete folder"
+                        aria-label="Delete folder {folder.name}">✕</button
                     >
-                        <svg
-                            width="12"
-                            height="12"
-                            viewBox="0 0 15 15"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="1.5"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        >
-                            <path d="M10 2 L13 5 L5 13 L2 13 L2 10 Z" />
-                            <line x1="8" y1="4" x2="11" y2="7" />
-                        </svg>
-                    </button>
-                {/if}
-                <button
-                    class="icon-btn danger"
-                    onclick={() => onDeleteFolder?.(folder.id)}
-                    title="Delete folder"
-                    aria-label="Delete folder {folder.name}">✕</button
-                >
+                </div>
             </div>
 
             {#if (fs.folderExpanded[folder.id] ?? true) && node.children.length > 0}

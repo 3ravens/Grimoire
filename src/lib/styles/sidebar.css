@@ -29,12 +29,42 @@
 }
 
 .folder-row {
+  position: relative;
   display: flex;
   align-items: center;
   padding: 5px 8px;
   border-radius: 5px;
   cursor: pointer;
   gap: 4px;
+  min-width: 0;
+}
+
+.folder-row-trailing-icons {
+  position: absolute;
+  inset-inline-end: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.folder-list li:hover:not(:has(li:hover)) > .folder-row > .folder-row-trailing-icons,
+.folder-list li:focus-within > .folder-row > .folder-row-trailing-icons {
+  pointer-events: auto;
+}
+
+.folder-list li:hover:not(:has(li:hover)) > .folder-row > .folder-row-trailing-icons {
+  background: linear-gradient(
+    to left,
+    var(--bg2) 0%,
+    var(--bg2) 55%,
+    transparent 100%
+  );
+  padding-inline-start: 10px;
+  margin-inline-start: -6px;
 }
 
 .folder-list li > .folder-row:hover {
