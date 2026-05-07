@@ -7,6 +7,15 @@
   border-radius: 4px;
   opacity: 0;
   color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.icon-btn svg {
+  display: block;
+  flex-shrink: 0;
 }
 
 li:hover > .icon-btn {

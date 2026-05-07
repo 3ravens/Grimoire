@@ -36,10 +36,6 @@ python scripts/compare_wiki_benchmark.py --current path/to/current_benchmark.jso
 
 - The script exits with code `1` when configured regression thresholds are exceeded.
 
-## Some notes
-Project is in early stages.
-Not accepting contributions yet.
-
 
 ## License
 

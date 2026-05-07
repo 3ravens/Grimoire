@@ -1,4 +1,14 @@
 /** @typedef {{ type: 'add' | 'remove' | 'unchanged', lines: string[] }} DiffHunk */
+/** @typedef {{ type: 'equal' | 'remove' | 'add', text: string }} InlineSegment */
+/**
+ * @typedef {DiffHunk | {
+ *   type: 'modified',
+ *   oldLine: string,
+ *   newLine: string,
+ *   oldSegments: InlineSegment[],
+ *   newSegments: InlineSegment[],
+ * }} DisplayDiffHunk
+ */
 
 /**
  * Compute a line-level diff between two texts.
@@ -13,6 +23,44 @@ export function computeDiff(original, improved) {
   const a = original.split('\n');
   const b = improved.split('\n');
   return diffLines(a, b);
+}
+
+/**
+ * Merge adjacent single-line remove + add hunks into `modified` hunks with
+ * word-level inline segments for clearer UI (readonly diff / history).
+ * Improve-mode hunks stay line-based if you skip this.
+ *
+ * @param {DiffHunk[]} hunks
+ * @returns {DisplayDiffHunk[]}
+ */
+export function coalesceSingleLineChangeHunks(hunks) {
+  const out = [];
+  for (let i = 0; i < hunks.length; i++) {
+    const h = hunks[i];
+    const next = hunks[i + 1];
+    if (
+      h.type === 'remove' &&
+      next &&
+      next.type === 'add' &&
+      h.lines.length === 1 &&
+      next.lines.length === 1
+    ) {
+      const oldLine = h.lines[0];
+      const newLine = next.lines[0];
+      const { oldSegments, newSegments } = diffTokenSegments(oldLine, newLine);
+      out.push({
+        type: 'modified',
+        oldLine,
+        newLine,
+        oldSegments,
+        newSegments,
+      });
+      i++;
+    } else {
+      out.push(h);
+    }
+  }
+  return out;
 }
 
 /**
@@ -171,4 +219,82 @@ function computeLCS(a, b) {
   }
   result.reverse();
   return result;
+}
+
+// ── Word-level segments for single-line edits ─────────────────────────────
+
+/** Split a line into words and whitespace chunks (preserves spaces/newlines in tokens). */
+function tokenizeLine(s) {
+  if (!s) return [];
+  return s.split(/(\s+)/).filter((t) => t.length > 0);
+}
+
+function mergeAdjacentSegments(segs) {
+  const out = [];
+  for (const s of segs) {
+    const last = out[out.length - 1];
+    if (last && last.type === s.type) {
+      last.text += s.text;
+    } else {
+      out.push({ type: s.type, text: s.text });
+    }
+  }
+  return out;
+}
+
+/**
+ * Diff two strings at token (word + whitespace) granularity for inline highlighting.
+ *
+ * @param {string} oldLine
+ * @param {string} newLine
+ * @returns {{ oldSegments: InlineSegment[], newSegments: InlineSegment[] }}
+ */
+export function diffTokenSegments(oldLine, newLine) {
+  const ta = tokenizeLine(oldLine);
+  const tb = tokenizeLine(newLine);
+  const lcs = computeLCS(ta, tb);
+  /** @type {InlineSegment[]} */
+  const oldSeg = [];
+  /** @type {InlineSegment[]} */
+  const newSeg = [];
+  let ai = 0;
+  let bi = 0;
+  let li = 0;
+
+  while (ai < ta.length || bi < tb.length) {
+    if (li < lcs.length) {
+      const token = lcs[li];
+      let na = ai;
+      while (na < ta.length && ta[na] !== token) na++;
+      let nb = bi;
+      while (nb < tb.length && tb[nb] !== token) nb++;
+
+      if (na > ai) {
+        oldSeg.push({ type: 'remove', text: ta.slice(ai, na).join('') });
+      }
+      if (nb > bi) {
+        newSeg.push({ type: 'add', text: tb.slice(bi, nb).join('') });
+      }
+
+      oldSeg.push({ type: 'equal', text: token });
+      newSeg.push({ type: 'equal', text: token });
+
+      ai = na + 1;
+      bi = nb + 1;
+      li++;
+    } else {
+      if (ai < ta.length) {
+        oldSeg.push({ type: 'remove', text: ta.slice(ai).join('') });
+      }
+      if (bi < tb.length) {
+        newSeg.push({ type: 'add', text: tb.slice(bi).join('') });
+      }
+      break;
+    }
+  }
+
+  return {
+    oldSegments: mergeAdjacentSegments(oldSeg),
+    newSegments: mergeAdjacentSegments(newSeg),
+  };
 }

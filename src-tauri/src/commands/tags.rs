@@ -270,7 +270,7 @@ pub async fn get_graph_data(
     pool: State<'_, SqlitePool>,
 ) -> AppResult<(Vec<GraphNode>, Vec<GraphEdge>)> {
     let nodes = sqlx::query_as::<_, GraphNode>(
-        "SELECT id, title FROM notes ORDER BY id ASC",
+        "SELECT id, title, folder_id FROM notes ORDER BY id ASC",
     )
     .fetch_all(pool.inner())
     .await

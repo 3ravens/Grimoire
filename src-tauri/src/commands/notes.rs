@@ -17,11 +17,30 @@
 
 use std::path::PathBuf;
 use std::collections::HashMap;
+use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
 use crate::SharedKeyStore;
 use crate::{AppError, AppResult, EncryptedNoteStore};
 use super::{Note, Folder};
+
+#[derive(Debug, Serialize)]
+pub struct NoteVersionMeta {
+    pub id: i64,
+    pub created_at: i64,
+    pub encrypted: bool,
+    pub preview_title: String,
+    pub preview_body: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NoteVersionContent {
+    pub id: i64,
+    pub note_id: i64,
+    pub title: String,
+    pub content: String,
+    pub created_at: i64,
+}
 
 // ---------------------------------------------------------------------------
 // Note commands
@@ -78,6 +97,8 @@ pub async fn list_notes(
 }
 
 /// Update a note's title and content. Bumps updated_at to the current time.
+/// Does **not** append a row to `note_versions`; UI saves should call
+/// [`save_note_with_version`] so history stays complete.
 #[tauri::command]
 pub async fn update_note(
     pool: State<'_, SqlitePool>,
@@ -94,6 +115,86 @@ pub async fn update_note(
     let _ = crate::audit::log_event(
         pool.inner(), "note_update", Some("note"),
         Some(note.id), Some(&note.title), None,
+    ).await;
+    Ok(note)
+}
+
+/// Explicit save path for the editor save button / Ctrl+S.
+#[tauri::command]
+pub async fn save_note_with_version(
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
+    id: i64,
+    title: String,
+    content: String,
+) -> AppResult<Note> {
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
+    let note = store.save_note_with_version(id, &title, &content).await?;
+    if !note.locked {
+        super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
+    }
+    let _ = crate::audit::log_event(
+        pool.inner(), "note_update", Some("note"),
+        Some(note.id), Some(&note.title), Some("explicit_save"),
+    ).await;
+    Ok(note)
+}
+
+#[tauri::command]
+pub async fn get_note_versions(
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
+    note_id: i64,
+) -> AppResult<Vec<NoteVersionMeta>> {
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
+    let versions = store.get_note_versions(note_id).await?;
+    Ok(versions
+        .into_iter()
+        .map(
+            |(id, created_at, encrypted, preview_title, preview_body)| NoteVersionMeta {
+                id,
+                created_at,
+                encrypted,
+                preview_title,
+                preview_body,
+            },
+        )
+        .collect())
+}
+
+#[tauri::command]
+pub async fn get_note_version_content(
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
+    note_id: i64,
+    version_id: i64,
+) -> AppResult<NoteVersionContent> {
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
+    let (title, content, created_at) = store.get_note_version_content(note_id, version_id).await?;
+    Ok(NoteVersionContent {
+        id: version_id,
+        note_id,
+        title,
+        content,
+        created_at,
+    })
+}
+
+#[tauri::command]
+pub async fn restore_note_version(
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
+    note_id: i64,
+    version_id: i64,
+) -> AppResult<Note> {
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
+    let note = store.restore_note_version(note_id, version_id).await?;
+    if !note.locked {
+        super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
+    }
+    let _ = crate::audit::log_event(
+        pool.inner(), "note_update", Some("note"),
+        Some(note.id), Some(&note.title), Some("restore_version"),
     ).await;
     Ok(note)
 }

@@ -28,4 +28,5 @@
 .graph-overlay canvas {
   flex: 1;
   display: block;
+  touch-action: none;
 }

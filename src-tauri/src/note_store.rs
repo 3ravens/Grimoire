@@ -27,6 +27,40 @@ use sqlx::SqlitePool;
 use crate::{AccessFilter, KeyStore, AppError, AppResult};
 use crate::commands::{NoteRow, FolderRow, Note, Folder};
 
+const NOTE_VERSION_LIMIT: i64 = 20;
+const PREVIEW_TITLE_MAX: usize = 60;
+const PREVIEW_BODY_MAX: usize = 80;
+
+fn truncate_chars_with_ellipsis(s: &str, max_chars: usize) -> String {
+    let t = s.trim();
+    let count = t.chars().count();
+    if count <= max_chars {
+        t.to_string()
+    } else {
+        format!("{}…", t.chars().take(max_chars).collect::<String>())
+    }
+}
+
+/// First non-empty line (truncated), or trimmed body excerpt if blank lines only.
+fn preview_body_excerpt(content: &str, max_chars: usize) -> String {
+    for line in content.lines() {
+        let t = line.trim();
+        if !t.is_empty() {
+            return truncate_chars_with_ellipsis(t, max_chars);
+        }
+    }
+    truncate_chars_with_ellipsis(content.trim(), max_chars)
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct NoteVersionRow {
+    id: i64,
+    title: String,
+    content: String,
+    is_encrypted: i64,
+    created_at: i64,
+}
+
 /// A thin storage abstraction over SQLite and the session key store.
 ///
 /// Constructed per command call — a borrow of the two Tauri-managed state
@@ -91,6 +125,18 @@ impl<'a> EncryptedNoteStore<'a> {
         } else {
             plaintext.to_string()
         }
+    }
+
+    fn decrypt_version_text(&self, folder_id: Option<i64>, raw: String, is_encrypted: bool) -> AppResult<String> {
+        if !is_encrypted {
+            return Ok(raw);
+        }
+        let key = self
+            .key_for(folder_id)
+            .ok_or_else(|| AppError::Auth("folder_locked".to_string()))?;
+        let bytes = crate::crypto::decrypt(&key, &raw)
+            .map_err(|_| AppError::Auth("folder_locked".to_string()))?;
+        String::from_utf8(bytes).map_err(|_| AppError::Auth("folder_locked".to_string()))
     }
 
     /// Map a raw `NoteRow` to the public `Note` struct, decrypting fields where
@@ -183,6 +229,66 @@ impl<'a> EncryptedNoteStore<'a> {
         };
 
         Ok(self.to_note(row, folder_locked_col))
+    }
+
+    async fn get_note_row_with_lock(&self, id: i64) -> AppResult<(NoteRow, bool)> {
+        let row = sqlx::query_as::<_, NoteRow>(
+            "SELECT id, title, content, folder_id, created_at, updated_at
+             FROM notes WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(self.pool)
+        .await?;
+
+        let folder_locked_col = if let Some(fid) = row.folder_id {
+            sqlx::query_scalar::<_, i64>("SELECT locked FROM folders WHERE id = ?")
+                .bind(fid)
+                .fetch_optional(self.pool)
+                .await?
+                .unwrap_or(0) != 0
+        } else {
+            false
+        };
+
+        Ok((row, folder_locked_col))
+    }
+
+    async fn snapshot_current_note_version(&self, note_id: i64) -> AppResult<()> {
+        let (row, folder_locked_col) = self.get_note_row_with_lock(note_id).await?;
+        self.check_writable(row.folder_id, folder_locked_col)?;
+        let is_encrypted = i64::from(self.key_for(row.folder_id).is_some());
+
+        sqlx::query(
+            "INSERT INTO note_versions (note_id, title, content, is_encrypted)
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(note_id)
+        .bind(row.title)
+        .bind(row.content)
+        .bind(is_encrypted)
+        .execute(self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn prune_note_versions(&self, note_id: i64) -> AppResult<()> {
+        sqlx::query(
+            "DELETE FROM note_versions
+             WHERE note_id = ?
+               AND id NOT IN (
+                   SELECT id
+                   FROM note_versions
+                   WHERE note_id = ?
+                   ORDER BY created_at DESC, id DESC
+                   LIMIT ?
+               )",
+        )
+        .bind(note_id)
+        .bind(note_id)
+        .bind(NOTE_VERSION_LIMIT)
+        .execute(self.pool)
+        .await?;
+        Ok(())
     }
 
     /// List notes, optionally scoped to a specific folder.
@@ -312,6 +418,89 @@ impl<'a> EncryptedNoteStore<'a> {
         .await?;
 
         Ok(self.to_note(row, folder_locked_col))
+    }
+
+    /// Explicit save path: snapshot current persisted note, then apply update.
+    pub async fn save_note_with_version(&self, id: i64, title: &str, content: &str) -> AppResult<Note> {
+        self.snapshot_current_note_version(id).await?;
+        let updated = self.update_note(id, title, content).await?;
+        self.prune_note_versions(id).await?;
+        Ok(updated)
+    }
+
+    pub async fn get_note_versions(
+        &self,
+        note_id: i64,
+    ) -> AppResult<Vec<(i64, i64, bool, String, String)>> {
+        let (current_row, _) = self.get_note_row_with_lock(note_id).await?;
+        let folder_id = current_row.folder_id;
+
+        let versions: Vec<NoteVersionRow> = sqlx::query_as(
+            "SELECT id, title, content, is_encrypted, created_at
+             FROM note_versions
+             WHERE note_id = ?
+             ORDER BY created_at DESC, id DESC",
+        )
+        .bind(note_id)
+        .fetch_all(self.pool)
+        .await?;
+
+        let mut out = Vec::with_capacity(versions.len());
+        for row in versions {
+            let enc = row.is_encrypted != 0;
+            let title_plain = self
+                .decrypt_version_text(folder_id, row.title, enc)
+                .unwrap_or_default();
+            let content_plain = self
+                .decrypt_version_text(folder_id, row.content, enc)
+                .unwrap_or_default();
+            let preview_title = truncate_chars_with_ellipsis(&title_plain, PREVIEW_TITLE_MAX);
+            let preview_body = preview_body_excerpt(&content_plain, PREVIEW_BODY_MAX);
+            out.push((
+                row.id,
+                row.created_at,
+                enc,
+                preview_title,
+                preview_body,
+            ));
+        }
+        Ok(out)
+    }
+
+    pub async fn get_note_version_content(&self, note_id: i64, version_id: i64) -> AppResult<(String, String, i64)> {
+        let (current_row, folder_locked_col) = self.get_note_row_with_lock(note_id).await?;
+        self.check_writable(current_row.folder_id, folder_locked_col)?;
+
+        let version: NoteVersionRow = sqlx::query_as(
+            "SELECT id, title, content, is_encrypted, created_at
+             FROM note_versions
+             WHERE id = ? AND note_id = ?",
+        )
+        .bind(version_id)
+        .bind(note_id)
+        .fetch_one(self.pool)
+        .await?;
+
+        let title = self.decrypt_version_text(
+            current_row.folder_id,
+            version.title,
+            version.is_encrypted != 0,
+        )?;
+        let content = self.decrypt_version_text(
+            current_row.folder_id,
+            version.content,
+            version.is_encrypted != 0,
+        )?;
+
+        Ok((title, content, version.created_at))
+    }
+
+    pub async fn restore_note_version(&self, note_id: i64, version_id: i64) -> AppResult<Note> {
+        self.snapshot_current_note_version(note_id).await?;
+        let (title, content, _) = self.get_note_version_content(note_id, version_id).await?;
+        let restored = self.update_note(note_id, &title, &content).await?;
+        self.prune_note_versions(note_id).await?;
+        Ok(restored)
     }
 
     /// Rename a note (title only).

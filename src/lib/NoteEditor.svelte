@@ -27,6 +27,7 @@
         onFilterByTag,
         onConvertMention,
         onOpenTableView,
+        onVersionRestore,
         onExportError = () => {},
     } = $props();
 
@@ -296,15 +297,16 @@
     </div>
 {/if}
 
-{#if ns.activeNote.folder_id}
-    {#key ns.activeNote.id}
-        <NoteProperties
-            noteId={ns.activeNote.id}
-            folderId={ns.activeNote.folder_id}
-            onPropertiesLoad={handlePropertiesLoad}
-        />
-    {/key}
-{/if}
+{#key ns.activeNote.id}
+    <NoteProperties
+        noteId={ns.activeNote.id}
+        folderId={ns.activeNote.folder_id}
+        activeTitle={ns.editorTitle}
+        activeContent={ns.editorContent}
+        onPropertiesLoad={handlePropertiesLoad}
+        onVersionRestore={onVersionRestore}
+    />
+{/key}
 
 {#if propertiesReady}
     {#if is.improveState.status === "diff"}

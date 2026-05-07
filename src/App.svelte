@@ -349,6 +349,18 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         const onNoteImported = () => loadNotes();
         window.addEventListener("grimoire:note-imported", onNoteImported);
 
+        const onVaultDataChanged = () => {
+            void loadFolders();
+            void loadNotes();
+            loadAllTags();
+            tmpl.loadTemplates();
+            bm.loadBookmarks();
+        };
+        window.addEventListener(
+            "grimoire:vault-data-changed",
+            onVaultDataChanged,
+        );
+
         const onNavigateNote = async (e) => {
             const noteId = /** @type {CustomEvent} */ (e).detail?.noteId;
             if (!noteId) return;
@@ -397,6 +409,10 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
             cancelled = true;
             unsubs.forEach((u) => u());
             window.removeEventListener("grimoire:note-imported", onNoteImported);
+            window.removeEventListener(
+                "grimoire:vault-data-changed",
+                onVaultDataChanged,
+            );
             window.removeEventListener("grimoire:navigate-note", onNavigateNote);
         };
     });
@@ -523,7 +539,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
             if (templateContent) {
                 ns.editorContent = templateContent;
                 ns.isDirty = true;
-                invoke("update_note", {
+                invoke("save_note_with_version", {
                     id: note.id,
                     title: "Untitled",
                     content: templateContent,
@@ -670,6 +686,11 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         return ns.saveNote(() => loadNotes());
     }
 
+    async function handleVersionRestore(restoredNote) {
+        ns.applyRestoredNote(restoredNote);
+        await loadNotes();
+    }
+
     async function convertMention(mention) {
         return ns.convertMention(mention);
     }
@@ -756,7 +777,6 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     async function seedNotes() {
         const result = await ns.seedNotes();
         if (result?.count != null) {
-            await loadNotes();
             err.showError(`✓ Seeded ${result.count} notes and indexed them.`);
         }
     }
@@ -1273,6 +1293,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                         onOpenNoteById={openNoteById}
                         onFilterByTag={filterByTag}
                         onConvertMention={convertMention}
+                        onVersionRestore={handleVersionRestore}
                         onExportError={err.showError}
                         onOpenTableView={() => {
                             if (ns.isDirty) saveNote();

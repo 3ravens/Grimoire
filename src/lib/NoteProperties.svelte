@@ -24,16 +24,38 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
    * Props:
    *   noteId           — the active note's id
    *   folderId         — the note's folder_id (properties are folder-scoped)
+   *   activeTitle      — current note title from the editor (for history compare)
+   *   activeContent    — current note body from the editor (for history compare)
    *   onPropertiesLoad — optional callback; receives the loaded properties array
    */
   import { invoke } from '@tauri-apps/api/core';
-
-  let { noteId, folderId, onPropertiesLoad = () => {} } = $props();
+  import { computeDiff } from './utils/diff.js';
+  import DiffView from './DiffView.svelte';
+  
+  let {
+    noteId,
+    folderId,
+    activeTitle = '',
+    activeContent = '',
+    onPropertiesLoad = () => {},
+    onVersionRestore = () => {},
+  } = $props();
 
   let defs = $state([]);
   let propValues = $state([]);
   let open = $state(true);
   let loading = $state(false);
+  let historyOpen = $state(false);
+  let versionLoading = $state(false);
+  let versions = $state([]);
+  let selectedVersionId = $state(null);
+  let selectedVersion = $state(null);
+
+  const diffHunks = $derived(
+    selectedVersion
+      ? computeDiff(activeContent ?? '', selectedVersion.content ?? '')
+      : [],
+  );
 
   // "Add property" inline form state
   let adding = $state(false);
@@ -45,9 +67,15 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   // component is always remounted fresh when the note changes, so there is
   // never a stale render frame showing the previous note's properties.
   $effect(() => {
-    if (noteId && folderId) {
+    if (!noteId) return;
+    if (folderId) {
       loadProperties(noteId, folderId);
+      return;
     }
+    defs = [];
+    propValues = [];
+    onPropertiesLoad([]);
+    loadVersions(noteId);
   });
 
   async function loadProperties(nid, fid) {
@@ -60,10 +88,51 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       defs = d;
       propValues = p;
       onPropertiesLoad(p);
+      await loadVersions(nid);
     } catch {
       // Non-fatal — just show nothing
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadVersions(nid) {
+    try {
+      versions = await invoke('get_note_versions', { noteId: nid });
+      if (!versions.some(v => v.id === selectedVersionId)) {
+        selectedVersionId = null;
+        selectedVersion = null;
+      }
+    } catch {
+      versions = [];
+    }
+  }
+
+  async function selectVersion(versionId) {
+    selectedVersionId = versionId;
+    versionLoading = true;
+    try {
+      const version = await invoke('get_note_version_content', { noteId, versionId });
+      selectedVersion = version;
+    } catch {
+      selectedVersion = null;
+    } finally {
+      versionLoading = false;
+    }
+  }
+
+  async function restoreSelectedVersion() {
+    if (!selectedVersionId) return;
+    const ok = window.confirm('Restore this version? The current note state will be saved as a new revision first.');
+    if (!ok) return;
+    try {
+      const restored = await invoke('restore_note_version', { noteId, versionId: selectedVersionId });
+      onVersionRestore(restored);
+      await loadVersions(noteId);
+      selectedVersionId = null;
+      selectedVersion = null;
+    } catch {
+      // Non-fatal for panel rendering.
     }
   }
 
@@ -223,3 +292,115 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   {/if}
 </div>
 {/if}
+
+<div class="note-properties">
+  <button class="props-toggle" aria-expanded={historyOpen} onclick={() => (historyOpen = !historyOpen)}>
+    <span class="props-toggle-icon">{historyOpen ? '˅' : '›'}</span>
+    <span class="props-toggle-label">History</span>
+    {#if !historyOpen && versions.length > 0}
+      <span class="props-count">{versions.length}</span>
+    {/if}
+  </button>
+
+  {#if historyOpen}
+    <div class="history-layout">
+      <div class="history-list">
+        {#if versions.length === 0}
+          <div class="history-empty">No saved revisions yet.</div>
+        {:else}
+          {#each versions as version (version.id)}
+            <button
+              type="button"
+              class="history-version-btn"
+              class:active={version.id === selectedVersionId}
+              onclick={() => selectVersion(version.id)}
+            >
+              <span class="history-version-time">{new Date(version.created_at * 1000).toLocaleString()}</span>
+              {#if version.preview_title || version.preview_body}
+                <span class="history-version-preview">
+                  {#if version.preview_title}<span class="history-preview-title">{version.preview_title}</span>{/if}
+                  {#if version.preview_title && version.preview_body}<span class="history-preview-sep"> — </span>{/if}
+                  {#if version.preview_body}<span class="history-preview-body">{version.preview_body}</span>{/if}
+                </span>
+              {/if}
+            </button>
+          {/each}
+        {/if}
+      </div>
+
+      <div class="history-preview">
+        {#if versionLoading}
+          <div class="history-empty">Loading revision…</div>
+        {:else if selectedVersion}
+          <div class="history-actions">
+            <button type="button" class="prop-add-btn" onclick={restoreSelectedVersion}>Restore selected version</button>
+          </div>
+          <div class="history-title-section" role="region" aria-label="Title comparison">
+            {#if (selectedVersion.title ?? '') === (activeTitle ?? '')}
+              <p class="history-title-same">Title unchanged.</p>
+            {:else}
+              <div class="history-title-grid">
+                <span class="history-title-label">Revision</span>
+                <span class="history-title-label">Current</span>
+                <span class="history-title-cell history-title-rev">{selectedVersion.title ?? ''}</span>
+                <span class="history-title-cell history-title-cur">{activeTitle ?? ''}</span>
+              </div>
+            {/if}
+          </div>
+          <div class="history-diff-wrap">
+            <DiffView hunks={diffHunks} readonly sideBySide headerTitle="Body" />
+          </div>
+        {:else}
+          <div class="history-empty">Select a revision to compare and restore.</div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+</div>
+
+<style>
+  .history-layout { display: grid; grid-template-columns: 240px 1fr; gap: 12px; margin-top: 8px; }
+  .history-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow: auto; }
+  .history-version-btn {
+    text-align: left;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+  }
+  .history-version-btn.active { outline: 1px solid var(--accent, #999); }
+  .history-version-time { font-weight: 500; }
+  .history-version-preview { font-size: 12px; opacity: 0.85; line-height: 1.3; word-break: break-word; }
+  .history-preview-body { opacity: 0.9; }
+  .history-preview { min-height: 120px; }
+  .history-diff-wrap { margin-top: 8px; max-height: min(420px, 50vh); overflow: auto; }
+  .history-empty { opacity: 0.75; font-size: 13px; }
+  .history-actions { display: flex; justify-content: flex-end; }
+  .history-title-section { margin-top: 8px; margin-bottom: 4px; }
+  .history-title-same {
+    margin: 0;
+    font-size: 12px;
+    opacity: 0.75;
+  }
+  .history-title-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 10px;
+    font-size: 13px;
+  }
+  .history-title-label {
+    font: 11px/1.2 var(--sans, system-ui);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.85;
+    border-bottom: 1px solid var(--border, #444);
+    padding-bottom: 4px;
+  }
+  .history-title-cell {
+    word-break: break-word;
+    padding: 4px 0;
+    font-weight: 500;
+    color: var(--text-h, inherit);
+  }
+</style>

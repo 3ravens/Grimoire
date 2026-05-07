@@ -114,6 +114,64 @@
     const n = typeof v === 'bigint' ? Number(v) : Number(v);
     return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(v);
   }
+  // ── Test Data Generator ──────────────────────────────────────────────
+  let tdNoteCount = $state('120');
+  let tdFolderCount = $state('8');
+  let tdSeed = $state('');
+  let tdDailyNotes = $state(true);
+  let tdEmbed = $state(false);
+  let tdRunning = $state(false);
+  let tdCleanRunning = $state(false);
+  let tdCleanError = $state('');
+  const tdLocked = $derived(tdRunning || tdCleanRunning);
+  let tdError = $state('');
+  let tdSummary = $state(null);
+
+  async function runTestDataGenerator() {
+    tdRunning = true;
+    tdError = '';
+    tdSummary = null;
+    try {
+      const nc = Number.parseInt(tdNoteCount.trim()) || 120;
+      const fc = Number.parseInt(tdFolderCount.trim()) || 8;
+      const seed = tdSeed.trim() ? Number.parseInt(tdSeed.trim()) : null;
+      const summary = await invoke('generate_test_data', {
+        noteCount: nc,
+        folderCount: fc,
+        seed: seed,
+        includeDailyNotes: tdDailyNotes,
+        embed: tdEmbed,
+      });
+      tdSummary = summary;
+      window.dispatchEvent(new CustomEvent('grimoire:vault-data-changed'));
+    } catch (e) {
+      tdError = e?.message ?? String(e);
+    } finally {
+      tdRunning = false;
+    }
+  }
+
+  async function runCleanDatabase() {
+    tdCleanError = '';
+    const ok = confirm(
+      'Delete ALL local vault data in this app?\n\n' +
+        'This removes every note, folder, tag, wiki-link, template, bookmark, property, Wikipedia bundle metadata, file-scanner entries, audit log, and app settings from the SQLite database. It also clears LanceDB semantic indexes (notes, Wikipedia, scanned files) and vault/session encryption state.\n\n' +
+        'External files on disk are not deleted. This cannot be undone.\n\n' +
+        'Continue?',
+    );
+    if (!ok) return;
+
+    tdCleanRunning = true;
+    try {
+      await invoke('clean_developer_database');
+      window.location.reload();
+    } catch (e) {
+      tdCleanError = e?.message ?? String(e);
+    } finally {
+      tdCleanRunning = false;
+    }
+  }
+
 </script>
 
 <h3>Developer</h3>
@@ -291,6 +349,161 @@
   </div>
 {/if}
 
+
+<!-- ── Test Data Generator ───────────────────────────────────── -->
+<h4 class="section-subhead">Test Data Generator</h4>
+<p class="settings-notice">
+  Populates the vault with realistic notes, folders, tags, wiki-links, properties,
+  templates, and daily notes. Only available in dev builds.
+  Generation always adds two fixed folders on top of the configured folder count: a
+  Kanban-style capstone board and a table/database-style reading folder.
+  Generation is instant without embedding; enable embeddings only if Ollama is running.
+</p>
+
+<div class="setting-row">
+  <div class="setting-label">
+    <span class="setting-name">Number of notes</span>
+    <span class="setting-desc">Target count (10–500). Default is 120.</span>
+  </div>
+  <input
+    class="text-input bench-max-input"
+    type="text"
+    inputmode="numeric"
+    placeholder="120"
+    bind:value={tdNoteCount}
+    disabled={tdLocked}
+  />
+</div>
+
+<div class="setting-row">
+  <div class="setting-label">
+    <span class="setting-name">Number of folders</span>
+    <span class="setting-desc">Topic folders to distribute notes across (1–20). Default is 8.</span>
+  </div>
+  <input
+    class="text-input bench-max-input"
+    type="text"
+    inputmode="numeric"
+    placeholder="8"
+    bind:value={tdFolderCount}
+    disabled={tdLocked}
+  />
+</div>
+
+<div class="setting-row">
+  <div class="setting-label">
+    <span class="setting-name">Random seed</span>
+    <span class="setting-desc">
+      Leave empty for random, or enter a number for reproducible output.
+    </span>
+  </div>
+  <input
+    class="text-input bench-max-input"
+    type="text"
+    inputmode="numeric"
+    placeholder="(random)"
+    bind:value={tdSeed}
+    disabled={tdLocked}
+  />
+</div>
+
+<div class="setting-row">
+  <div class="setting-label">
+    <span class="setting-name">Include daily notes</span>
+    <span class="setting-desc">
+      Generate ~60 daily notes scattered across the last 120 days inside the
+      root “Daily Notes” folder (same as the calendar / activity bar).
+    </span>
+  </div>
+  <label class="toggle">
+    <input
+      type="checkbox"
+      checked={tdDailyNotes}
+      onchange={(e) => (tdDailyNotes = e.currentTarget.checked)}
+      disabled={tdLocked}
+    />
+    <span class="toggle-label">{tdDailyNotes ? 'Yes' : 'No'}</span>
+  </label>
+</div>
+
+<div class="setting-row">
+  <div class="setting-label">
+    <span class="setting-name">Generate embeddings</span>
+    <span class="setting-desc">
+      Run Ollama embedding for every note. Slow — only enable if you need
+      semantic search and RAG to work immediately after generation.
+      Requires Ollama to be running with an embedding model loaded.
+    </span>
+  </div>
+  <label class="toggle">
+    <input
+      type="checkbox"
+      checked={tdEmbed}
+      onchange={(e) => (tdEmbed = e.currentTarget.checked)}
+      disabled={tdLocked}
+    />
+    <span class="toggle-label">{tdEmbed ? 'Yes' : 'No'}</span>
+  </label>
+</div>
+
+<div class="setting-row">
+  <div class="setting-label">
+    <span class="setting-name">Vault tools</span>
+    <span class="setting-desc">
+      Generate adds sample data to the current vault. Clean Database wipes all SQLite rows,
+      clears semantic indexes, resets in-memory crypto keys, and reloads the page — use before
+      generating a fresh test vault.
+    </span>
+  </div>
+  <div class="td-btn-row">
+    <button
+      type="button"
+      class="btn"
+      onclick={runTestDataGenerator}
+      disabled={tdLocked}
+    >
+      {tdRunning ? 'Generating…' : 'Generate Test Data'}
+    </button>
+    <button
+      type="button"
+      class="btn btn-secondary"
+      onclick={runCleanDatabase}
+      disabled={tdLocked}
+    >
+      {tdCleanRunning ? 'Cleaning…' : 'Clean Database'}
+    </button>
+  </div>
+</div>
+
+{#if tdCleanError}
+  <p class="settings-notice error-text">{tdCleanError}</p>
+{/if}
+
+{#if tdError}
+  <p class="settings-notice error-text">{tdError}</p>
+{/if}
+
+{#if tdSummary}
+  <div class="zim-result bench-result-block">
+    <div class="zim-stats bench-stats-grid">
+      <span>Notes: <strong>{tdSummary.notes}</strong></span>
+      <span>Folders: <strong>{tdSummary.folders}</strong></span>
+      <span>Templates: <strong>{tdSummary.templates}</strong></span>
+      <span>Tags: <strong>{tdSummary.tags}</strong></span>
+      <span>Wiki-links: <strong>{tdSummary.links}</strong></span>
+      <span>Daily notes: <strong>{tdSummary.daily_notes}</strong></span>
+      <span>Embedded: <strong>{tdSummary.embedded}</strong></span>
+    </div>
+    {#if tdSummary.errors && tdSummary.errors.length > 0}
+      <div class="zim-sample">
+        <p class="zim-sample-title">Errors ({tdSummary.errors.length})</p>
+        <pre class="zim-preview">{tdSummary.errors.join('\n')}</pre>
+      </div>
+    {/if}
+  </div>
+{/if}
+
+
 <style>
   .section-subhead {
     margin: 1.5rem 0 0.25rem;
@@ -318,6 +531,13 @@
     padding: 0.35rem 0.65rem;
     font-size: 0.8rem;
     white-space: nowrap;
+  }
+
+  .td-btn-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
   }
 
   .text-input {

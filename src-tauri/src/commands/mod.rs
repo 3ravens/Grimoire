@@ -184,6 +184,7 @@ pub struct LinkedNote {
 pub struct GraphNode {
     pub id: i64,
     pub title: String,
+    pub folder_id: Option<i64>,
 }
 
 /// A directed edge between two notes in the knowledge graph.

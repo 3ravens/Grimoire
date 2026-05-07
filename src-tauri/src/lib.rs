@@ -28,6 +28,8 @@ mod folder_tree;
 mod hardware;
 mod note_store;
 mod retry;
+#[cfg(debug_assertions)]
+mod test_data;
 mod vector;
 
 pub use access_filter::AccessFilter;
@@ -94,7 +96,8 @@ pub fn run() {
                 app_handle.manage(vector::VectorDb(vdb));
 
                 tauri::async_runtime::spawn(async move {
-                    commands::wikipedia_fts_initial_sync(&pool_for_wiki_fts, &vdb_for_wiki_fts).await;
+                    commands::wikipedia_fts_initial_sync(&pool_for_wiki_fts, &vdb_for_wiki_fts)
+                        .await;
                 });
 
                 app_handle.manage(SharedKeyStore::new(KeyStore {
@@ -119,10 +122,14 @@ pub fn run() {
         commands::resolve_note_embed_batch,
         commands::list_notes,
         commands::update_note,
+        commands::save_note_with_version,
         commands::move_note,
         commands::rename_note,
         commands::delete_note,
         commands::duplicate_note,
+        commands::get_note_versions,
+        commands::get_note_version_content,
+        commands::restore_note_version,
         commands::create_folder,
         commands::list_folders,
         commands::rename_folder,
@@ -243,6 +250,10 @@ pub fn run() {
         commands::benchmark_wikipedia_indexing,
         #[cfg(debug_assertions)]
         commands::seed_notes,
+        #[cfg(debug_assertions)]
+        test_data::generate_test_data,
+        #[cfg(debug_assertions)]
+        test_data::clean_developer_database,
     ]);
 
     builder

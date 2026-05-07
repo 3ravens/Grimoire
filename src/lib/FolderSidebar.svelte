@@ -548,17 +548,20 @@
                             aria-label="Rename folder {folder.name}"
                         >
                             <svg
-                                width="12"
-                                height="12"
+                                width="13"
+                                height="13"
                                 viewBox="0 0 15 15"
                                 fill="none"
                                 stroke="currentColor"
                                 stroke-width="1.5"
                                 stroke-linecap="round"
                                 stroke-linejoin="round"
+                                aria-hidden="true"
                             >
-                                <path d="M10 2 L13 5 L5 13 L2 13 L2 10 Z" />
-                                <line x1="8" y1="4" x2="11" y2="7" />
+                                <path
+                                    d="M11.5 1.5 L13.5 3.5 L5 12 L2 12.5 L2.5 9.5 Z"
+                                />
+                                <line x1="9.5" y1="3.5" x2="11.5" y2="5.5" />
                             </svg>
                         </button>
                     {/if}
