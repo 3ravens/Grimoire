@@ -125,3 +125,65 @@ pub fn chunk_csv_row_blocks(rows: Vec<String>, max_chunk_chars: usize) -> Vec<St
 
     blocks
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_sentences_empty_and_whitespace_only_yields_empty() {
+        assert!(split_sentences("").is_empty());
+        assert!(split_sentences("  \n\t  ").is_empty());
+    }
+
+    #[test]
+    fn split_sentences_short_line_single_sentence() {
+        let s = split_sentences("Hello world.");
+        assert_eq!(s, vec!["Hello world.".to_string()]);
+    }
+
+    #[test]
+    fn split_sentences_long_line_splits_at_sentence_boundary() {
+        let words: Vec<&str> = (0..35).map(|_| "word").collect();
+        let long = format!("{}. {}", words.join(" "), "Next starts here");
+        let out = split_sentences(&long);
+        assert!(out.len() >= 2);
+        assert!(out[0].contains("word"));
+        assert!(out[1].starts_with("Next"));
+    }
+
+    #[test]
+    fn chunk_sentences_empty_yields_single_empty_chunk() {
+        assert_eq!(chunk_sentences(vec![], 3, 1), vec![String::new()]);
+    }
+
+    #[test]
+    fn chunk_sentences_fits_in_one_chunk() {
+        let s = vec!["a".into(), "b".into()];
+        assert_eq!(chunk_sentences(s.clone(), 5, 1), vec!["a b".to_string()]);
+    }
+
+    #[test]
+    fn chunk_sentences_overlap_steps() {
+        let s = vec!["1".into(), "2".into(), "3".into(), "4".into()];
+        let c = chunk_sentences(s, 2, 1);
+        assert_eq!(c.len(), 3);
+        assert_eq!(c[0], "1 2");
+        assert_eq!(c[1], "2 3");
+        assert_eq!(c[2], "3 4");
+    }
+
+    #[test]
+    fn chunk_csv_row_blocks_splits_when_combined_exceeds_effective_max() {
+        // `chunk_csv_row_blocks` clamps the caller's budget to at least 256 characters.
+        let rows = vec!["a".repeat(250), "b".repeat(250)];
+        let blocks = chunk_csv_row_blocks(rows, 400);
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks.iter().all(|b| b.len() <= 400));
+    }
+
+    #[test]
+    fn chunk_csv_empty_returns_empty() {
+        assert!(chunk_csv_row_blocks(vec![], 6000).is_empty());
+    }
+}

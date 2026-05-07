@@ -129,3 +129,97 @@ where
     }
     Err(last_err.expect("at least one attempt"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicU32;
+
+    #[tokio::test]
+    async fn with_retries_ok_first_attempt() {
+        let r: Result<i32, &str> = with_retries(3, None, || async { Ok(42) }).await;
+        assert_eq!(r, Ok(42));
+    }
+
+    #[tokio::test]
+    async fn with_retries_zero_means_single_failed_attempt() {
+        let r: Result<(), &str> = with_retries(0, None, || async { Err("nope") }).await;
+        assert_eq!(r, Err("nope"));
+    }
+
+    #[tokio::test]
+    async fn with_retries_cancel_before_attempt() {
+        let flag = Arc::new(AtomicBool::new(true));
+        let cancel: (&Arc<AtomicBool>, &str) = (&flag, "stopped");
+        let r: Result<(), &str> = with_retries(5, Some(cancel), || async { Ok(()) }).await;
+        assert_eq!(r, Err("stopped"));
+    }
+
+    #[tokio::test]
+    async fn with_retries_succeeds_on_second_attempt() {
+        let n = Arc::new(AtomicU32::new(0));
+        let n2 = n.clone();
+        let r: Result<&str, &str> = with_retries(
+            2,
+            None,
+            move || {
+                let n2 = n2.clone();
+                async move {
+                    if n2.fetch_add(1, Ordering::SeqCst) == 0 {
+                        Err("retry")
+                    } else {
+                        Ok("done")
+                    }
+                }
+            },
+        )
+        .await;
+        assert_eq!(r, Ok("done"));
+    }
+
+    #[tokio::test]
+    async fn with_retries_background_caps_delay() {
+        let n = Arc::new(AtomicU32::new(0));
+        let n2 = n.clone();
+        let r: Result<(), &str> = with_retries_background(
+            1,
+            None,
+            50,
+            move || {
+                let n2 = n2.clone();
+                async move {
+                    if n2.fetch_add(1, Ordering::SeqCst) == 0 {
+                        Err("once")
+                    } else {
+                        Ok(())
+                    }
+                }
+            },
+        )
+        .await;
+        assert_eq!(r, Ok(()));
+    }
+
+    #[tokio::test]
+    async fn with_retries_counting_background_returns_attempt_index() {
+        let n = Arc::new(AtomicU32::new(0));
+        let n2 = n.clone();
+        let r = with_retries_counting_background(
+            2,
+            None,
+            50,
+            move || {
+                let n2 = n2.clone();
+                async move {
+                    if n2.fetch_add(1, Ordering::SeqCst) < 2 {
+                        Err("x")
+                    } else {
+                        Ok(99_u8)
+                    }
+                }
+            },
+        )
+        .await;
+        assert_eq!(r, Ok((99, 3)));
+    }
+}

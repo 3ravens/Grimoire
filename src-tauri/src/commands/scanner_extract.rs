@@ -376,3 +376,30 @@ fn extract_rtf(path: &Path) -> AppResult<String> {
     }
     Ok(text)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flatten_full_text() {
+        let ex = ScanExtract::FullText("abc".into());
+        assert_eq!(flatten_for_note(&ex), "abc");
+    }
+
+    #[test]
+    fn flatten_chunks_joins_with_rule() {
+        let ex = ScanExtract::Chunks(vec!["a".into(), "b".into()]);
+        let s = flatten_for_note(&ex);
+        assert!(s.contains("---"));
+        assert!(s.contains('a') && s.contains('b'));
+    }
+
+    #[test]
+    fn html_to_structured_plain_headings_and_paragraph() {
+        let html = "<h1>Title</h1><p>Body here.</p>";
+        let out = html_to_structured_plain(html);
+        assert!(out.contains("Title"));
+        assert!(out.contains("Body here"));
+    }
+}

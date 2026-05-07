@@ -123,4 +123,52 @@ pub fn verify_sentinel(key: &[u8; 32], sentinel_b64: &str) -> bool {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+
+    #[test]
+    fn encrypt_decrypt_round_trip() {
+        let salt = [3u8; 32];
+        let key = derive_key("correct horse battery staple", &salt);
+        let blob = encrypt(&key, b"secret payload");
+        let plain = decrypt(&key, &blob).unwrap();
+        assert_eq!(plain, b"secret payload");
+    }
+
+    #[test]
+    fn decrypt_wrong_key_fails() {
+        let salt = [9u8; 32];
+        let k1 = derive_key("password-one", &salt);
+        let k2 = derive_key("password-two", &salt);
+        let blob = encrypt(&k1, b"data");
+        assert!(decrypt(&k2, &blob).is_err());
+    }
+
+    #[test]
+    fn tampered_blob_fails_decrypt() {
+        let salt = [1u8; 32];
+        let key = derive_key("pw", &salt);
+        let mut blob = encrypt(&key, b"x");
+        let bytes = base64::engine::general_purpose::STANDARD.decode(&blob).unwrap();
+        let mut v = bytes.clone();
+        if let Some(last) = v.last_mut() {
+            *last ^= 0xFF;
+        }
+        blob = base64::engine::general_purpose::STANDARD.encode(v);
+        assert!(decrypt(&key, &blob).is_err());
+    }
+
+    #[test]
+    fn sentinel_round_trip() {
+        let salt = [5u8; 32];
+        let key = derive_key("vault-password", &salt);
+        let s = make_sentinel(&key);
+        assert!(verify_sentinel(&key, &s));
+        let other = derive_key("other", &salt);
+        assert!(!verify_sentinel(&other, &s));
+    }
+}
+
 

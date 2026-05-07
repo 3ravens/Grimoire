@@ -542,3 +542,43 @@ async fn sync_specs_to_folder(
 
     Ok(seeded_total)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn template_row_parse_properties_reads_json_specs() {
+        let row = TemplateRow {
+            id: 1,
+            name: "Custom".into(),
+            title: "T".into(),
+            content: "C".into(),
+            properties: r#"[{"name":"Status","type":"select","options":"[\"A\",\"B\"]"}]"#
+                .into(),
+        };
+        let specs = row.parse_properties();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name, "Status");
+        assert_eq!(specs[0].r#type, "select");
+        assert!(specs[0].options.as_ref().is_some_and(|o| o.contains('A')));
+    }
+
+    #[test]
+    fn template_row_parse_properties_malformed_json_yields_empty() {
+        let row = TemplateRow {
+            id: 2,
+            name: "Bad".into(),
+            title: "".into(),
+            content: "".into(),
+            properties: "not-json".into(),
+        };
+        assert!(row.parse_properties().is_empty());
+    }
+
+    #[test]
+    fn builtin_templates_include_blank() {
+        let templates = builtin_templates();
+        assert!(templates.into_iter().any(|t| t.name == "Blank"));
+    }
+}

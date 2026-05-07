@@ -234,3 +234,34 @@ pub async fn create_daily_note(
     super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
     Ok(note)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::format_display_date;
+
+    #[test]
+    fn format_display_date_dd_mm_yyyy() {
+        assert_eq!(
+            format_display_date("2026-03-05", "DD-MM-YYYY"),
+            "05-03-2026"
+        );
+    }
+
+    #[test]
+    fn format_display_date_mm_dd_yyyy() {
+        assert_eq!(
+            format_display_date("2026-03-05", "MM-DD-YYYY"),
+            "03-05-2026"
+        );
+    }
+
+    #[test]
+    fn format_display_date_iso_default_returns_input() {
+        assert_eq!(format_display_date("2026-03-05", "YYYY-MM-DD"), "2026-03-05");
+    }
+
+    #[test]
+    fn format_display_date_non_iso_passthrough() {
+        assert_eq!(format_display_date("hello", "DD-MM-YYYY"), "hello");
+    }
+}

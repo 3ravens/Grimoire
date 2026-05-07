@@ -63,18 +63,18 @@ pub async fn is_vault_locked(
     Ok(key_guard.is_none())
 }
 
-/// Attempt to unlock the vault with the given password.
-/// Returns true on success, false on wrong password.
-/// On success the derived key is stored in `KeyStore` for this session.
-#[tauri::command]
-pub async fn unlock_vault(
-    password: String,
-    pool: State<'_, SqlitePool>,
-    keys: State<'_, SharedKeyStore>,
+/// Core vault unlock logic (shared by the Tauri command and unit tests).
+///
+/// Returns `Ok(true)` when no vault password is configured, on successful unlock,
+/// or `Ok(false)` when the password does not match the sentinel.
+pub(crate) async fn try_unlock_vault(
+    pool: &SqlitePool,
+    keys: &SharedKeyStore,
+    password: &str,
 ) -> Result<bool, String> {
     let row: Option<(String, String)> =
         sqlx::query_as("SELECT salt, sentinel FROM vault_lock WHERE id = 1")
-            .fetch_optional(pool.inner())
+            .fetch_optional(pool)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -89,7 +89,7 @@ pub async fn unlock_vault(
         .decode(&salt_b64)
         .map_err(|e| format!("corrupt salt: {e}"))?;
 
-    let mut key = crypto::derive_key(&password, &salt);
+    let mut key = crypto::derive_key(password, &salt);
 
     if !crypto::verify_sentinel(&key, &sentinel_b64) {
         key.zeroize();
@@ -99,6 +99,18 @@ pub async fn unlock_vault(
     let mut key_guard = keys.vault_key.lock().map_err(|e| e.to_string())?;
     *key_guard = Some(key);
     Ok(true)
+}
+
+/// Attempt to unlock the vault with the given password.
+/// Returns true on success, false on wrong password.
+/// On success the derived key is stored in `KeyStore` for this session.
+#[tauri::command]
+pub async fn unlock_vault(
+    password: String,
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
+) -> Result<bool, String> {
+    try_unlock_vault(pool.inner(), keys.inner(), &password).await
 }
 
 /// Lock the vault: zeroize and drop the in-memory key, and purge the search index.
@@ -586,4 +598,89 @@ pub async fn lock_folder(
         folder_keys.remove(&fid);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    use base64::Engine;
+    use sqlx::SqlitePool;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    use crate::KeyStore;
+
+    async fn memory_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        pool
+    }
+
+    fn empty_keys() -> SharedKeyStore {
+        std::sync::Arc::new(KeyStore {
+            vault_key: Mutex::new(None),
+            folder_keys: Mutex::new(HashMap::new()),
+        })
+    }
+
+    #[tokio::test]
+    async fn try_unlock_no_vault_row_returns_true() {
+        let pool = memory_pool().await;
+        let keys = empty_keys();
+        assert!(try_unlock_vault(&pool, &keys, "any")
+            .await
+            .expect("no error"));
+    }
+
+    #[tokio::test]
+    async fn try_unlock_wrong_password_leaves_vault_key_empty() {
+        let pool = memory_pool().await;
+        let keys = empty_keys();
+
+        let salt = crypto::generate_salt();
+        let key = crypto::derive_key("correct-password", &salt);
+        let sentinel = crypto::make_sentinel(&key);
+        let salt_b64 = base64::engine::general_purpose::STANDARD.encode(salt);
+
+        sqlx::query("INSERT INTO vault_lock (id, salt, sentinel) VALUES (1, ?, ?)")
+            .bind(&salt_b64)
+            .bind(&sentinel)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(!try_unlock_vault(&pool, &keys, "wrong-password")
+            .await
+            .unwrap());
+        assert!(keys.vault_key.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn try_unlock_correct_password_stores_key() {
+        let pool = memory_pool().await;
+        let keys = empty_keys();
+
+        let salt = crypto::generate_salt();
+        let key = crypto::derive_key("my-vault-secret", &salt);
+        let sentinel = crypto::make_sentinel(&key);
+        let salt_b64 = base64::engine::general_purpose::STANDARD.encode(salt);
+
+        sqlx::query("INSERT INTO vault_lock (id, salt, sentinel) VALUES (1, ?, ?)")
+            .bind(&salt_b64)
+            .bind(&sentinel)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(try_unlock_vault(&pool, &keys, "my-vault-secret")
+            .await
+            .unwrap());
+        assert!(keys.vault_key.lock().unwrap().is_some());
+    }
 }

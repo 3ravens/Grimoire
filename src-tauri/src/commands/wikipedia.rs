@@ -2653,3 +2653,20 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
     let y = if m <= 2 { y + 1 } else { y };
     (y, m, d)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{days_to_ymd, wiki_rrf_score};
+
+    #[test]
+    fn wiki_rrf_score_strictly_decreases_with_rank() {
+        let a = wiki_rrf_score(1);
+        let b = wiki_rrf_score(2);
+        assert!(b < a);
+    }
+
+    #[test]
+    fn days_to_ymd_unix_epoch() {
+        assert_eq!(days_to_ymd(0), (1970, 1, 1));
+    }
+}

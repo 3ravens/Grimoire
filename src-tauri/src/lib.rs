@@ -24,7 +24,7 @@ mod config;
 mod crypto;
 mod db;
 pub mod error;
-mod folder_tree;
+pub mod folder_tree;
 mod hardware;
 mod note_store;
 mod retry;

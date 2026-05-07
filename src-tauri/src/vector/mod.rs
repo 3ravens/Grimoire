@@ -195,3 +195,33 @@ pub use scanned::{
     clear_scanned_index, raw_scanned_search, scanned_file_remove, scanned_file_remove_prefix,
     scanned_file_search, scanned_file_upsert_batch, ScannedFileMatch,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_excerpt_under_limit_unchanged() {
+        assert_eq!(truncate_excerpt("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_excerpt_inserts_ellipsis_when_longer() {
+        let s = truncate_excerpt("abcdefghij", 4);
+        assert!(s.contains('\u{2026}'));
+        assert!(s.len() < "abcdefghij".len());
+    }
+
+    #[test]
+    fn escape_sql_doubles_single_quotes() {
+        assert_eq!(escape_sql("a'b"), "a''b");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn lancedb_connect_temp_dir_smoke() {
+        let dir = tempfile::tempdir().unwrap();
+        let uri = dir.path().to_str().unwrap();
+        lancedb::connect(uri).execute().await.unwrap();
+    }
+}

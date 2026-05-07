@@ -147,3 +147,88 @@ pub fn truncate(s: &str, max_chars: usize) -> &str {
         .map(|(i, _)| &s[..i])
         .unwrap_or(s)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[test]
+    fn truncate_respects_unicode_scalar_bound() {
+        let s = "a😀b"; // 'a' (1), emoji (1 scalar), 'b' — positions 0,1,2
+        assert_eq!(truncate(s, 2), "a😀");
+        assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[tokio::test]
+    async fn log_event_inserts_row_when_audit_enabled() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES ('audit_enabled', 'true')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        log_event(
+            &pool,
+            "note_create",
+            Some("note"),
+            Some(42),
+            Some("n1"),
+            Some("detail"),
+        )
+        .await;
+
+        let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after, before + 1);
+
+        let action: String = sqlx::query_scalar(
+            "SELECT action FROM audit_log WHERE action = 'note_create' LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(action, "note_create");
+    }
+
+    #[tokio::test]
+    async fn log_event_skipped_when_audit_disabled() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES ('audit_enabled', 'false')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        log_event(&pool, "silent", None, None, None, None).await;
+
+        let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(after, before);
+    }
+}

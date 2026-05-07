@@ -138,3 +138,39 @@ impl AppConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn load_defaults_embedding_model_when_absent() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        let cfg = AppConfig::load(&pool).await.unwrap();
+        assert_eq!(cfg.embedding_model, "nomic-embed-text");
+        assert_eq!(cfg.background_max_retries, 2);
+    }
+
+    #[test]
+    fn apply_change_clamps_background_max_retries() {
+        let mut cfg = AppConfig {
+            embedding_model: "m".into(),
+            vault_path: String::new(),
+            llm_force_enabled: false,
+            wikipedia_enabled: false,
+            wiki_perf_logging: false,
+            background_max_retries: 2,
+        };
+        cfg.apply_change("background_max_retries", "99");
+        assert_eq!(cfg.background_max_retries, 10);
+        cfg.apply_change("background_max_retries", "-5");
+        assert_eq!(cfg.background_max_retries, 0);
+    }
+}

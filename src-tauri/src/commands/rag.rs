@@ -1516,3 +1516,21 @@ async fn seed_kanban_folder(pool: &SqlitePool) -> AppResult<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_reindex_title;
+
+    #[test]
+    fn truncate_reindex_title_under_limit_unchanged() {
+        assert_eq!(truncate_reindex_title("hello"), "hello");
+    }
+
+    #[test]
+    fn truncate_reindex_title_inserts_ellipsis_when_long() {
+        let s = "a".repeat(100);
+        let out = truncate_reindex_title(&s);
+        assert!(out.ends_with('…'));
+        assert!(out.chars().count() <= 81);
+    }
+}

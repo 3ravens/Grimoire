@@ -22,6 +22,11 @@ use crate::SharedKeyStore;
 use crate::{AppError, AppResult};
 use crate::EncryptedNoteStore;
 
+/// Returns true when `t` is a supported property definition type.
+fn property_type_allowed(t: &str) -> bool {
+    ["text", "number", "date", "boolean", "select"].contains(&t)
+}
+
 // ---------------------------------------------------------------------------
 // Note properties / databases
 // ---------------------------------------------------------------------------
@@ -84,7 +89,7 @@ pub async fn create_property_def(
     options: Option<String>,
 ) -> AppResult<PropertyDef> {
     // Validate type
-    if !["text", "number", "date", "boolean", "select"].contains(&r#type.as_str()) {
+    if !property_type_allowed(&r#type) {
         return Err(AppError::InvalidInput(format!("Invalid property type: {}", r#type)));
     }
 
@@ -291,4 +296,22 @@ pub async fn list_notes_with_properties(
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn property_type_allowed_accepts_known_types() {
+        for t in ["text", "number", "date", "boolean", "select"] {
+            assert!(property_type_allowed(t), "{t}");
+        }
+    }
+
+    #[test]
+    fn property_type_allowed_rejects_unknown() {
+        assert!(!property_type_allowed("json"));
+        assert!(!property_type_allowed(""));
+    }
 }

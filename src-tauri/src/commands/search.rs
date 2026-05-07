@@ -379,3 +379,222 @@ pub(crate) async fn fts_initial_sync(pool: &SqlitePool) {
         fts_upsert(pool, id, &title, &content).await;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    use crate::KeyStore;
+
+    #[test]
+    fn build_fts_query_tokens_quoted_with_prefix() {
+        assert_eq!(build_fts_query("rust error"), "\"rust\"* \"error\"*");
+    }
+
+    #[test]
+    fn build_fts_query_strips_embedded_quotes_in_token() {
+        assert_eq!(build_fts_query(r#"foo"bar"#), "\"foobar\"*");
+    }
+
+    #[test]
+    fn build_fts_query_whitespace_only_empty() {
+        assert_eq!(build_fts_query("   \t"), "");
+    }
+
+    #[test]
+    fn rrf_score_matches_reciprocal_rank_fusion() {
+        let s1 = rrf_score(1);
+        let s2 = rrf_score(2);
+        assert!((s1 - 1.0 / (RRF_K + 1.0)).abs() < 1e-9);
+        assert!(s2 < s1);
+    }
+
+    #[tokio::test]
+    async fn fts_upsert_inserts_matching_row() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        let folder_id: i64 =
+            sqlx::query_scalar("INSERT INTO folders (name) VALUES ('f') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let note_id: i64 = sqlx::query_scalar(
+            "INSERT INTO notes (title, content, folder_id) VALUES ('Title', 'alpha beta', ?) RETURNING id",
+        )
+        .bind(folder_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        fts_upsert(&pool, note_id, "Title", "alpha beta").await;
+
+        let cnt: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notes_fts WHERE rowid = ?")
+            .bind(note_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cnt, 1);
+    }
+
+    #[tokio::test]
+    async fn fts_delete_removes_row() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        let folder_id: i64 =
+            sqlx::query_scalar("INSERT INTO folders (name) VALUES ('f') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let note_id: i64 = sqlx::query_scalar(
+            "INSERT INTO notes (title, content, folder_id) VALUES ('T', 'body', ?) RETURNING id",
+        )
+        .bind(folder_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        fts_upsert(&pool, note_id, "T", "body").await;
+        fts_delete(&pool, note_id).await;
+
+        let cnt: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notes_fts WHERE rowid = ?")
+            .bind(note_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cnt, 0);
+    }
+
+    #[tokio::test]
+    async fn fts_search_inner_filters_stale_fts_in_locked_folder_without_key() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        let folder_id: i64 = sqlx::query_scalar(
+            "INSERT INTO folders (name, locked) VALUES ('secret', 1) RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let note_id: i64 = sqlx::query_scalar(
+            "INSERT INTO notes (title, content, folder_id) VALUES ('x', 'staleuniquephrase', ?) RETURNING id",
+        )
+        .bind(folder_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Simulate stale FTS row (e.g. race) — real saves skip fts_upsert for locked notes.
+        fts_upsert(&pool, note_id, "x", "staleuniquephrase").await;
+
+        let ks = KeyStore {
+            vault_key: Mutex::new(None),
+            folder_keys: Mutex::new(HashMap::new()),
+        };
+
+        let hits = fts_search_inner(&pool, &ks, "staleuniquephrase", 5)
+            .await
+            .unwrap();
+        assert!(hits.is_empty(), "locked folder without session key must not surface hits");
+    }
+
+    #[tokio::test]
+    async fn fts_search_inner_returns_stale_hit_when_folder_key_present() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        let folder_id: i64 = sqlx::query_scalar(
+            "INSERT INTO folders (name, locked) VALUES ('secret', 1) RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let note_id: i64 = sqlx::query_scalar(
+            "INSERT INTO notes (title, content, folder_id) VALUES ('x', 'visiblestaletoken', ?) RETURNING id",
+        )
+        .bind(folder_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        fts_upsert(&pool, note_id, "x", "visiblestaletoken").await;
+
+        let mut folder_keys = HashMap::new();
+        folder_keys.insert(folder_id, [9u8; 32]);
+        let ks = KeyStore {
+            vault_key: Mutex::new(None),
+            folder_keys: Mutex::new(folder_keys),
+        };
+
+        let hits = fts_search_inner(&pool, &ks, "visiblestaletoken", 5)
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].note_id, note_id);
+    }
+
+    #[tokio::test]
+    async fn simulating_delete_note_removes_fts_row() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        let folder_id: i64 =
+            sqlx::query_scalar("INSERT INTO folders (name) VALUES ('f') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        let note_id: i64 = sqlx::query_scalar(
+            "INSERT INTO notes (title, content, folder_id) VALUES ('T', 'gone', ?) RETURNING id",
+        )
+        .bind(folder_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        fts_upsert(&pool, note_id, "T", "gone").await;
+
+        sqlx::query("DELETE FROM notes WHERE id = ?")
+            .bind(note_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        fts_delete(&pool, note_id).await;
+
+        let cnt: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notes_fts WHERE rowid = ?")
+            .bind(note_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cnt, 0);
+    }
+}

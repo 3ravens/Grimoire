@@ -61,6 +61,9 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Dxgi_Common",
 ] }
 
+[dev-dependencies]
+tempfile = "3"
+
 [patch.crates-io]
 # Local forks of zim-sys and zim-rs with the Searcher/Search/Query API removed.
 # These classes were dropped in libzim 9.x (search.h no longer exists).

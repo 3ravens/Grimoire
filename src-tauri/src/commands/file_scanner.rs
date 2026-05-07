@@ -1415,3 +1415,45 @@ pub async fn import_file_as_note(
         locked:     false,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{mime_for_path, normalize_scan_rel, path_excluded_by_globs};
+    use globset::GlobSetBuilder;
+
+    #[test]
+    fn mime_for_path_known_extensions() {
+        assert_eq!(
+            mime_for_path(Path::new("readme.MD")),
+            Some("text/markdown")
+        );
+        assert_eq!(mime_for_path(Path::new("x.pdf")), Some("application/pdf"));
+        assert_eq!(mime_for_path(Path::new("unknown.zzz")), None);
+    }
+
+    #[test]
+    fn normalize_scan_rel_strips_root_prefix() {
+        let root = Path::new("vault");
+        let full = Path::new("vault/sub/x.txt");
+        assert_eq!(normalize_scan_rel(root, full, false), "sub/x.txt");
+    }
+
+    #[test]
+    fn path_excluded_by_globs_matches_exact() {
+        let mut b = GlobSetBuilder::new();
+        b.add(globset::Glob::new("target/**").unwrap());
+        let set = b.build().unwrap();
+        assert!(path_excluded_by_globs("target/debug/foo", &set));
+        assert!(!path_excluded_by_globs("src/main.rs", &set));
+    }
+
+    #[test]
+    fn path_excluded_by_globs_empty_rel_never_matches() {
+        let mut b = GlobSetBuilder::new();
+        b.add(globset::Glob::new("**").unwrap());
+        let set = b.build().unwrap();
+        assert!(!path_excluded_by_globs("", &set));
+    }
+}

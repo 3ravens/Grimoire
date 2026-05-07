@@ -1220,3 +1220,13 @@ pub(crate) fn domain_pools() -> Vec<DomainPool> {
         },
     ]
 }
+
+#[cfg(test)]
+mod domain_pool_tests {
+    #[test]
+    fn domain_pools_non_empty_and_has_technology() {
+        let pools = super::domain_pools();
+        assert!(!pools.is_empty());
+        assert!(pools.iter().any(|p| p.name == "Technology"));
+    }
+}

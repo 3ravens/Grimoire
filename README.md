@@ -22,6 +22,11 @@ npm install
 npm run tauri dev
 ```
 
+## Tests
+
+- **Rust** (library + `src-tauri/tests/` integration): from `src-tauri`, run `cargo test`. Optional ignored tests (e.g. LanceDB smoke): `cargo test -- --ignored`.
+- **JavaScript** (Vitest, `src/**/*.test.js`): from the repo root, run `npm test`. Use `npm run test:watch` while editing.
+
 ## Benchmark Baseline (Wikipedia Indexing)
 
 - In **dev builds**, open Settings → **Developer**. Enter a ZIM path, optional max entries cap, then **Run indexing benchmark**. Use **Copy result JSON** to save the run.

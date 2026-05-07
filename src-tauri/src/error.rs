@@ -80,3 +80,31 @@ pub const WIKIPEDIA_OFFLINE_MSG: &str = "No internet connection";
 
 /// Convenience alias used by all command return types.
 pub type AppResult<T> = Result<T, AppError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_passes_through_message() {
+        let e = AppError::InvalidInput("bad".into());
+        assert_eq!(format!("{e}"), "bad");
+    }
+
+    #[test]
+    fn sqlx_row_not_found_maps_to_not_found() {
+        let e: AppError = sqlx::Error::RowNotFound.into();
+        match e {
+            AppError::NotFound(m) => assert!(m.contains("not found") || m.contains("Record")),
+            _ => panic!("expected NotFound"),
+        }
+    }
+
+    #[test]
+    fn serde_json_roundtrip_tagged_variant() {
+        let e = AppError::Auth("nope".into());
+        let j = serde_json::to_string(&e).unwrap();
+        assert!(j.contains("Auth"));
+        assert!(j.contains("nope"));
+    }
+}
