@@ -44,7 +44,7 @@ export const FEATURE_GUIDE = `## Grimoire Feature Guide
 
 ### Settings
 - LLM: Model selection, keep in memory toggle, embedding model
-- Appearance: Theme (System/Light/Dark/Spellbook), accent colour, date format
+- Appearance: Theme (System/Light/Dark/Spellbook/Matrix), accent colour (Default, Crimson, Cyan, Forest green, Black and grey), date format
 - Security: Vault password (AES-GCM + Argon2id), per-folder passwords
 - Data: Export all notes as Markdown; export single note from editor or folder list (Markdown, HTML, PDF via print)
 

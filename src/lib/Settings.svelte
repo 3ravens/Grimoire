@@ -38,7 +38,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     onLockVault = () => {},
     keepInMemory = false,
     onKeepInMemoryChange = () => {},
-    accent = 'red',
+    accent = 'default',
     onAccentChange = () => {},
     theme = 'system',
     onThemeChange = () => {},

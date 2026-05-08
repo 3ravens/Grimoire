@@ -382,7 +382,7 @@
 /* ── Highlights ───────────────────────────────────────────────────────────── */
 
 .wiki-article-body :global(mark.wiki-highlight) {
-  background: rgba(155, 32, 32, 0.18); /* accent at low opacity */
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--text);
   border-radius: 2px;
   padding: 0 1px;
@@ -390,7 +390,7 @@
 }
 
 .wiki-article-body :global(mark.wiki-highlight:hover) {
-  background: rgba(155, 32, 32, 0.32);
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
 .wiki-article-body :global(mark.wiki-highlight-orphaned) {

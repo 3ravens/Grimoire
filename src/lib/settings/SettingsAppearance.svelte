@@ -1,7 +1,7 @@
 <script>
   let {
     theme = 'system', onThemeChange = () => {},
-    accent = 'red', onAccentChange = () => {},
+    accent = 'default', onAccentChange = () => {},
     dateFormat = 'DD-MM-YYYY', onDateFormatChange = () => {},
   } = $props();
 
@@ -41,9 +41,17 @@
   <div class="accent-swatches">
     <button
       class="accent-swatch"
+      class:active={theme !== 'bag' && accent === 'default'}
+      style="--swatch-color: #c8a44e"
+      title="Default"
+      disabled={theme === 'spellbook' || theme === 'matrix'}
+      onclick={() => selectStandardAccent('default')}
+    ></button>
+    <button
+      class="accent-swatch"
       class:active={theme !== 'bag' && accent === 'red'}
       style="--swatch-color: #9b2020"
-      title="Crimson (default)"
+      title="Crimson"
       disabled={theme === 'spellbook' || theme === 'matrix'}
       onclick={() => selectStandardAccent('red')}
     ></button>

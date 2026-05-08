@@ -3,7 +3,7 @@
 
 export function createSettings() {
   let keepModelInMemory = $state(localStorage.getItem('keepModelInMemory') === 'true');
-  let accent = $state(localStorage.getItem('accent') ?? 'red');
+  let accent = $state(localStorage.getItem('accent') ?? 'default');
   let theme  = $state(localStorage.getItem('theme')  ?? 'system');
   let dailyNoteFormat = $state(localStorage.getItem('dailyNoteFormat') ?? 'DD-MM-YYYY');
   let devNativeContextMenu = $state(
