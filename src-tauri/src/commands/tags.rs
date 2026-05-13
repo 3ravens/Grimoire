@@ -160,20 +160,27 @@ pub struct TagCount {
     pub count: i64,
 }
 
-/// Parse and persist all `#tags` and `[[wiki-links]]` found in a note's content.
-/// Called in the background after every save. Failures are non-fatal — the
-/// relations are derived data and can always be recomputed from content.
+/// Parse and persist all `#tags` and `[[wiki-links]]` found in `content` for `note_id`.
+/// Used by the Tauri command and by internal bulk fixtures (e.g. test data generator).
+pub(crate) async fn sync_note_relations_pool(
+    pool: &SqlitePool,
+    note_id: i64,
+    content: &str,
+) -> AppResult<()> {
+    let tags = parse_tags(content);
+    let links = parse_wiki_links(content);
+    sync_tags(pool, note_id, &tags).await?;
+    sync_links(pool, note_id, &links).await?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn sync_note_relations(
     pool: State<'_, SqlitePool>,
     note_id: i64,
     content: String,
 ) -> AppResult<()> {
-    let tags = parse_tags(&content);
-    let links = parse_wiki_links(&content);
-    sync_tags(pool.inner(), note_id, &tags).await?;
-    sync_links(pool.inner(), note_id, &links).await?;
-    Ok(())
+    sync_note_relations_pool(pool.inner(), note_id, &content).await
 }
 
 /// Return the tag names attached to a note, alphabetically sorted.

@@ -26,11 +26,15 @@ mod db;
 pub mod error;
 pub mod folder_tree;
 mod hardware;
+pub mod perf_budget;
 mod note_store;
 mod retry;
 #[cfg(debug_assertions)]
-mod test_data;
+pub mod test_data;
 mod vector;
+
+#[cfg(debug_assertions)]
+pub mod search_quality;
 
 pub use access_filter::AccessFilter;
 pub use error::{AppError, AppResult};
@@ -53,6 +57,43 @@ pub struct KeyStore {
 
 /// Shared handle to the session key store (cloneable for background tasks).
 pub type SharedKeyStore = Arc<KeyStore>;
+
+/// Empty session keystore for `perf-budget` and other debug harnesses.
+#[cfg(debug_assertions)]
+pub fn bench_shared_keystore() -> SharedKeyStore {
+    Arc::new(KeyStore {
+        vault_key: Mutex::new(None),
+        folder_keys: Mutex::new(HashMap::new()),
+    })
+}
+
+/// Public surface for the `perf-budget` binary (`src/bin/perf-budget.rs`).
+#[cfg(debug_assertions)]
+pub mod perf_budget_bin {
+    pub use crate::commands::chat::measure_rag_chat_ttft;
+    pub use crate::commands::notes::save_note_with_version_benchmark_path;
+    pub use crate::commands::rag::index_note_vectors_for_benchmark;
+    pub use crate::config::AppConfig;
+    pub use crate::db::open_sqlite_file;
+    pub use crate::test_data::{seed_test_vault_inner, SeedTestVaultParams};
+    pub use crate::vector::connect_dir;
+}
+
+/// Public surface for the `search-quality` binary (`src/bin/search-quality.rs`).
+#[cfg(debug_assertions)]
+pub mod search_quality_bin {
+    pub use crate::commands::rag::{index_note_vectors_for_benchmark, search_notes_semantic};
+    pub use crate::commands::search::fts_search_inner;
+    pub use crate::config::AppConfig;
+    pub use crate::db::open_sqlite_file;
+    pub use crate::search_quality::{
+        cases_json_embedded, insert_anchor_notes, load_cases_from_str, SearchCase, SearchQualityFile,
+        SEARCH_QUALITY_ANCHOR_COUNT, SEMANTIC_TOP3_PASS_MIN,
+    };
+    pub use crate::test_data::{seed_test_vault_inner, SeedTestVaultParams};
+    pub use crate::vector::connect_dir;
+    pub use crate::vector::CHUNK_FETCH_LIMIT;
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -244,6 +285,8 @@ pub fn run() {
         commands::debug_search_wikipedia,
         #[cfg(debug_assertions)]
         commands::debug_search_scanned_files,
+        #[cfg(debug_assertions)]
+        commands::benchmark_rag_chat_ttft,
         #[cfg(debug_assertions)]
         commands::benchmark_wikipedia_quality,
         #[cfg(debug_assertions)]

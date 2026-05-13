@@ -177,6 +177,170 @@ pub async fn chat(
     Ok(())
 }
 
+/// Debug-only: measure semantic retrieval + Ollama time-to-first-token for a RAG-style chat.
+/// Does not emit `chat:token` events; does not write audit entries for the chat call.
+#[cfg(debug_assertions)]
+#[derive(Serialize)]
+pub struct RagChatTtftBench {
+    /// Wall-clock from start until first non-empty assistant token (retrieval + chat).
+    pub total_ms_to_first_token: u64,
+    pub retrieval_ms: u64,
+    pub note_match_count: usize,
+    pub chat_model: String,
+    pub embedding_model: String,
+}
+
+#[cfg(debug_assertions)]
+pub async fn measure_rag_chat_ttft(
+    pool: &SqlitePool,
+    keys: &crate::SharedKeyStore,
+    vdb: &lancedb::Connection,
+    embedding_model: &str,
+    query: &str,
+    chat_model: &str,
+) -> AppResult<RagChatTtftBench> {
+    use std::time::Instant;
+
+    let wall = Instant::now();
+
+    let r0 = Instant::now();
+    let matches = super::rag::search_notes_semantic(
+        pool,
+        keys,
+        vdb,
+        embedding_model,
+        query,
+        crate::vector::CHUNK_FETCH_LIMIT,
+        false,
+    )
+    .await?;
+    let retrieval_ms = r0.elapsed().as_millis() as u64;
+
+    let mut user_notes = String::new();
+    for m in &matches {
+        let body = m.excerpts.join("\n");
+        user_notes.push_str(&format!("[Note: \"{}\"]\n{}\n\n", m.title, body));
+    }
+    let system = if user_notes.is_empty() {
+        "You are a concise assistant. No notes matched; answer briefly from general knowledge."
+            .to_string()
+    } else {
+        format!(
+            "You are a personal knowledge assistant. Answer using the notes below.\n\nUSER NOTES:\n{}",
+            user_notes.trim_end()
+        )
+    };
+
+    let client = reqwest::Client::new();
+    let messages = vec![
+        ChatMessage {
+            role: "system".into(),
+            content: system,
+        },
+        ChatMessage {
+            role: "user".into(),
+            content: format!("{query}\n\nReply in one short sentence."),
+        },
+    ];
+    let body = OllamaChatRequest {
+        model: chat_model.to_string(),
+        messages,
+        stream: true,
+        keep_alive: 300,
+        options: OllamaOptions::new(0.2, 0.9, 40, 1.1, 2048),
+    };
+
+    let response = client
+        .post("http://localhost:11434/api/chat")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| {
+            AppError::OllamaUnavailable(format!("Could not reach Ollama — is it running? ({e})"))
+        })?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(AppError::OllamaUnavailable(format!(
+            "Ollama returned {status}: {text}"
+        )));
+    }
+
+    let mut stream = response.bytes_stream();
+    let mut line_buf = String::new();
+    let mut first_token_ms: Option<u64> = None;
+
+    'stream: while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| AppError::OllamaUnavailable(format!("Stream read error: {e}")))?;
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|e| AppError::OllamaUnavailable(format!("UTF-8 error: {e}")))?;
+
+        for ch in text.chars() {
+            if ch == '\n' {
+                let line = line_buf.trim().to_string();
+                line_buf.clear();
+                if line.is_empty() {
+                    continue;
+                }
+
+                let parsed: OllamaStreamChunk = serde_json::from_str(&line).map_err(|e| {
+                    AppError::OllamaUnavailable(format!("Unexpected Ollama chunk: {e}\nLine: {line}"))
+                })?;
+
+                if !parsed.done && !parsed.message.content.is_empty() && first_token_ms.is_none() {
+                    first_token_ms = Some(wall.elapsed().as_millis() as u64);
+                    break 'stream;
+                }
+
+                if parsed.done {
+                    break 'stream;
+                }
+            } else {
+                line_buf.push(ch);
+            }
+        }
+    }
+
+    let total_ms_to_first_token = first_token_ms.unwrap_or_else(|| wall.elapsed().as_millis() as u64);
+
+    Ok(RagChatTtftBench {
+        total_ms_to_first_token,
+        retrieval_ms,
+        note_match_count: matches.len(),
+        chat_model: chat_model.to_string(),
+        embedding_model: embedding_model.to_string(),
+    })
+}
+
+#[cfg(debug_assertions)]
+#[tauri::command(rename_all = "camelCase")]
+pub async fn benchmark_rag_chat_ttft(
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, crate::SharedKeyStore>,
+    vdb: State<'_, crate::vector::VectorDb>,
+    config: State<'_, crate::config::SharedConfig>,
+    query: String,
+    chat_model: Option<String>,
+) -> AppResult<serde_json::Value> {
+    let embedding_model = config.read().unwrap().embedding_model.clone();
+    let chat_m = chat_model.unwrap_or_else(|| {
+        std::env::var("PERF_CHAT_MODEL").unwrap_or_else(|_| {
+            crate::perf_budget::DEFAULT_BENCHMARK_CHAT_MODEL.to_string()
+        })
+    });
+    let out = measure_rag_chat_ttft(
+        pool.inner(),
+        keys.inner(),
+        &vdb.0,
+        &embedding_model,
+        &query,
+        &chat_m,
+    )
+    .await?;
+    Ok(serde_json::to_value(out).unwrap_or_default())
+}
+
 /// Ask the LLM to improve a note's content.
 /// Streams the improved text via the `note:improve-token` Tauri event.
 #[tauri::command(rename_all = "camelCase")]

@@ -21,6 +21,8 @@ use rand::{Rng, SeedableRng};
 use serde::Serialize;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
+use lancedb::Connection;
+use tauri::{AppHandle, Emitter};
 
 // ---------------------------------------------------------------------------
 // Public command
@@ -37,6 +39,437 @@ pub struct TestDataSummary {
     pub daily_notes: usize,
     pub embedded: usize,
     pub errors: Vec<String>,
+}
+
+/// Parameters for [`seed_test_vault_inner`] (shared by the Tauri command and `perf-budget`).
+#[derive(Debug, Clone)]
+pub struct SeedTestVaultParams {
+    pub note_count: usize,
+    pub folder_count: usize,
+    pub seed: Option<u64>,
+    pub include_daily_notes: bool,
+    pub embed: bool,
+}
+
+/// Payload for the `test_data:progress` event (Settings → Developer generator).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestDataProgress {
+    pub phase: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u32>,
+}
+
+fn emit_test_data_progress(
+    app: Option<&AppHandle>,
+    phase: &str,
+    message: impl Into<String>,
+    current: Option<u32>,
+    total: Option<u32>,
+) {
+    let Some(handle) = app else {
+        return;
+    };
+    let payload = TestDataProgress {
+        phase: phase.to_string(),
+        message: message.into(),
+        current,
+        total,
+    };
+    let _ = handle.emit("test_data:progress", &payload);
+}
+
+/// Populate SQLite + optionally LanceDB using the same logic as Settings → Developer
+/// "Generate test data".
+///
+/// `progress_app`: when set, emits `test_data:progress` so the UI can show status (embed is slow).
+pub async fn seed_test_vault_inner(
+    pool: &SqlitePool,
+    lance: Option<&Connection>,
+    config: &SharedConfig,
+    params: SeedTestVaultParams,
+    progress_app: Option<&AppHandle>,
+) -> AppResult<TestDataSummary> {
+    let SeedTestVaultParams {
+        note_count,
+        folder_count,
+        seed,
+        include_daily_notes,
+        embed,
+    } = params;
+
+    if embed && lance.is_none() {
+        return Err(AppError::Io(
+            "seed_test_vault_inner: embed=true requires a LanceDB connection".into(),
+        ));
+    }
+
+    let mut errors: Vec<String> = Vec::new();
+
+    let rng_seed = seed.unwrap_or_else(|| rand::thread_rng().gen());
+    let mut rng = StdRng::seed_from_u64(rng_seed);
+    let domains = test_data_content::domain_pools();
+
+    let nc = note_count.clamp(10, 500);
+    let fc = folder_count.clamp(1, 20).min(domains.len());
+
+    emit_test_data_progress(
+        progress_app,
+        "starting",
+        format!("Generating test vault ({nc} notes, {fc} topic folders)…"),
+        None,
+        None,
+    );
+    tokio::task::yield_now().await;
+
+    // ── 1. Folders ────────────────────────────────────────────────────
+    let mut folder_ids: Vec<i64> = Vec::with_capacity(fc);
+    let chosen_domains: Vec<usize> = rand_domain_indices(&mut rng, &domains, fc);
+
+    for &di in &chosen_domains {
+        match sqlx::query_scalar("INSERT INTO folders (name) VALUES (?) RETURNING id")
+            .bind(domains[di].name)
+            .fetch_one(pool)
+            .await
+        {
+            Ok(id) => folder_ids.push(id),
+            Err(e) => errors.push(format!("folder '{}': {e}", domains[di].name)),
+        }
+    }
+
+    emit_test_data_progress(progress_app, "folders", "Created topic folders.", None, None);
+    tokio::task::yield_now().await;
+
+    // Fixed Kanban, Database, and weekly-recap fixture folders (not part of random domain clusters).
+    let mut fixture_note_ids: Vec<i64> = Vec::new();
+    let (kanban_folder_id, kanban_note_ids) = seed_test_kanban_folder(pool, &mut errors).await;
+    if let Some(fid) = kanban_folder_id {
+        folder_ids.push(fid);
+        fixture_note_ids.extend(kanban_note_ids);
+    }
+    let (database_folder_id, database_note_ids) =
+        seed_test_database_folder(pool, &mut rng, &mut errors).await;
+    if let Some(fid) = database_folder_id {
+        folder_ids.push(fid);
+        fixture_note_ids.extend(database_note_ids);
+    }
+    let (weekly_folder_id, weekly_note_ids) =
+        seed_test_weekly_review_fixture_folder(pool, &mut errors).await;
+    if let Some(fid) = weekly_folder_id {
+        folder_ids.push(fid);
+        fixture_note_ids.extend(weekly_note_ids);
+    }
+
+    emit_test_data_progress(
+        progress_app,
+        "fixtures",
+        "Added Kanban, database, and weekly-review fixture folders.",
+        None,
+        None,
+    );
+    tokio::task::yield_now().await;
+
+    // ── 2. Templates ──────────────────────────────────────────────────
+    let template_ids = seed_templates(pool, &mut rng)
+        .await
+        .unwrap_or_else(|e| {
+            errors.push(format!("templates: {e}"));
+            vec![]
+        });
+
+    emit_test_data_progress(progress_app, "templates", "Seeded note templates.", None, None);
+    tokio::task::yield_now().await;
+
+    // ── 3. Notes ──────────────────────────────────────────────────────
+    let mut note_ids: Vec<i64> = Vec::with_capacity(nc);
+    let mut note_titles: Vec<String> = Vec::with_capacity(nc);
+    let mut title_set: HashSet<String> = HashSet::new();
+
+    // Pre-generate unique titles.
+    for _ in 0..nc {
+        let di = chosen_domains[rng.gen_range(0..fc)];
+        let dp = &domains[di];
+        loop {
+            let frag = dp.title_fragments[rng.gen_range(0..dp.title_fragments.len())];
+            let noun = pick_noun(&mut rng, dp);
+            let title = format!("{frag} {noun}");
+            if title_set.insert(title.clone()) {
+                note_titles.push(title);
+                break;
+            }
+        }
+    }
+
+    // Assign folders before content so [[wiki-links]] can prefer same-cluster targets.
+    let mut note_folder: Vec<usize> = Vec::with_capacity(nc);
+    for _ in 0..nc {
+        note_folder.push(rng.gen_range(0..fc));
+    }
+
+    let note_goal = note_titles.len() as u32;
+    for (i, title) in note_titles.iter().enumerate() {
+        if i == 0 || (i + 1) % 10 == 0 || i + 1 == note_titles.len() {
+            emit_test_data_progress(
+                progress_app,
+                "notes",
+                format!("Writing notes ({}/{})…", i + 1, note_titles.len()),
+                Some((i + 1) as u32),
+                Some(note_goal),
+            );
+            tokio::task::yield_now().await;
+        }
+        let fi = note_folder[i];
+        let folder_id = folder_ids[fi];
+        let dp = &domains[chosen_domains[fi]];
+
+        let style: &str = match rng.gen_range(0u32..10) {
+            0..=3 => "structured",
+            4..=6 => "prose",
+            7..=8 => "bullet",
+            _ => "journal",
+        };
+
+        let same_folder_titles: Vec<&str> = note_titles
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != i && note_folder[*j] == fi)
+            .map(|(_, t)| t.as_str())
+            .collect();
+
+        let content = assemble_note(
+            style,
+            &mut rng,
+            dp,
+            title.as_str(),
+            &same_folder_titles,
+            &note_titles,
+        );
+
+        let template_id = if !template_ids.is_empty() && rng.gen_bool(0.15) {
+            Some(template_ids[rng.gen_range(0..template_ids.len())])
+        } else {
+            None
+        };
+
+        match sqlx::query_as::<_, NoteRow>(
+            "INSERT INTO notes (title, content, folder_id, template_id) VALUES (?, ?, ?, ?)
+             RETURNING id, title, content, folder_id, created_at, updated_at",
+        )
+        .bind(title)
+        .bind(&content)
+        .bind(folder_id)
+        .bind(template_id)
+        .fetch_one(pool)
+        .await
+        {
+            Ok(row) => note_ids.push(row.id),
+            Err(e) => errors.push(format!("note '{title}': {e}")),
+        }
+    }
+
+    emit_test_data_progress(progress_app, "tags", "Assigning tags to notes…", None, None);
+    tokio::task::yield_now().await;
+
+    // ── 4. Tags ───────────────────────────────────────────────────────
+    let mut tag_count = 0usize;
+    for (i, note_id) in note_ids.iter().enumerate() {
+        let fi = note_folder[i];
+        let dp = &domains[chosen_domains[fi]];
+        let n = rng.gen_range(1..=3).min(dp.tags.len());
+        let mut picked: HashSet<&str> = HashSet::new();
+        while picked.len() < n {
+            picked.insert(dp.tags[rng.gen_range(0..dp.tags.len())]);
+        }
+        for tag_name in picked {
+            if let Err(e) = sqlx::query(
+                "INSERT OR IGNORE INTO tags (name) VALUES (?); \
+                 INSERT OR IGNORE INTO note_tags (note_id, tag_id) \
+                 SELECT ?, id FROM tags WHERE name = ?",
+            )
+            .bind(tag_name)
+            .bind(note_id)
+            .bind(tag_name)
+            .execute(pool)
+            .await
+            {
+                errors.push(format!("tag '{tag_name}' nid={note_id}: {e}"));
+            } else {
+                tag_count += 1;
+            }
+        }
+    }
+
+    emit_test_data_progress(progress_app, "wiki_links", "Creating wiki-links between notes…", None, None);
+    tokio::task::yield_now().await;
+
+    // ── 5. Wiki-links (mostly intra-folder clusters + sparse bridges) ──
+    let mut link_count = 0usize;
+    let n_notes = note_ids.len();
+
+    // Intra-folder: each note links to a few others in the same folder only.
+    for i in 0..n_notes {
+        let same: Vec<usize> = (0..n_notes)
+            .filter(|&j| j != i && note_folder[j] == note_folder[i])
+            .collect();
+        if same.is_empty() {
+            continue;
+        }
+        let k = rng.gen_range(1..=3).min(same.len());
+        let mut picked: HashSet<usize> = HashSet::new();
+        let mut guard = 0usize;
+        while picked.len() < k && guard < k * 20 {
+            guard += 1;
+            picked.insert(same[rng.gen_range(0..same.len())]);
+        }
+        for &tidx in &picked {
+            let sid = note_ids[i];
+            let tid = note_ids[tidx];
+            if insert_link_if_new(pool, sid, tid, &mut errors).await {
+                link_count += 1;
+            }
+        }
+    }
+
+    // Sparse bridges across folders (keeps lobes visually separated).
+    let mut bridge_budget = (3 * fc).min(n_notes / 15);
+    if fc > 1 && n_notes >= 8 && bridge_budget < 2 {
+        bridge_budget = 2;
+    }
+    for _ in 0..bridge_budget {
+        let mut placed = false;
+        for _ in 0..80 {
+            let a = rng.gen_range(0..n_notes);
+            let b = rng.gen_range(0..n_notes);
+            if a == b || note_folder[a] == note_folder[b] {
+                continue;
+            }
+            let sid = note_ids[a];
+            let tid = note_ids[b];
+            if insert_link_if_new(pool, sid, tid, &mut errors).await {
+                link_count += 1;
+                placed = true;
+                break;
+            }
+        }
+        if !placed {
+            break;
+        }
+    }
+
+    emit_test_data_progress(progress_app, "properties", "Adding sample database properties…", None, None);
+    tokio::task::yield_now().await;
+
+    // ── 6. Properties ─────────────────────────────────────────────────
+    for (idx, &fi) in chosen_domains.iter().enumerate() {
+        if rng.gen_bool(0.5) {
+            if let Err(e) = seed_folder_properties(pool, folder_ids[idx]).await {
+                errors.push(format!("properties for folder {}: {e}", domains[fi].name));
+            }
+        }
+    }
+
+    // ── 7. Daily notes ────────────────────────────────────────────────
+    let mut daily_count = 0usize;
+    if include_daily_notes {
+        emit_test_data_progress(
+            progress_app,
+            "daily_notes",
+            "Generating daily notes (last ~120 days)…",
+            None,
+            None,
+        );
+        tokio::task::yield_now().await;
+        daily_count = seed_daily_notes(pool, &mut rng, &mut errors).await;
+    }
+
+    // ── 8. Embedding (best-effort) ────────────────────────────────────
+    // Use the same batched path as normal indexing (`index_note_vectors_inner`), not
+    // one Ollama round-trip per sentence — the latter can take tens of minutes for 100+ notes.
+    let mut embedded = 0usize;
+    if embed {
+        let conn = lance.expect("checked above");
+        let (model, max_retries) = {
+            let c = config.read().unwrap();
+            (c.embedding_model.clone(), c.background_max_retries)
+        };
+        let embed_total = note_ids.len() + fixture_note_ids.len();
+        emit_test_data_progress(
+            progress_app,
+            "embedding",
+            format!(
+                "Embedding {embed_total} notes for semantic search (Ollama, model `{model}`)…"
+            ),
+            Some(0),
+            Some(embed_total as u32),
+        );
+        tokio::task::yield_now().await;
+        for (ei, &note_id) in note_ids.iter().chain(fixture_note_ids.iter()).enumerate() {
+            if ei == 0 || (ei + 1) % 3 == 0 || ei + 1 == embed_total {
+                emit_test_data_progress(
+                    progress_app,
+                    "embedding",
+                    format!(
+                        "Embedding notes ({}/{embed_total}) — Ollama may take several seconds per note…",
+                        ei + 1
+                    ),
+                    Some((ei + 1) as u32),
+                    Some(embed_total as u32),
+                );
+                tokio::task::yield_now().await;
+            }
+            let content: Option<String> =
+                sqlx::query_scalar("SELECT content FROM notes WHERE id = ?")
+                    .bind(note_id)
+                    .fetch_optional(pool)
+                    .await
+                    .unwrap_or(None);
+            if let Some(body) = content {
+                let title: String = sqlx::query_scalar("SELECT title FROM notes WHERE id = ?")
+                    .bind(note_id)
+                    .fetch_one(pool)
+                    .await
+                    .unwrap_or_default();
+                match crate::commands::rag::index_note_vectors_inner(
+                    pool,
+                    conn,
+                    &model,
+                    max_retries,
+                    note_id,
+                    &title,
+                    &body,
+                    crate::vector::EmbedBatchOptions::default(),
+                )
+                .await
+                {
+                    Ok(()) => embedded += 1,
+                    Err(e) => errors.push(format!("embed note {note_id}: {e}")),
+                }
+            }
+        }
+    }
+
+    emit_test_data_progress(
+        progress_app,
+        "done",
+        "Test data generation finished.",
+        None,
+        None,
+    );
+    tokio::task::yield_now().await;
+
+    Ok(TestDataSummary {
+        notes: note_ids.len() + fixture_note_ids.len(),
+        folders: folder_ids.len(),
+        templates: template_ids.len(),
+        tags: tag_count,
+        links: link_count,
+        daily_notes: daily_count,
+        embedded,
+        errors,
+    })
 }
 
 /// Wipes all vault metadata from SQLite and drops LanceDB semantic indexes.
@@ -130,6 +563,7 @@ pub async fn clean_developer_database(
 #[tauri::command]
 #[cfg(debug_assertions)]
 pub async fn generate_test_data(
+    app: tauri::AppHandle,
     pool: tauri::State<'_, SqlitePool>,
     vdb: tauri::State<'_, VectorDb>,
     config: tauri::State<'_, SharedConfig>,
@@ -139,279 +573,20 @@ pub async fn generate_test_data(
     include_daily_notes: bool,
     embed: bool,
 ) -> AppResult<TestDataSummary> {
-    let mut errors: Vec<String> = Vec::new();
-
-    let rng_seed = seed.unwrap_or_else(|| rand::thread_rng().gen());
-    let mut rng = StdRng::seed_from_u64(rng_seed);
-    let domains = test_data_content::domain_pools();
-
-    let nc = note_count.clamp(10, 500);
-    let fc = folder_count.clamp(1, 20).min(domains.len());
-
-    // ── 1. Folders ────────────────────────────────────────────────────
-    let mut folder_ids: Vec<i64> = Vec::with_capacity(fc);
-    let chosen_domains: Vec<usize> = rand_domain_indices(&mut rng, &domains, fc);
-
-    for &di in &chosen_domains {
-        match sqlx::query_scalar("INSERT INTO folders (name) VALUES (?) RETURNING id")
-            .bind(domains[di].name)
-            .fetch_one(pool.inner())
-            .await
-        {
-            Ok(id) => folder_ids.push(id),
-            Err(e) => errors.push(format!("folder '{}': {e}", domains[di].name)),
-        }
-    }
-
-    // Fixed Kanban + Database folders (not part of random domain clusters).
-    let mut fixture_note_ids: Vec<i64> = Vec::new();
-    let (kanban_folder_id, kanban_note_ids) =
-        seed_test_kanban_folder(pool.inner(), &mut errors).await;
-    if let Some(fid) = kanban_folder_id {
-        folder_ids.push(fid);
-        fixture_note_ids.extend(kanban_note_ids);
-    }
-    let (database_folder_id, database_note_ids) =
-        seed_test_database_folder(pool.inner(), &mut rng, &mut errors).await;
-    if let Some(fid) = database_folder_id {
-        folder_ids.push(fid);
-        fixture_note_ids.extend(database_note_ids);
-    }
-
-    // ── 2. Templates ──────────────────────────────────────────────────
-    let template_ids = seed_templates(pool.inner(), &mut rng)
-        .await
-        .unwrap_or_else(|e| {
-            errors.push(format!("templates: {e}"));
-            vec![]
-        });
-
-    // ── 3. Notes ──────────────────────────────────────────────────────
-    let mut note_ids: Vec<i64> = Vec::with_capacity(nc);
-    let mut note_titles: Vec<String> = Vec::with_capacity(nc);
-    let mut title_set: HashSet<String> = HashSet::new();
-
-    // Pre-generate unique titles.
-    for _ in 0..nc {
-        let di = chosen_domains[rng.gen_range(0..fc)];
-        let dp = &domains[di];
-        loop {
-            let frag = dp.title_fragments[rng.gen_range(0..dp.title_fragments.len())];
-            let noun = pick_noun(&mut rng, dp);
-            let title = format!("{frag} {noun}");
-            if title_set.insert(title.clone()) {
-                note_titles.push(title);
-                break;
-            }
-        }
-    }
-
-    // Assign folders before content so [[wiki-links]] can prefer same-cluster targets.
-    let mut note_folder: Vec<usize> = Vec::with_capacity(nc);
-    for _ in 0..nc {
-        note_folder.push(rng.gen_range(0..fc));
-    }
-
-    for (i, title) in note_titles.iter().enumerate() {
-        let fi = note_folder[i];
-        let folder_id = folder_ids[fi];
-        let dp = &domains[chosen_domains[fi]];
-
-        let style: &str = match rng.gen_range(0u32..10) {
-            0..=3 => "structured",
-            4..=6 => "prose",
-            7..=8 => "bullet",
-            _ => "journal",
-        };
-
-        let same_folder_titles: Vec<&str> = note_titles
-            .iter()
-            .enumerate()
-            .filter(|(j, _)| *j != i && note_folder[*j] == fi)
-            .map(|(_, t)| t.as_str())
-            .collect();
-
-        let content = assemble_note(
-            style,
-            &mut rng,
-            dp,
-            title.as_str(),
-            &same_folder_titles,
-            &note_titles,
-        );
-
-        let template_id = if !template_ids.is_empty() && rng.gen_bool(0.15) {
-            Some(template_ids[rng.gen_range(0..template_ids.len())])
-        } else {
-            None
-        };
-
-        match sqlx::query_as::<_, NoteRow>(
-            "INSERT INTO notes (title, content, folder_id, template_id) VALUES (?, ?, ?, ?)
-             RETURNING id, title, content, folder_id, created_at, updated_at",
-        )
-        .bind(title)
-        .bind(&content)
-        .bind(folder_id)
-        .bind(template_id)
-        .fetch_one(pool.inner())
-        .await
-        {
-            Ok(row) => note_ids.push(row.id),
-            Err(e) => errors.push(format!("note '{title}': {e}")),
-        }
-    }
-
-    // ── 4. Tags ───────────────────────────────────────────────────────
-    let mut tag_count = 0usize;
-    for (i, note_id) in note_ids.iter().enumerate() {
-        let fi = note_folder[i];
-        let dp = &domains[chosen_domains[fi]];
-        let n = rng.gen_range(1..=3).min(dp.tags.len());
-        let mut picked: HashSet<&str> = HashSet::new();
-        while picked.len() < n {
-            picked.insert(dp.tags[rng.gen_range(0..dp.tags.len())]);
-        }
-        for tag_name in picked {
-            if let Err(e) = sqlx::query(
-                "INSERT OR IGNORE INTO tags (name) VALUES (?); \
-                 INSERT OR IGNORE INTO note_tags (note_id, tag_id) \
-                 SELECT ?, id FROM tags WHERE name = ?",
-            )
-            .bind(tag_name)
-            .bind(note_id)
-            .bind(tag_name)
-            .execute(pool.inner())
-            .await
-            {
-                errors.push(format!("tag '{tag_name}' nid={note_id}: {e}"));
-            } else {
-                tag_count += 1;
-            }
-        }
-    }
-
-    // ── 5. Wiki-links (mostly intra-folder clusters + sparse bridges) ──
-    let mut link_count = 0usize;
-    let n_notes = note_ids.len();
-
-    // Intra-folder: each note links to a few others in the same folder only.
-    for i in 0..n_notes {
-        let same: Vec<usize> = (0..n_notes)
-            .filter(|&j| j != i && note_folder[j] == note_folder[i])
-            .collect();
-        if same.is_empty() {
-            continue;
-        }
-        let k = rng.gen_range(1..=3).min(same.len());
-        let mut picked: HashSet<usize> = HashSet::new();
-        let mut guard = 0usize;
-        while picked.len() < k && guard < k * 20 {
-            guard += 1;
-            picked.insert(same[rng.gen_range(0..same.len())]);
-        }
-        for &tidx in &picked {
-            let sid = note_ids[i];
-            let tid = note_ids[tidx];
-            if insert_link_if_new(pool.inner(), sid, tid, &mut errors).await {
-                link_count += 1;
-            }
-        }
-    }
-
-    // Sparse bridges across folders (keeps lobes visually separated).
-    let mut bridge_budget = (3 * fc).min(n_notes / 15);
-    if fc > 1 && n_notes >= 8 && bridge_budget < 2 {
-        bridge_budget = 2;
-    }
-    for _ in 0..bridge_budget {
-        let mut placed = false;
-        for _ in 0..80 {
-            let a = rng.gen_range(0..n_notes);
-            let b = rng.gen_range(0..n_notes);
-            if a == b || note_folder[a] == note_folder[b] {
-                continue;
-            }
-            let sid = note_ids[a];
-            let tid = note_ids[b];
-            if insert_link_if_new(pool.inner(), sid, tid, &mut errors).await {
-                link_count += 1;
-                placed = true;
-                break;
-            }
-        }
-        if !placed {
-            break;
-        }
-    }
-
-    // ── 6. Properties ─────────────────────────────────────────────────
-    for (idx, &fi) in chosen_domains.iter().enumerate() {
-        if rng.gen_bool(0.5) {
-            if let Err(e) = seed_folder_properties(pool.inner(), folder_ids[idx]).await {
-                errors.push(format!("properties for folder {}: {e}", domains[fi].name));
-            }
-        }
-    }
-
-    // ── 7. Daily notes ────────────────────────────────────────────────
-    let mut daily_count = 0usize;
-    if include_daily_notes {
-        daily_count = seed_daily_notes(pool.inner(), &mut rng, &mut errors).await;
-    }
-
-    // ── 8. Embedding (best-effort) ────────────────────────────────────
-    let mut embedded = 0usize;
-    if embed {
-        let model = config.read().unwrap().embedding_model.clone();
-        for &note_id in note_ids.iter().chain(fixture_note_ids.iter()) {
-            let content: Option<String> =
-                sqlx::query_scalar("SELECT content FROM notes WHERE id = ?")
-                    .bind(note_id)
-                    .fetch_optional(pool.inner())
-                    .await
-                    .unwrap_or(None);
-            if let Some(body) = content {
-                let sentences = crate::chunking::split_sentences(&body);
-                let raw_chunks = crate::chunking::chunk_sentences(sentences, 1, 0);
-                let mut chunks: Vec<(i32, String, Vec<f32>)> = Vec::new();
-                let mut ok = true;
-                for (ci, chunk_text) in raw_chunks.into_iter().enumerate() {
-                    match crate::commands::rag::embed_document(&chunk_text, &model).await {
-                        Ok(emb) => chunks.push((ci as i32, chunk_text, emb)),
-                        Err(e) => {
-                            errors.push(format!("embed note {note_id}: {e}"));
-                            ok = false;
-                            break;
-                        }
-                    }
-                }
-                if ok && !chunks.is_empty() {
-                    let title: String = sqlx::query_scalar("SELECT title FROM notes WHERE id = ?")
-                        .bind(note_id)
-                        .fetch_one(pool.inner())
-                        .await
-                        .unwrap_or_default();
-                    if let Err(e) = crate::vector::upsert(&vdb.0, note_id, &title, chunks).await {
-                        errors.push(format!("upsert note {note_id}: {e}"));
-                    } else {
-                        embedded += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(TestDataSummary {
-        notes: note_ids.len() + fixture_note_ids.len(),
-        folders: folder_ids.len(),
-        templates: template_ids.len(),
-        tags: tag_count,
-        links: link_count,
-        daily_notes: daily_count,
-        embedded,
-        errors,
-    })
+    seed_test_vault_inner(
+        pool.inner(),
+        Some(&vdb.0),
+        config.inner(),
+        SeedTestVaultParams {
+            note_count,
+            folder_count,
+            seed,
+            include_daily_notes,
+            embed,
+        },
+        Some(&app),
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -569,6 +744,176 @@ async fn seed_test_kanban_folder(
     }
 
     (Some(folder_id), ids)
+}
+
+/// Weekly recap fixtures: many short history notes plus one detailed recap; wiki-links synced.
+async fn seed_test_weekly_review_fixture_folder(
+    pool: &SqlitePool,
+    errors: &mut Vec<String>,
+) -> (Option<i64>, Vec<i64>) {
+    const FOLDER_NAME: &str = "Weekly recaps";
+    const FLAGSHIP_TITLE: &str = "Weekly review — 12 May";
+    // Older stubs: body stays minimal so only the flagship reads "full" in screenshots.
+    const STUB_BACKLINK: &str = "[[Weekly review — 12 May]]";
+    // Oldest → newest by calendar week (insert order + timestamps below).
+    const PRIOR_CHRONOLOGICAL: &[&str] = &[
+        "Weekly review — 18 February",
+        "Weekly review — 25 February",
+        "Weekly review — 3 March",
+        "Weekly review — 10 March",
+        "Weekly review — 17 March",
+        "Weekly review — 24 March",
+        "Weekly review — 31 March",
+        "Weekly review — 7 April",
+        "Weekly review — 14 April",
+        "Weekly review — 21 April",
+        "Weekly review — 28 April",
+        "Weekly review — 5 May",
+    ];
+    const FLAGSHIP_CONTENT: &str = r#"# Weekly review — 12 May
+
+Snapshot before planning next week. Demo content for screenshots and chat-over-vault QA.
+
+## Wins this week
+
+- Shipped search panel tweaks; fewer noisy hits on short queries.
+- Documented the local embedding retry path for Ollama blips.
+
+## Blockers
+
+- Cold GPU benchmarks still jitter — need stable timeouts.
+- Windows installer signing blocked on external credentials.
+
+## Next week (top 3)
+
+1. Triage vault reindex edge cases after bulk imports.
+2. Polish chat empty state when no model is selected.
+3. Draft release notes for the first public build.
+
+## Do not forget
+
+- Answer the design thread before **Friday**.
+- Back up the test vault before destructive developer runs.
+
+## Earlier recaps
+
+Threads carried from [[Weekly review — 5 May]], [[Weekly review — 28 April]], [[Weekly review — 21 April]], [[Weekly review — 14 April]], and [[Weekly review — 31 March]].
+
+#review #weekly
+"#;
+
+    let folder_id: i64 = match sqlx::query_scalar(
+        "INSERT INTO folders (name) VALUES (?) RETURNING id",
+    )
+    .bind(FOLDER_NAME)
+    .fetch_one(pool)
+    .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            errors.push(format!("weekly recap fixture folder: {e}"));
+            return (None, Vec::new());
+        }
+    };
+
+    let mut prior_ids: Vec<i64> = Vec::with_capacity(PRIOR_CHRONOLOGICAL.len());
+    for title in PRIOR_CHRONOLOGICAL {
+        let note_id: i64 = match sqlx::query_scalar(
+            "INSERT INTO notes (title, content, folder_id) VALUES (?, '', ?) RETURNING id",
+        )
+        .bind(title)
+        .bind(folder_id)
+        .fetch_one(pool)
+        .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                errors.push(format!("weekly recap stub '{title}': {e}"));
+                continue;
+            }
+        };
+        prior_ids.push(note_id);
+    }
+
+    let flagship_id: i64 = match sqlx::query_scalar(
+        "INSERT INTO notes (title, content, folder_id) VALUES (?, ?, ?) RETURNING id",
+    )
+    .bind(FLAGSHIP_TITLE)
+    .bind(FLAGSHIP_CONTENT)
+    .bind(folder_id)
+    .fetch_one(pool)
+    .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            errors.push(format!("weekly recap flagship: {e}"));
+            return (Some(folder_id), prior_ids);
+        }
+    };
+
+    if let Err(e) =
+        crate::commands::tags::sync_note_relations_pool(pool, flagship_id, FLAGSHIP_CONTENT).await
+    {
+        errors.push(format!("weekly recap flagship relations: {e}"));
+    }
+
+    for &pid in &prior_ids {
+        if let Err(e) = sqlx::query("UPDATE notes SET content = ? WHERE id = ?")
+            .bind(STUB_BACKLINK)
+            .bind(pid)
+            .execute(pool)
+            .await
+        {
+            errors.push(format!("weekly recap stub body id={pid}: {e}"));
+            continue;
+        }
+        if let Err(e) =
+            crate::commands::tags::sync_note_relations_pool(pool, pid, STUB_BACKLINK).await
+        {
+            errors.push(format!("weekly recap stub relations id={pid}: {e}"));
+        }
+    }
+
+    // `created_at` defaults to the same second for bulk inserts, so NoteList "Created" sort
+    // (desc) ties and keeps DB order; stub `UPDATE`s also make `updated_at` newer than the
+    // flagship. Use one-second steps in calendar order so descending sorts list 12 May → … →
+    // 18 Feb (newest week first).
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let span = (prior_ids.len() + 1) as i64;
+    let base = now_secs.saturating_sub(span + 60);
+    for (i, &pid) in prior_ids.iter().enumerate() {
+        let ts = base + i as i64;
+        if let Err(e) = sqlx::query(
+            "UPDATE notes SET created_at = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(ts)
+        .bind(ts)
+        .bind(pid)
+        .execute(pool)
+        .await
+        {
+            errors.push(format!("weekly recap stub timestamps id={pid}: {e}"));
+        }
+    }
+    let flagship_ts = base + prior_ids.len() as i64;
+    if let Err(e) = sqlx::query(
+        "UPDATE notes SET created_at = ?, updated_at = ? WHERE id = ?",
+    )
+    .bind(flagship_ts)
+    .bind(flagship_ts)
+    .bind(flagship_id)
+    .execute(pool)
+    .await
+    {
+        errors.push(format!("weekly recap flagship timestamps: {e}"));
+    }
+
+    let mut all_ids = prior_ids;
+    all_ids.push(flagship_id);
+    (Some(folder_id), all_ids)
 }
 
 /// Database/table-view folder with one column per property type.

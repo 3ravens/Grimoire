@@ -67,7 +67,7 @@ pub(crate) async fn fts_delete(pool: &SqlitePool, id: i64) {
 /// matches "gases" and "gaseous", "run" matches "running" and "runner".
 ///
 /// Example: `rust error` → `"rust"* "error"*`
-pub(crate) fn build_fts_query(raw: &str) -> String {
+pub fn build_fts_query(raw: &str) -> String {
     raw.split_whitespace()
         .filter_map(|tok| {
             let clean = tok.replace('"', "");
@@ -101,7 +101,7 @@ pub struct FtsResult {
 /// Since migration 0009, the FTS index is managed by Rust and always contains
 /// plaintext (decrypted) content. Notes in locked folders are never inserted,
 /// so the only filter needed here is a secondary safety check on folder lock state.
-async fn fts_search_inner(
+pub async fn fts_search_inner(
     pool: &SqlitePool,
     keys: &KeyStore,
     query: &str,

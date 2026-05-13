@@ -140,6 +140,24 @@ pub async fn save_note_with_version(
     Ok(note)
 }
 
+/// Same persistence as [`save_note_with_version`] plus FTS, without audit logging.
+/// For the `perf-budget` binary and local timing runs.
+#[cfg(debug_assertions)]
+pub async fn save_note_with_version_benchmark_path(
+    pool: &SqlitePool,
+    keys: &SharedKeyStore,
+    id: i64,
+    title: &str,
+    content: &str,
+) -> AppResult<()> {
+    let store = EncryptedNoteStore::new(pool, keys.as_ref());
+    let note = store.save_note_with_version(id, title, content).await?;
+    if !note.locked {
+        super::search::fts_upsert(pool, note.id, &note.title, &note.content).await;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn get_note_versions(
     pool: State<'_, SqlitePool>,

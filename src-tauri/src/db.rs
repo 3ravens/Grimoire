@@ -78,3 +78,23 @@ async fn forget_removed_migration_16_if_present(pool: &SqlitePool) -> Result<(),
     Ok(())
 }
 
+/// Open a file-backed SQLite pool with the same pragmas and migrations as the
+/// desktop app. Intended for debug `perf-budget` runs (not used in production).
+#[cfg(debug_assertions)]
+pub async fn open_sqlite_file(db_path: &std::path::Path) -> Result<SqlitePool, sqlx::Error> {
+    if let Some(parent) = db_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect(&db_url)
+        .await?;
+    sqlx::query("PRAGMA journal_mode=WAL")
+        .execute(&pool)
+        .await?;
+    forget_removed_migration_16_if_present(&pool).await?;
+    sqlx::migrate!("./migrations").run(&pool).await?;
+    Ok(pool)
+}
+

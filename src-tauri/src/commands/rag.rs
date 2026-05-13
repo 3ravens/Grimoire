@@ -207,6 +207,29 @@ pub async fn index_note(
     .await
 }
 
+/// Embed one note for benchmarks (`perf-budget`); same logic as [`index_note`].
+#[cfg(debug_assertions)]
+pub async fn index_note_vectors_for_benchmark(
+    pool: &SqlitePool,
+    vdb: &Connection,
+    embedding_model: &str,
+    note_id: i64,
+    title: &str,
+    content: &str,
+) -> AppResult<()> {
+    index_note_vectors_inner(
+        pool,
+        vdb,
+        embedding_model,
+        2,
+        note_id,
+        title,
+        content,
+        crate::vector::EmbedBatchOptions::default(),
+    )
+    .await
+}
+
 /// Remove a note from the vector index. Called when a note is deleted.
 #[tauri::command]
 pub async fn remove_note_index(
@@ -214,6 +237,52 @@ pub async fn remove_note_index(
     note_id: i64,
 ) -> AppResult<()> {
     crate::vector::remove(&vdb.0, note_id).await.map_err(|e| AppError::VectorStore(e))
+}
+
+/// Semantic note search: embed query, LanceDB search, decrypt titles, filter locked.
+///
+/// When `log_audit` is false (benchmark harness), audit logging is skipped.
+pub async fn search_notes_semantic(
+    pool: &SqlitePool,
+    keys: &SharedKeyStore,
+    vdb: &Connection,
+    embedding_model: &str,
+    query: &str,
+    limit: usize,
+    log_audit: bool,
+) -> AppResult<Vec<crate::vector::NoteMatch>> {
+    let embedding = embed_query(query, embedding_model).await?;
+    let mut matches = crate::vector::search(vdb, embedding, limit)
+        .await
+        .map_err(|e| AppError::VectorStore(e))?;
+
+    if matches.is_empty() {
+        return Ok(matches);
+    }
+
+    let ids: Vec<i64> = matches.iter().map(|m| m.note_id).collect();
+    let store = EncryptedNoteStore::new(pool, keys.as_ref());
+    let accessible = store.accessible_note_titles(&ids).await?;
+
+    matches.retain(|m| accessible.contains_key(&m.note_id));
+    for m in &mut matches {
+        if let Some(title) = accessible.get(&m.note_id) {
+            m.title = title.clone();
+        }
+    }
+
+    if log_audit {
+        let _ = crate::audit::log_event(
+            pool,
+            "search_semantic",
+            None,
+            None,
+            None,
+            Some(query),
+        )
+        .await;
+    }
+    Ok(matches)
 }
 
 /// Embed the query text and return the most semantically similar notes.
@@ -233,36 +302,16 @@ pub async fn search_notes(
     limit: Option<usize>,
 ) -> AppResult<Vec<crate::vector::NoteMatch>> {
     let model = config.read().unwrap().embedding_model.clone();
-    let embedding = embed_query(&query, &model).await?;
-    let mut matches = crate::vector::search(
+    search_notes_semantic(
+        pool.inner(),
+        keys.inner(),
         &vdb.0,
-        embedding,
+        &model,
+        &query,
         limit.unwrap_or(crate::vector::CHUNK_FETCH_LIMIT),
+        true,
     )
     .await
-    .map_err(|e| AppError::VectorStore(e))?;
-
-    if matches.is_empty() {
-        return Ok(matches);
-    }
-
-    // Cross-reference LanceDB hits with SQLite: filter locked folders, refresh titles.
-    let ids: Vec<i64> = matches.iter().map(|m| m.note_id).collect();
-    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
-    let accessible = store.accessible_note_titles(&ids).await?;
-
-    // Drop locked/missing results; update titles with current decrypted values.
-    matches.retain(|m| accessible.contains_key(&m.note_id));
-    for m in &mut matches {
-        if let Some(title) = accessible.get(&m.note_id) {
-            m.title = title.clone();
-        }
-    }
-
-    let _ = crate::audit::log_event(
-        pool.inner(), "search_semantic", None, None, None, Some(&query),
-    ).await;
-    Ok(matches)
 }
 
 // ---------------------------------------------------------------------------

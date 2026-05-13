@@ -14,6 +14,14 @@ rust-version = "1.77.2"
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[[bin]]
+name = "perf-budget"
+path = "src/bin/perf-budget.rs"
+
+[[bin]]
+name = "search-quality"
+path = "src/bin/search-quality.rs"
+
 [build-dependencies]
 tauri-build = { version = "2.5.6", features = [] }
 
@@ -53,6 +61,7 @@ chardetng = "0.1"
 globset = "0.4"
 epub = "2.1.5"
 rtf-parser = "0.4.2"
+tempfile = "3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"

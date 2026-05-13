@@ -171,6 +171,21 @@ pub async fn init(app: &tauri::AppHandle) -> Result<Connection, String> {
     Ok(conn)
 }
 
+/// LanceDB in a directory (for `perf-budget` and other debug harnesses).
+#[cfg(debug_assertions)]
+pub async fn connect_dir(dir: &std::path::Path) -> Result<Connection, String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let path = dir
+        .to_str()
+        .ok_or_else(|| "Database path contains non-UTF8 characters".to_string())?;
+    let conn = lancedb::connect(path)
+        .execute()
+        .await
+        .map_err(|e| e.to_string())?;
+    notes::open_notes_table(&conn, embedder::DIMS).await?;
+    Ok(conn)
+}
+
 // ---------------------------------------------------------------------------
 // Re-exports — all existing crate::vector::* call sites compile unchanged
 // ---------------------------------------------------------------------------
