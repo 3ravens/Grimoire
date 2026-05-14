@@ -1,5 +1,6 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
 
@@ -126,12 +127,20 @@
   const tdLocked = $derived(tdRunning || tdCleanRunning);
   let tdError = $state('');
   let tdSummary = $state(null);
+  /** @type {{ phase: string, message: string, current?: number, total?: number } | null} */
+  let tdProgress = $state(null);
 
   async function runTestDataGenerator() {
     tdRunning = true;
     tdError = '';
     tdSummary = null;
+    tdProgress = null;
+    /** @type {(() => void) | null} */
+    let unlistenProgress = null;
     try {
+      unlistenProgress = await listen('test_data:progress', (ev) => {
+        tdProgress = /** @type {any} */ (ev.payload);
+      });
       const nc = Number.parseInt(tdNoteCount.trim()) || 120;
       const fc = Number.parseInt(tdFolderCount.trim()) || 8;
       const seed = tdSeed.trim() ? Number.parseInt(tdSeed.trim()) : null;
@@ -147,6 +156,8 @@
     } catch (e) {
       tdError = e?.message ?? String(e);
     } finally {
+      if (unlistenProgress) unlistenProgress();
+      tdProgress = null;
       tdRunning = false;
     }
   }
@@ -357,7 +368,8 @@
   templates, and daily notes. Only available in dev builds.
   Generation always adds two fixed folders on top of the configured folder count: a
   Kanban-style capstone board and a table/database-style reading folder.
-  Generation is instant without embedding; enable embeddings only if Ollama is running.
+  Generation is quick without embedding; with embeddings enabled, progress and the
+  current step appear below while Ollama runs (this can take several minutes).
 </p>
 
 <div class="setting-row">
@@ -430,9 +442,8 @@
   <div class="setting-label">
     <span class="setting-name">Generate embeddings</span>
     <span class="setting-desc">
-      Run Ollama embedding for every note. Slow — only enable if you need
-      semantic search and RAG to work immediately after generation.
-      Requires Ollama to be running with an embedding model loaded.
+      Run Ollama embedding for every note. Can take several minutes — a live progress line
+      appears below. Only enable if Ollama is running with your embedding model available.
     </span>
   </div>
   <label class="toggle">
@@ -477,6 +488,21 @@
 
 {#if tdCleanError}
   <p class="settings-notice error-text">{tdCleanError}</p>
+{/if}
+
+{#if tdProgress}
+  <div class="td-progress" role="status" aria-live="polite" aria-busy="true">
+    <p class="td-progress-label">{tdProgress.message}</p>
+    {#if tdProgress.total != null && tdProgress.total > 0 && tdProgress.current != null}
+      {@const pct = Math.min(100, Math.round((tdProgress.current / tdProgress.total) * 100))}
+      <div class="td-progress-bar-wrap" aria-hidden="true">
+        <div class="td-progress-bar" style="width: {pct}%"></div>
+      </div>
+      <p class="td-progress-meta">{tdProgress.current} / {tdProgress.total} ({pct}%)</p>
+    {:else}
+      <p class="td-progress-meta phase-tag">{tdProgress.phase}</p>
+    {/if}
+  </div>
 {/if}
 
 {#if tdError}
@@ -629,5 +655,44 @@
   .bench-copy-hint {
     margin-top: 0.35rem;
     color: var(--text-muted);
+  }
+
+  .td-progress {
+    margin-top: 0.65rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-hover);
+    border-radius: 4px;
+    border-left: 2px solid var(--accent);
+  }
+
+  .td-progress-label {
+    margin: 0 0 0.4rem;
+    font-size: 0.88rem;
+    line-height: 1.35;
+  }
+
+  .td-progress-bar-wrap {
+    height: 6px;
+    background: var(--bg-input);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .td-progress-bar {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.2s ease;
+  }
+
+  .td-progress-meta {
+    margin: 0.35rem 0 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-family: var(--mono);
+  }
+
+  .td-progress-meta.phase-tag {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
 </style>

@@ -27,6 +27,12 @@
     return 'Insufficient hardware';
   }
 
+  function indexingTierLabel(t) {
+    if (t === 'high') return 'High';
+    if (t === 'mid') return 'Mid';
+    return 'Low';
+  }
+
   async function refreshHardware() {
     hw = null;
     hwLoading = true;
@@ -85,6 +91,15 @@
   <div class="hw-capability-row">
     <span class="hw-badge hw-badge-{hw.capability}">{capabilityLabel(hw.capability)}</span>
     <button class="settings-action-btn" onclick={refreshHardware}>Refresh</button>
+  </div>
+
+  <div class="hw-card">
+    <div class="hw-card-title">Background indexing</div>
+    <div class="hw-row">
+      <span class="hw-label">Throughput tier</span>
+      <span class="hw-value">{indexingTierLabel(hw.indexingThroughputTier)}</span>
+    </div>
+    <p class="setting-desc hw-indexing-summary">{hw.indexingThroughputSummary}</p>
   </div>
 
   <div class="hw-card">

@@ -64,6 +64,12 @@ async fn run() -> Result<(), String> {
     };
     use tempfile::tempdir;
 
+    use app_lib::indexing_profile::{
+        init_global, plan_for_tier, tier_from_env, IndexingThroughputTier,
+    };
+    let tier = tier_from_env().unwrap_or(IndexingThroughputTier::Mid);
+    init_global(std::sync::Arc::new(plan_for_tier(tier)));
+
     let offline = std::env::var("SEARCH_QUALITY_OFFLINE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);

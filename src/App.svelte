@@ -389,6 +389,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                     .then((hw) => {
                         settings.hwCapability = hw.capability;
                         settings.llmForceEnabled = hw.llmForceEnabled;
+                        settings.hardwareReport = hw;
                     })
                     .catch(() => {});
 
@@ -403,6 +404,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
             await tick();
             await getCurrentWindow().show();
+            window.__GRIMOIRE_PERF_READY__ = true;
         })();
 
         return () => {
@@ -1378,6 +1380,11 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
             onHardwareChange={(cap, force) => {
                 settings.hwCapability = cap;
                 settings.llmForceEnabled = force;
+                invoke("get_hardware_info")
+                    .then((hw) => {
+                        settings.hardwareReport = hw;
+                    })
+                    .catch(() => {});
             }}
             wikipediaEnabled={settings.wikipediaEnabled}
             onWikipediaEnabledChange={(v) => (settings.wikipediaEnabled = v)}

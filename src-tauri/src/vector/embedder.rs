@@ -53,11 +53,10 @@ pub fn content_chars_for_model(model: &str) -> usize {
     if model.contains("mxbai") { 350 } else { 1500 }
 }
 
-/// Batch size for /api/embed calls. 64 texts per request works for all models:
-/// truncate=true prevents 400 errors, and content_chars_for_model pre-truncates
-/// inputs so even mxbai-embed-large (512-token context) stays within budget.
-pub fn batch_size_for_model(_model: &str) -> usize {
-    64
+/// Batch size for `/api/embed` requests: host indexing tier plus per-model clamp
+/// (see [`crate::indexing_profile::effective_embed_slice_cap`]).
+pub fn batch_size_for_model(model: &str) -> usize {
+    crate::indexing_profile::effective_embed_slice_cap(model)
 }
 
 /// Evict all currently loaded Ollama models *except* the one we're about to use.

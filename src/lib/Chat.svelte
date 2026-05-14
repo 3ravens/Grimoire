@@ -20,6 +20,18 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   import { listen } from '@tauri-apps/api/event';
   import { untrack, tick, onMount, getContext } from 'svelte';
   import { FEATURE_GUIDE } from './utils/featureGuide.js';
+  import { CURATED_CHAT_MODELS, DEFAULT_CHAT_MODEL, isExtraInstalledModel, statsForAnyModelId, isEmbeddingModelId } from './constants/chatModels.js';
+  import { assessChatModelHardware } from './utils/chatModelHardware.js';
+  import { firstInstalledFullName } from './utils/ollamaModelMatch.js';
+  import {
+    checkChatModelInstalled,
+    saveChatModelSetting,
+    pullChatModel,
+    isPullInFlight,
+    deleteOllamaModel,
+  } from './services/chatModelSelection.js';
+  import ModelDownloadModal from './ModelDownloadModal.svelte';
+  import ChatModelCombobox from './ChatModelCombobox.svelte';
 
   const ns       = getContext('ns');
   const ts       = getContext('ts');
@@ -42,6 +54,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   const keepInMemory    = $derived(settings.keepModelInMemory);
   const llmEnabled      = $derived(settings.llmEnabled);
   const wikipediaEnabled = $derived(settings.wikipediaEnabled);
+  const hardwareReport  = $derived(settings.hardwareReport ?? null);
 
   // pendingInsert and activeNote: when suppressNoteContext is true (chat tab), both are null.
   const pendingInsert = $derived(suppressNoteContext ? null : ts.chatInsert);
@@ -95,7 +108,231 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   // Each message: { role: 'user' | 'assistant', content: string }
   let messages = $state([]);
   let input = $state('');
-  let model = $state('llama3.2');
+  /** Committed chat model id (persisted); used for Ollama chat requests. */
+  let model = $state(DEFAULT_CHAT_MODEL);
+  /** Mirrors chat model picker; may revert while a download prompt is open. */
+  let modelSelectUi = $state(DEFAULT_CHAT_MODEL);
+  let extraInstalledModels = $state([]);
+  let selectModelBusy = $state(false);
+  /** `value` of the row currently being removed from Ollama, if any. */
+  let uninstallBusy = $state(/** @type {string | null} */ (null));
+  /** @type {null | { model: string, phase: 'confirm' | 'pulling' | 'error', confirmKind?: 'downloadMissing' | 'installedRisk', hardwareWarning?: { level: string, lines: string[] } | null, statusLine: string, progress: { completed: number, total: number } | null, errorMessage: string }} */
+  let modelDownloadModal = $state(null);
+
+  const chatModelSelectOptions = $derived.by(() => {
+    const inst = extraInstalledModels;
+    const rows = CURATED_CHAT_MODELS.map((p) => ({
+      value: p.value,
+      label: p.label,
+      installedFull: firstInstalledFullName(p.value, inst),
+      ...statsForAnyModelId(p.value),
+    }));
+    const seen = new Set(rows.map((r) => r.value));
+    const extras = [];
+    for (const n of inst) {
+      if (!isExtraInstalledModel(n)) continue;
+      if (isEmbeddingModelId(n)) continue;
+      if (seen.has(n)) continue;
+      seen.add(n);
+      extras.push({ value: n, label: n, installedFull: n, ...statsForAnyModelId(n) });
+    }
+    extras.sort((a, b) => a.value.localeCompare(b.value));
+    rows.push(...extras);
+    if (model && !seen.has(model)) {
+      rows.push({
+        value: model,
+        label: model,
+        installedFull: firstInstalledFullName(model, inst),
+        ...statsForAnyModelId(model),
+      });
+    }
+    return rows;
+  });
+
+  /**
+   * @param {{ value: string, installedFull?: string | null }} opt
+   */
+  async function uninstallChatModelOption(opt) {
+    if (!opt.installedFull || uninstallBusy) return;
+    const label = opt.installedFull;
+    if (
+      !confirm(
+        `Remove "${label}" from Ollama? This deletes the local copy; you can pull it again later.`,
+      )
+    ) {
+      return;
+    }
+    uninstallBusy = opt.value;
+    error = '';
+    try {
+      await deleteOllamaModel(opt.value);
+      if (!(await checkChatModelInstalled(model))) {
+        await saveChatModelSetting(DEFAULT_CHAT_MODEL);
+      }
+      await refreshExtraInstalledModels();
+    } catch (e) {
+      error = fmtAppError(e);
+    } finally {
+      uninstallBusy = null;
+    }
+  }
+
+  async function refreshExtraInstalledModels() {
+    try {
+      const list = await invoke('list_ollama_installed_models');
+      extraInstalledModels = Array.isArray(list) ? list : [];
+    } catch {
+      extraInstalledModels = [];
+    }
+    try {
+      if (modelDownloadModal) return;
+      const val = await invoke('get_setting', { key: 'chat_model' });
+      if (typeof val === 'string' && val.trim()) {
+        const v = val.trim();
+        model = v;
+        modelSelectUi = v;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /**
+   * @param {string} next
+   */
+  async function commitChatModelChoice(next) {
+    const t = String(next).trim();
+    if (!t || selectModelBusy || uninstallBusy) return;
+    if (isPullInFlight()) return;
+    if (isEmbeddingModelId(t)) {
+      error = 'That model is for embeddings (semantic search), not chat. Pick a chat model here, or change the embedding model under Settings → LLM.';
+      modelSelectUi = model;
+      return;
+    }
+    if (t === model) {
+      modelSelectUi = model;
+      return;
+    }
+    selectModelBusy = true;
+    error = '';
+    try {
+      const installed = await checkChatModelInstalled(t);
+      const hwWarn = assessChatModelHardware(t, hardwareReport);
+
+      if (!installed) {
+        modelSelectUi = model;
+        modelDownloadModal = {
+          model: t,
+          phase: 'confirm',
+          confirmKind: 'downloadMissing',
+          hardwareWarning: hwWarn.level === 'ok' ? null : hwWarn,
+          statusLine: '',
+          progress: null,
+          errorMessage: '',
+        };
+        return;
+      }
+
+      if (hwWarn.level !== 'ok') {
+        modelSelectUi = t;
+        modelDownloadModal = {
+          model: t,
+          phase: 'confirm',
+          confirmKind: 'installedRisk',
+          hardwareWarning: hwWarn,
+          statusLine: '',
+          progress: null,
+          errorMessage: '',
+        };
+        return;
+      }
+
+      model = t;
+      modelSelectUi = t;
+      await saveChatModelSetting(t);
+      await refreshExtraInstalledModels();
+    } catch (e) {
+      error = fmtAppError(e);
+      modelSelectUi = model;
+    } finally {
+      selectModelBusy = false;
+    }
+  }
+
+  async function onModelDownloadConfirm() {
+    const m = modelDownloadModal;
+    if (!m || m.phase !== 'confirm') return;
+
+    if (m.confirmKind === 'installedRisk') {
+      const name = m.model;
+      model = name;
+      modelSelectUi = name;
+      await saveChatModelSetting(name);
+      await refreshExtraInstalledModels();
+      modelDownloadModal = null;
+      return;
+    }
+
+    const name = m.model;
+    const hwW = m.hardwareWarning ?? null;
+    modelDownloadModal = {
+      model: name,
+      phase: 'pulling',
+      confirmKind: 'downloadMissing',
+      hardwareWarning: hwW,
+      statusLine: '',
+      progress: null,
+      errorMessage: '',
+    };
+    try {
+      let pullProgress = null;
+      await pullChatModel(name, (payload) => {
+        const status = typeof payload?.status === 'string' ? payload.status : '';
+        const completed = typeof payload?.completed === 'number' ? payload.completed : null;
+        const total = typeof payload?.total === 'number' ? payload.total : null;
+        if (completed != null && total != null && total > 0) {
+          pullProgress = { completed, total };
+        }
+        const line = status || JSON.stringify(payload);
+        modelDownloadModal = {
+          model: name,
+          phase: 'pulling',
+          confirmKind: 'downloadMissing',
+          hardwareWarning: hwW,
+          statusLine: line,
+          progress: pullProgress,
+          errorMessage: '',
+        };
+      });
+      const ok = await checkChatModelInstalled(name);
+      if (!ok) {
+        throw new Error('Model still not reported as installed after pull.');
+      }
+      model = name;
+      modelSelectUi = name;
+      await saveChatModelSetting(name);
+      await refreshExtraInstalledModels();
+      modelDownloadModal = null;
+    } catch (e) {
+      modelDownloadModal = {
+        model: name,
+        phase: 'error',
+        confirmKind: 'downloadMissing',
+        hardwareWarning: null,
+        statusLine: '',
+        progress: null,
+        errorMessage: fmtAppError(e),
+      };
+    }
+  }
+
+  function closeModelDownloadModal() {
+    if (modelDownloadModal?.confirmKind === 'installedRisk') {
+      modelSelectUi = model;
+    }
+    modelDownloadModal = null;
+  }
+
   let isLoading = $state(false);
   let error = $state('');
   // Initialise toggles directly from localStorage so they are correct on first render,
@@ -118,11 +355,9 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   $effect(() => { localStorage.setItem('grimoire:chat:useViewContext',  JSON.stringify(useViewContext)); });
   $effect(() => { localStorage.setItem('grimoire:chat:useFeatureGuide', JSON.stringify(useFeatureGuide)); });
 
-  // Load chat model from SQLite on mount.
+  // Load chat model from SQLite on mount and merge local Ollama tags into the selector.
   onMount(() => {
-    invoke('get_setting', { key: 'chat_model' })
-      .then(val => { if (val !== '') model = val; })
-      .catch(() => {});
+    void refreshExtraInstalledModels();
   });
 
   // Reference to the chat textarea so we can focus it after injection.
@@ -740,6 +975,19 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 <svelte:window onclick={(e) => { if (chatOptsOpen && !(/** @type {Element} */ (e.target)).closest('.chat-opts-wrap')) chatOptsOpen = false; }} />
 
 <aside class="chat-panel">
+  {#if modelDownloadModal}
+    <ModelDownloadModal
+      model={modelDownloadModal.model}
+      phase={modelDownloadModal.phase}
+      confirmKind={modelDownloadModal.confirmKind ?? 'downloadMissing'}
+      hardwareWarning={modelDownloadModal.hardwareWarning ?? null}
+      statusLine={modelDownloadModal.statusLine}
+      progress={modelDownloadModal.progress}
+      errorMessage={modelDownloadModal.errorMessage}
+      onDownload={onModelDownloadConfirm}
+      onCancel={closeModelDownloadModal}
+    />
+  {/if}
   {#if !llmEnabled}
     <div class="chat-hw-banner">
       <strong>LLM features unavailable.</strong>
@@ -750,12 +998,21 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
   <div class="chat-header">
     <span class="chat-title">Chat</span>
-    <input
-      class="model-input"
-      bind:value={model}
-      placeholder="model"
-      title="Ollama model name (e.g. llama3.2)"
-      onchange={() => invoke('set_setting', { key: 'chat_model', value: model }).catch(() => {})}
+    <ChatModelCombobox
+      variant="chat"
+      selected={modelSelectUi}
+      options={chatModelSelectOptions}
+      disabled={selectModelBusy || isPullInFlight() || !!uninstallBusy || !llmEnabled}
+      ariaLabel="Chat model (Ollama)"
+      onOpenChange={(o) => {
+        if (o) {
+          chatOptsOpen = false;
+          void refreshExtraInstalledModels();
+        }
+      }}
+      onSelect={(v) => commitChatModelChoice(v)}
+      onUninstall={uninstallChatModelOption}
+      uninstallBusyKey={uninstallBusy}
     />
     <div class="chat-opts-wrap">
       <button

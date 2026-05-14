@@ -945,6 +945,7 @@ pub async fn index_wikipedia_bundle(
     vdb: State<'_, crate::vector::VectorDb>,
     cancel_map: State<'_, super::CancelMap>,
     config: State<'_, SharedConfig>,
+    indexing_plan: State<'_, Arc<crate::indexing_profile::IndexingThroughputPlan>>,
     bundle_id: String,
     reset: Option<bool>,
 ) -> AppResult<()> {
@@ -1019,8 +1020,10 @@ pub async fn index_wikipedia_bundle(
     let max_retries = config.read().unwrap().background_max_retries;
     let permanently_skipped_arc = Arc::new(AtomicI64::new(0));
     let permanently_skipped_inner = permanently_skipped_arc.clone();
+    let indexing_plan_spawn = indexing_plan.inner().clone();
 
     let result: AppResult<()> = tokio::task::spawn_blocking(move || {
+        let plan = &*indexing_plan_spawn;
         let rt = tokio::runtime::Handle::current();
         use zim_rs::archive::Archive;
         let archive = Archive::new(&zim_path)
@@ -1060,14 +1063,13 @@ pub async fn index_wikipedia_bundle(
         //   Phase 3 — batched GPU embedding      (BATCH_SIZE texts per Ollama call)
         //   Phase 4 — bulk LanceDB upsert        (one delete+insert per batch)
         //
-        // SCAN_WINDOW is tuned for a high-end machine. BATCH_SIZE and content
-        // length are model-aware: mxbai-embed-large has a 512-token context
-        // window so we use smaller batches and shorter input texts to avoid
-        // Ollama returning HTTP 400 (truncate=true in vector.rs is a safety
-        // net, but pre-truncating here avoids wasted tokens entirely).
-        let base_batch_size: usize = crate::vector::batch_size_for_model(&model).max(8);
+        // Scan window, embed batch caps, and Lance chunk sizes are scaled by
+        // [`crate::indexing_profile::IndexingThroughputPlan`] from host hardware.
+        let base_batch_size: usize = plan.embed_cap_for_model(&model).max(8);
         let content_chars: usize = crate::vector::content_chars_for_model(&model);
-        const SCAN_WINDOW: usize = 1024; // ZIM entries read per iteration
+        let scan_window: u32 = plan.wiki_scan_window;
+        let embed_ceiling: usize = plan.wiki_dynamic_embed_ceiling;
+        let lance_chunk_rows: usize = plan.wiki_lance_initial_chunk_rows;
         // Re-check Ollama for competing models every N completed windows; bulk embed
         // skips per-batch eviction (see EmbedBatchOptions::skip_ollama_entry_eviction).
         const WIKI_INDEX_OLLAMA_EVICT_EVERY_WINDOWS: u64 = 10;
@@ -1087,7 +1089,7 @@ pub async fn index_wikipedia_bundle(
             if window_idx > 0 && window_idx % WIKI_INDEX_OLLAMA_EVICT_EVERY_WINDOWS == 0 {
                 rt.block_on(crate::vector::evict_ollama_models_except(&model));
             }
-            let window_end = (scan_pos + SCAN_WINDOW as u32).min(total_entries);
+            let window_end = (scan_pos + scan_window).min(total_entries);
 
             // ── Phase 1: sequential ZIM reads ──────────────────────────────────
             let phase_read_t0 = Instant::now();
@@ -1106,9 +1108,10 @@ pub async fn index_wikipedia_bundle(
 
             // ── Phase 2: parallel HTML→text parse on all CPU cores ─────────────
             let phase_parse_t0 = Instant::now();
-            let articles: Vec<(u32, String, String, String)> = raw
-                .into_par_iter()
-                .filter_map(|(idx, path, title, html_bytes)| {
+            let articles: Vec<(u32, String, String, String)> = {
+                let parse = || {
+                    raw.into_par_iter()
+                        .filter_map(|(idx, path, title, html_bytes)| {
                     // Skip MediaWiki CSS/template/module pages by path prefix.
                     // In ZIM files these appear as paths starting with "-/"
                     // or containing namespace prefixes like "MediaWiki:", "Module:".
@@ -1150,7 +1153,14 @@ pub async fn index_wikipedia_bundle(
                     }
                     Some((idx, format!("{bundle_id_clone}/{path}"), title, content))
                 })
-                .collect();
+                .collect()
+                };
+                if let Some(parse_pool) = plan.wiki_parse_pool() {
+                    parse_pool.install(parse)
+                } else {
+                    parse()
+                }
+            };
             let parse_ms = phase_parse_t0.elapsed().as_millis();
 
             let _ = rt.block_on(wiki_fts_insert_articles_batch(
@@ -1167,7 +1177,6 @@ pub async fn index_wikipedia_bundle(
             let mut window_embed_retries_extra: u32 = 0;
             let mut window_lance_retries_extra: u32 = 0;
             let mut window_upsert_batch: Vec<(String, String, String, String, Vec<f32>)> = Vec::new();
-            let mut window_indexed_delta: i64 = 0;
             let mut window_last_checkpoint_idx: u32 = last_checkpoint_idx;
             let mut dynamic_batch_size = base_batch_size;
             let mut batch_cursor = 0usize;
@@ -1267,7 +1276,6 @@ pub async fn index_wikipedia_bundle(
                     })
                     .collect();
 
-                window_indexed_delta += upsert_batch.len() as i64;
                 window_upsert_batch.extend(upsert_batch);
                 upsert_ms += phase_upsert_t0.elapsed().as_millis();
                 if split_delta > 0 || single_delta > 0 {
@@ -1275,7 +1283,7 @@ pub async fn index_wikipedia_bundle(
                 } else if dynamic_batch_size < base_batch_size {
                     dynamic_batch_size = (dynamic_batch_size + 8).min(base_batch_size);
                 } else {
-                    dynamic_batch_size = (dynamic_batch_size + 8).min(128);
+                    dynamic_batch_size = (dynamic_batch_size + 8).min(embed_ceiling);
                 }
                 batch_cursor = chunk_end;
             }
@@ -1287,31 +1295,43 @@ pub async fn index_wikipedia_bundle(
                 single_win_t1.saturating_sub(single_win_t0);
 
             if !window_upsert_batch.is_empty() {
-                let phase_upsert_write_t0 = Instant::now();
-                let append_result = rt.block_on(wiki_append_with_salvage(
-                    &vdb_conn,
-                    window_upsert_batch,
-                    max_retries,
-                    &cancel_clone,
-                    &mut window_lance_retries_extra,
-                ));
-                upsert_ms += phase_upsert_write_t0.elapsed().as_millis();
+                let lance_chunks: Vec<Vec<(String, String, String, String, Vec<f32>)>> =
+                    if window_upsert_batch.len() <= lance_chunk_rows {
+                        vec![window_upsert_batch]
+                    } else {
+                        window_upsert_batch
+                            .chunks(lance_chunk_rows)
+                            .map(|c| c.to_vec())
+                            .collect()
+                    };
+                for window_chunk in lance_chunks {
+                    let chunk_len = window_chunk.len() as i64;
+                    let phase_chunk_t0 = Instant::now();
+                    let append_result = rt.block_on(wiki_append_with_salvage(
+                        &vdb_conn,
+                        window_chunk,
+                        max_retries,
+                        &cancel_clone,
+                        &mut window_lance_retries_extra,
+                    ));
+                    upsert_ms += phase_chunk_t0.elapsed().as_millis();
 
-                match append_result {
-                    Ok((indexed_ok, skipped)) => {
-                        indexed += indexed_ok;
-                        if skipped > 0 {
-                            permanently_skipped_inner.fetch_add(skipped, Ordering::Relaxed);
+                    match append_result {
+                        Ok((indexed_ok, skipped)) => {
+                            indexed += indexed_ok;
+                            if skipped > 0 {
+                                permanently_skipped_inner.fetch_add(skipped, Ordering::Relaxed);
+                            }
+                            last_checkpoint_idx = window_last_checkpoint_idx;
                         }
-                        last_checkpoint_idx = window_last_checkpoint_idx;
-                    }
-                    Err(AppError::InvalidInput(m)) if m == "Indexing cancelled" => {
-                        return Err(AppError::InvalidInput(m));
-                    }
-                    Err(e) => {
-                        log::warn!("wikipedia_append_with_salvage failed: {}", e);
-                        permanently_skipped_inner.fetch_add(window_indexed_delta, Ordering::Relaxed);
-                        last_checkpoint_idx = window_last_checkpoint_idx;
+                        Err(AppError::InvalidInput(m)) if m == "Indexing cancelled" => {
+                            return Err(AppError::InvalidInput(m));
+                        }
+                        Err(e) => {
+                            log::warn!("wikipedia_append_with_salvage failed: {}", e);
+                            permanently_skipped_inner.fetch_add(chunk_len, Ordering::Relaxed);
+                            last_checkpoint_idx = window_last_checkpoint_idx;
+                        }
                     }
                 }
             }
@@ -2382,6 +2402,7 @@ pub async fn benchmark_wikipedia_quality(
 #[tauri::command]
 pub async fn benchmark_wikipedia_indexing(
     config: State<'_, SharedConfig>,
+    indexing_plan: State<'_, Arc<crate::indexing_profile::IndexingThroughputPlan>>,
     zim_path: String,
     max_entries: Option<u32>,
 ) -> AppResult<WikiIndexBenchmarkResult> {
@@ -2389,8 +2410,10 @@ pub async fn benchmark_wikipedia_indexing(
     let scan_budget = max_entries.unwrap_or(20_000).max(1);
     let model_for_task = embedding_model.clone();
     let path_for_task = zim_path.clone();
+    let plan_arc = indexing_plan.inner().clone();
 
     let result = tokio::task::spawn_blocking(move || {
+        let plan = &*plan_arc;
         use zim_rs::archive::Archive;
 
         let rt = tokio::runtime::Handle::current();
@@ -2399,9 +2422,9 @@ pub async fn benchmark_wikipedia_indexing(
 
         let total_entries = archive.get_all_entrycount();
         let limit = total_entries.min(scan_budget);
-        let batch_size: usize = crate::vector::batch_size_for_model(&model_for_task).max(8);
+        let batch_size: usize = plan.embed_cap_for_model(&model_for_task).max(8);
         let content_chars: usize = crate::vector::content_chars_for_model(&model_for_task);
-        const SCAN_WINDOW: usize = 1024;
+        let scan_window = plan.wiki_scan_window;
 
         let mut scan_pos: u32 = 0;
         let mut windows: u32 = 0;
@@ -2423,7 +2446,7 @@ pub async fn benchmark_wikipedia_indexing(
             if windows > 0 && windows % 10 == 0 {
                 rt.block_on(crate::vector::evict_ollama_models_except(&model_for_task));
             }
-            let window_end = (scan_pos + SCAN_WINDOW as u32).min(limit);
+            let window_end = (scan_pos + scan_window).min(limit);
             let window_len = window_end - scan_pos;
             scanned_entries = scanned_entries.saturating_add(window_len);
 
@@ -2445,9 +2468,10 @@ pub async fn benchmark_wikipedia_indexing(
             total_read_ms += phase_read_t0.elapsed().as_millis();
 
             let phase_parse_t0 = Instant::now();
-            let articles: Vec<(String, String)> = raw
-                .into_par_iter()
-                .filter_map(|(path, title, html_bytes)| {
+            let articles: Vec<(String, String)> = {
+                let parse = || {
+                    raw.into_par_iter()
+                        .filter_map(|(path, title, html_bytes)| {
                     let path_lower = path.to_lowercase();
                     if (path.starts_with('.') && !path.starts_with("./"))
                         || path.starts_with("-/")
@@ -2478,7 +2502,14 @@ pub async fn benchmark_wikipedia_indexing(
                     }
                     Some((title, content))
                 })
-                .collect();
+                .collect()
+                };
+                if let Some(parse_pool) = plan.wiki_parse_pool() {
+                    parse_pool.install(parse)
+                } else {
+                    parse()
+                }
+            };
             total_parse_ms += phase_parse_t0.elapsed().as_millis();
 
             accepted_articles = accepted_articles.saturating_add(articles.len() as u32);

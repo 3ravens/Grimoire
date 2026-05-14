@@ -15,10 +15,13 @@
 // You should have received a copy of the GNU General Public License
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
+use std::sync::Arc;
+
 use tauri::State;
 use crate::{AppResult};
 use crate::hardware::{detect, HardwareInfo, LlmCapability};
 use crate::config::SharedConfig;
+use crate::indexing_profile::{IndexingThroughputPlan, IndexingThroughputTier};
 
 /// Returned to the frontend — extends HardwareInfo with the persisted override flag.
 #[derive(serde::Serialize)]
@@ -28,15 +31,29 @@ pub struct HardwareReport {
     pub info: HardwareInfo,
     /// Whether the user has opted in to LLM features despite insufficient hardware.
     pub llm_force_enabled: bool,
+    /// Indexing throughput tier selected at startup (matches bulk indexers).
+    pub indexing_throughput_tier: IndexingThroughputTier,
+    /// Short human-readable summary of indexing behaviour for this session.
+    pub indexing_throughput_summary: String,
 }
 
 /// Detect hardware capabilities and return a full report including the
 /// persisted override setting from the database.
 #[tauri::command]
-pub async fn get_hardware_info(config: State<'_, SharedConfig>) -> AppResult<HardwareReport> {
+pub async fn get_hardware_info(
+    config: State<'_, SharedConfig>,
+    indexing_plan: State<'_, Arc<IndexingThroughputPlan>>,
+) -> AppResult<HardwareReport> {
     let info = detect().await;
     let force_enabled = config.read().unwrap().llm_force_enabled;
-    Ok(HardwareReport { info, llm_force_enabled: force_enabled })
+    let tier = indexing_plan.tier;
+    let indexing_throughput_summary = indexing_plan.summary_label().to_string();
+    Ok(HardwareReport {
+        info,
+        llm_force_enabled: force_enabled,
+        indexing_throughput_tier: tier,
+        indexing_throughput_summary,
+    })
 }
 
 /// Returns true if LLM features should be active:

@@ -26,6 +26,7 @@ mod db;
 pub mod error;
 pub mod folder_tree;
 mod hardware;
+pub mod indexing_profile;
 pub mod perf_budget;
 mod note_store;
 mod retry;
@@ -124,6 +125,14 @@ pub fn run() {
                     .expect("failed to load app config");
                 app_handle.manage(Arc::new(RwLock::new(app_config)) as config::SharedConfig);
 
+                let hw_snapshot = hardware::detect().await;
+                let tier = indexing_profile::tier_from_env()
+                    .unwrap_or_else(|| indexing_profile::tier_from_hardware(&hw_snapshot));
+                let indexing_plan =
+                    Arc::new(indexing_profile::plan_for_tier(tier));
+                indexing_profile::init_global(Arc::clone(&indexing_plan));
+                app_handle.manage(indexing_plan);
+
                 app_handle.manage(pool);
 
                 tauri::async_runtime::spawn(async move {
@@ -177,6 +186,10 @@ pub fn run() {
         commands::delete_folder,
         commands::move_folder,
         commands::chat,
+        commands::list_ollama_installed_models,
+        commands::ollama_model_installed,
+        commands::pull_ollama_model,
+        commands::delete_ollama_model,
         commands::suggest_note_improvement,
         commands::suggest_hunk_refinement,
         commands::index_note,

@@ -148,6 +148,15 @@
   line-height: 1.5;
 }
 
+.model-stats-hint {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.45;
+  opacity: 0.9;
+  margin: 6px 0 0;
+  max-width: 520px;
+}
+
 .setting-row select {
   flex-shrink: 0;
   padding: 5px 8px;
@@ -163,6 +172,92 @@
 .setting-row select:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+.setting-row .chat-model-combobox {
+  flex-shrink: 0;
+  min-width: 200px;
+  max-width: min(100%, 360px);
+  position: relative;
+}
+
+.setting-row .chat-model-combobox-trigger--settings {
+  width: 100%;
+  min-width: 200px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: 13px var(--sans);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.setting-row .chat-model-combobox-trigger--settings:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.setting-row .chat-model-combobox-trigger--settings:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.setting-row .chat-model-combobox-menu {
+  left: auto;
+  right: 0;
+  min-width: min(100vw - 32px, 400px);
+}
+
+.llm-custom-model-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-width: 200px;
+  max-width: min(100%, 360px);
+}
+
+.llm-custom-model-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-h);
+  font: 13px var(--sans);
+  box-sizing: border-box;
+}
+
+.llm-custom-model-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.llm-custom-model-input:disabled {
+  opacity: 0.45;
+}
+
+.llm-custom-model-apply {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  font: 13px var(--sans);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg3);
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.llm-custom-model-apply:hover:not(:disabled) {
+  background: var(--bg);
+}
+
+.llm-custom-model-apply:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .setting-row .setting-num {

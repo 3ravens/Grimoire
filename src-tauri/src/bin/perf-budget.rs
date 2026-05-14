@@ -85,6 +85,12 @@ async fn run() -> Result<(), String> {
     };
     use tempfile::tempdir;
 
+    use app_lib::indexing_profile::{
+        init_global, plan_for_tier, tier_from_env, IndexingThroughputTier,
+    };
+    let tier = tier_from_env().unwrap_or(IndexingThroughputTier::Mid);
+    init_global(Arc::new(plan_for_tier(tier)));
+
     let dir = tempdir().map_err(|e| e.to_string())?;
     let db_path = dir.path().join("grimoire.db");
     let pool = open_sqlite_file(&db_path)

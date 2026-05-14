@@ -14,6 +14,8 @@ export function createSettings() {
   // 'embeddingOnly' is the safe default until the first response arrives.
   let hwCapability    = $state('embeddingOnly');
   let llmForceEnabled = $state(false);
+  /** Last `get_hardware_info` payload (flattened); used for chat-model heuristics. */
+  let hardwareReport = $state(/** @type {Record<string, unknown> | null} */ (null));
   const llmEnabled = $derived(hwCapability === 'full' || llmForceEnabled);
 
   // Wikipedia local knowledge source toggle.
@@ -67,6 +69,8 @@ export function createSettings() {
     set hwCapability(v) { hwCapability = v; },
     get llmForceEnabled() { return llmForceEnabled; },
     set llmForceEnabled(v) { llmForceEnabled = v; },
+    get hardwareReport() { return hardwareReport; },
+    set hardwareReport(v) { hardwareReport = v; },
     get llmEnabled() { return llmEnabled; },
     get wikipediaEnabled() { return wikipediaEnabled; },
     set wikipediaEnabled(v) { wikipediaEnabled = v; },

@@ -18,6 +18,9 @@ export function createNoteService({ onError }) {
   let noteDeletePending = $state(null);
   let isSeeding = $state(false);
   let isReindexing = $state(false);
+  /** Latest `test_data:progress` payload while `generateTestData` runs (dev builds). */
+  /** @type {{ phase: string, message: string, current?: number, total?: number } | null} */
+  let testDataProgress = $state(null);
   /** Bumped after a successful note save so read-mode transclusion re-fetches embedded bodies. */
   let transclusionRefresh = $state(0);
   /** @type {{ processed: number, total: number, indexed: number, phase?: string | null, embeddingChunks?: { done: number, total: number, note_title: string } | null } | null} */
@@ -297,14 +300,21 @@ export function createNoteService({ onError }) {
 
   async function generateTestData(params) {
     isSeeding = true;
+    testDataProgress = null;
+    let unlisten = null;
     try {
-      const summary = await invoke('generate_test_data', params);
-      window.dispatchEvent(new CustomEvent('grimoire:vault-data-changed'));
+      unlisten = await listen("test_data:progress", (ev) => {
+        testDataProgress = /** @type {any} */ (ev.payload);
+      });
+      const summary = await invoke("generate_test_data", params);
+      window.dispatchEvent(new CustomEvent("grimoire:vault-data-changed"));
       return summary;
     } catch (e) {
       onError?.(e);
       return null;
     } finally {
+      unlisten?.();
+      testDataProgress = null;
       isSeeding = false;
     }
   }
@@ -410,6 +420,9 @@ export function createNoteService({ onError }) {
     },
     get isSeeding() {
       return isSeeding;
+    },
+    get testDataProgress() {
+      return testDataProgress;
     },
     get isReindexing() {
       return isReindexing;
