@@ -37,21 +37,37 @@ tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
-tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio = { version = "1", default-features = false, features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "fs",
+    "io-util",
+    "time",
+    "process",
+] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "stream",
+    "rustls-tls",
+] }
 lancedb = "0.14"
 arrow-array = "53"
 arrow-schema = "53"
-futures = "0.3"
+futures-util = { version = "0.3", default-features = false, features = [
+    "std",
+    "alloc",
+    "sink",
+    "io",
+] }
 argon2 = "0.5"
 aes-gcm = "0.10"
 rand = "0.8"
-zeroize = { version = "1", features = ["derive"] }
+zeroize = "1"
 base64 = "0.22"
-sysinfo = "0.33"
+sysinfo = { version = "0.33", default-features = false, features = ["system", "disk"] }
 zim-sys = "0.1.0"
 zim-rs = "0.1.1"
-sha2 = "0.10"
 roxmltree = "0.20"
 scraper = "0.22"
 rayon = "1"
@@ -61,8 +77,6 @@ csv = "1.4.0"
 encoding_rs = "0.8.35"
 chardetng = "0.1"
 globset = "0.4"
-epub = "2.1.5"
-rtf-parser = "0.4.2"
 tempfile = "3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -71,9 +85,6 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
 ] }
-
-[dev-dependencies]
-tempfile = "3"
 
 [patch.crates-io]
 # Local forks of zim-sys and zim-rs with the Searcher/Search/Query API removed.

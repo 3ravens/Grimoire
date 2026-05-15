@@ -33,10 +33,11 @@ use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use tauri::{AppHandle, Emitter, State};
 use tauri::Manager;
-use futures::StreamExt;
+use chrono::{SecondsFormat, Utc};
+use futures_util::StreamExt;
 use rayon::prelude::*;
 use std::io::Write;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -845,7 +846,7 @@ pub async fn download_wikipedia_bundle(
 
     file.flush().await.map_err(|e| AppError::Io(format!("Failed to flush file: {e}")))?;
 
-    let now = chrono_now();
+    let now = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
 
     // Upsert the bundle record in SQLite.
     sqlx::query(
@@ -1463,7 +1464,7 @@ pub async fn index_wikipedia_bundle(
 
     match result {
         Ok(()) => {
-            let now = chrono_now();
+            let now = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
             sqlx::query(
                 "UPDATE wikipedia_bundles SET indexing_state = 'done', last_synced = ? WHERE id = ?",
             )
@@ -2200,7 +2201,7 @@ pub async fn save_wikipedia_highlight(
     context_before: String,
     context_after: String,
 ) -> AppResult<i64> {
-    let now = chrono_now();
+    let now = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO wikipedia_highlights
              (bundle_id, article_path, highlighted_text, context_before, context_after, created_at, status)
@@ -2321,7 +2322,7 @@ pub async fn benchmark_wikipedia_quality(
             });
             continue;
         }
-        let expected: HashSet<String> = case.expected_article_ids.into_iter().collect();
+        let expected: std::collections::HashSet<String> = case.expected_article_ids.into_iter().collect();
         if expected.is_empty() {
             per_case.push(WikiEvalCaseResult {
                 query: case.query,
@@ -2652,52 +2653,14 @@ fn run_zim_poc(zim_path: &str) -> AppResult<serde_json::Value> {
 // Utility
 // ---------------------------------------------------------------------------
 
-fn chrono_now() -> String {
-    // Use SystemTime since we can't add the `chrono` crate dependency.
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    // Format as a basic ISO-8601-like timestamp (UTC, seconds precision).
-    let secs_in_day = secs % 86400;
-    let days = secs / 86400;
-    // Days since Unix epoch to calendar date (Gregorian proleptic calendar).
-    let (year, month, day) = days_to_ymd(days);
-    let h = secs_in_day / 3600;
-    let m = (secs_in_day % 3600) / 60;
-    let s = secs_in_day % 60;
-    format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{s:02}Z")
-}
-
-fn days_to_ymd(days: u64) -> (u64, u64, u64) {
-    // Algorithm from http://howardhinnant.github.io/date_algorithms.html
-    let z = days + 719468;
-    let era = z / 146097;
-    let doe = z % 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{days_to_ymd, wiki_rrf_score};
+    use super::wiki_rrf_score;
 
     #[test]
     fn wiki_rrf_score_strictly_decreases_with_rank() {
         let a = wiki_rrf_score(1);
         let b = wiki_rrf_score(2);
         assert!(b < a);
-    }
-
-    #[test]
-    fn days_to_ymd_unix_epoch() {
-        assert_eq!(days_to_ymd(0), (1970, 1, 1));
     }
 }

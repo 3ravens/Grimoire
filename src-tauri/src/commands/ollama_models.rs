@@ -19,7 +19,7 @@
 
 use std::time::Duration;
 
-use futures::StreamExt;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 

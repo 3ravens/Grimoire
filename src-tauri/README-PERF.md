@@ -47,3 +47,48 @@ Cold start (&lt; 2 s to interactive UI on reference hardware) is **not** measure
 ## CI
 
 An optional GitHub Actions workflow (`.github/workflows/perf-advisory.yml`) runs `perf-budget` with `PERF_OFFLINE=1` on `workflow_dispatch` only; it does **not** block merges.
+
+## Dependency reduction audit
+
+Use these commands to measure **Rust** and **frontend** dependency weight before and after trimming `Cargo.toml` / `package.json` (Phase 4 roadmap: dependency reduction audit).
+
+### Rust release binary (`app`)
+
+From `src-tauri`:
+
+```bash
+cargo build --release
+```
+
+Largest crates in the linked binary (install once: `cargo install cargo-bloat`):
+
+```bash
+cargo bloat --release -n 40
+```
+
+### Frontend bundle (Vite)
+
+From the repo root:
+
+```bash
+npm install
+npm run build
+```
+
+Optional treemap / sunburst of Rollup output (writes `dist/stats.html`; enable with `ANALYZE=1`):
+
+```bash
+set ANALYZE=1
+npm run build
+```
+
+On Unix: `ANALYZE=1 npm run build`. Open `dist/stats.html` in a browser.
+
+### Before / after log
+
+Re-run the commands after each audit tier and append a short row (date, tier, `cargo bloat` top few lines or total EXE size, main JS chunk size from `dist/assets/*.js`).
+
+| Date | Change | `app` EXE size (release) | Notes |
+|------|--------|--------------------------|-------|
+| 2026-05-15 | After dependency audit (this pass) | **~129 MB** (`app.exe` ≈ 134.8 MiB on Windows x64) | `cargo build --release` in `src-tauri`. Main Vite chunk `index-*.js` ≈ **409 kB** raw / **126 kB** gzip; graph code split to `Graph-*.js` ≈ **20 kB** raw / **8 kB** gzip (`npm run build`). |
+| (optional) | Baseline before audit | — | Re-run the same commands on an older commit if you need a strict before/after row. |

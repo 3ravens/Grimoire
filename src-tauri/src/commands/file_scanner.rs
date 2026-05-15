@@ -17,9 +17,9 @@
 
 //! File Scanner — lets users add files/folders from outside the vault as RAG context sources.
 //!
-//! Supported formats include plain text, Markdown, PDF, CSV, HTML, DOCX, ODT, EPUB, RTF, and `.log`.
-//! CSV uses row-aware blocks; EPUB respects spine chapters then sentence chunking; other prose
-//! formats use the same sentence-chunking pipeline as notes and embed into `scanned_files`.
+//! Supported formats include plain text, Markdown, PDF, CSV, HTML, DOCX, ODT, and `.log`.
+//! CSV uses row-aware blocks; other prose formats use the same sentence-chunking pipeline as
+//! notes and embed into `scanned_files`.
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use sqlx::SqlitePool;
@@ -73,8 +73,6 @@ fn mime_for_path(path: &std::path::Path) -> Option<&'static str> {
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         ),
         "odt" => Some("application/vnd.oasis.opendocument.text"),
-        "epub" => Some("application/epub+zip"),
-        "rtf" => Some("application/rtf"),
         _ => None,
     }
 }
@@ -872,7 +870,7 @@ pub async fn add_scanned_path(
     if kind == "file" && mime_for_path(p).is_none() {
         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("none");
         return Err(AppError::InvalidInput(format!(
-            "Unsupported file type '.{ext}'. Supported extensions include .txt, .md, .pdf, .csv, .html, .htm, .docx, .odt, .epub, .rtf, and .log."
+            "Unsupported file type '.{ext}'. Supported extensions include .txt, .md, .pdf, .csv, .html, .htm, .docx, .odt, and .log."
         )));
     }
 

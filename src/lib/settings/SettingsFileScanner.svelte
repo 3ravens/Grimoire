@@ -39,7 +39,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   /** Draft text while editing excludes per path (keyed by id). */
   let excludeDraft = $state({});
 
-  // progress[path_id] — scanning state including chunk-level embedding progress (EPUBs, large files).
+  // progress[path_id] — scanning state including chunk-level embedding progress (large files, CSV).
   let progress = $state({});
 
   /** First meaningful embedding progress per path — used for ETA (same idea as Wikipedia indexing). */
@@ -206,8 +206,6 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
             'htm',
             'docx',
             'odt',
-            'epub',
-            'rtf',
             'log',
           ],
         },
@@ -443,7 +441,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         Add files or folders from outside your vault as context sources.
         Indexed content is searched alongside your notes when chatting.
         Supports <code>.txt</code>, <code>.md</code>, <code>.pdf</code>, <code>.csv</code>, <code>.html</code>,
-        <code>.docx</code>, <code>.odt</code>, <code>.epub</code>, <code>.rtf</code>, <code>.log</code>, and more.
+        <code>.docx</code>, <code>.odt</code>, <code>.log</code>, and more.
       </p>
     </div>
     <div class="fs-add-buttons">

@@ -25,7 +25,6 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     import ActivityBar from "./lib/ActivityBar.svelte";
     import Calendar from "./lib/Calendar.svelte";
     import Chat from "./lib/Chat.svelte";
-    import Graph from "./lib/Graph.svelte";
     import Kanban from "./lib/Kanban.svelte";
     import WikipediaReader from "./lib/WikipediaReader.svelte";
     import WikipediaSearchModal from "./lib/WikipediaSearchModal.svelte";
@@ -1229,11 +1228,13 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                             onclick={() => closeTab(ts.activeTabId)}
                             title="Close graph">✕ Close</button
                         >
-                        <Graph
-                            onSelectNote={(id) => openNoteById(id)}
-                            activeNoteId={ns.activeNote?.id ?? null}
-                            theme={settings.theme}
-                        />
+                        {#await import("./lib/Graph.svelte") then { default: Graph }}
+                            <Graph
+                                onSelectNote={(id) => openNoteById(id)}
+                                activeNoteId={ns.activeNote?.id ?? null}
+                                theme={settings.theme}
+                            />
+                        {/await}
                     </div>
                 {:else if ts.activeTab?.type === "calendar"}
                     <div class="tab-fullview">

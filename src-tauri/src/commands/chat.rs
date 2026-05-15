@@ -16,7 +16,7 @@
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
 use serde::{Deserialize, Serialize};
-use futures::StreamExt;
+use futures_util::StreamExt;
 use sqlx::SqlitePool;
 use tauri::State;
 use crate::{AppError, AppResult};

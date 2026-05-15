@@ -22,7 +22,7 @@ use arrow_array::{
     RecordBatchIterator, StringArray,
 };
 use arrow_schema::{ArrowError, DataType, Field, Schema};
-use futures::TryStreamExt;
+use futures_util::TryStreamExt;
 use lancedb::query::{ExecutableQuery, QueryBase};
 use lancedb::Connection;
 use serde::Serialize;

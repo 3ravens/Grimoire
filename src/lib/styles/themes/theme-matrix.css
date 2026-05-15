@@ -2,6 +2,14 @@
 /* ██  MATRIX THEME — Hacker Terminal                                      ██ */
 /* ══════════════════════════════════════════════════════════════════════════ */
 
+@font-face {
+  font-family: 'VT323';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/VT323-Regular.ttf') format('truetype');
+}
+
 [data-theme="matrix"] {
   --text:       #00b330;
   --text-h:     #00ff41;

@@ -14,19 +14,18 @@ use std::io::Read;
 use std::path::Path;
 
 use chardetng::EncodingDetector;
-use epub::doc::{EpubDoc, NavPoint};
 use roxmltree::Node;
 use scraper::{Html, Selector};
 use zip::ZipArchive;
 
-use crate::chunking::{self, chunk_csv_row_blocks, CSV_CHUNK_MAX_CHARS};
+use crate::chunking::{chunk_csv_row_blocks, CSV_CHUNK_MAX_CHARS};
 use crate::{AppError, AppResult};
 
 const W_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const TEXT_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
 
 /// Result of extracting a file: either full prose for sentence chunking, or pre-sized chunks
-/// (CSV row blocks; EPUB already split per chapter + sentences).
+/// (CSV row blocks).
 #[derive(Debug)]
 pub enum ScanExtract {
     FullText(String),
@@ -57,8 +56,6 @@ pub fn extract(path: &Path) -> AppResult<ScanExtract> {
         Some("html") | Some("htm") => Ok(ScanExtract::FullText(html_file_to_structured(path)?)),
         Some("docx") => extract_docx(path).map(ScanExtract::FullText),
         Some("odt") => extract_odt(path).map(ScanExtract::FullText),
-        Some("epub") => extract_epub(path),
-        Some("rtf") => extract_rtf(path).map(ScanExtract::FullText),
         _ => Err(AppError::InvalidInput(
             "Unsupported file type for extraction".into(),
         )),
@@ -296,85 +293,6 @@ fn normalize_blank_lines(s: &str) -> String {
         prev_blank = blank;
     }
     lines.join("\n")
-}
-
-fn toc_label_for_spine_index<R: Read + std::io::Seek>(
-    doc: &EpubDoc<R>,
-    idx: usize,
-) -> Option<String> {
-    fn walk<R: Read + std::io::Seek>(
-        nav: &[NavPoint],
-        doc: &EpubDoc<R>,
-        idx: usize,
-    ) -> Option<String> {
-        for np in nav {
-            if let Some(ch) = doc.resource_uri_to_chapter(&np.content) {
-                if ch == idx {
-                    return Some(np.label.clone());
-                }
-            }
-            if let Some(s) = walk(&np.children, doc, idx) {
-                return Some(s);
-            }
-        }
-        None
-    }
-    walk(&doc.toc, doc, idx)
-}
-
-fn extract_epub(path: &Path) -> AppResult<ScanExtract> {
-    let mut doc =
-        EpubDoc::new(path).map_err(|e| AppError::Io(format!("EPUB: {e}")))?;
-    let n = doc.get_num_chapters();
-    if n == 0 {
-        return Err(AppError::Io("EPUB has no spine chapters.".into()));
-    }
-
-    let mut all_chunks: Vec<String> = Vec::new();
-
-    for i in 0..n {
-        if !doc.set_current_chapter(i) {
-            continue;
-        }
-        let Some((html, mime)) = doc.get_current_str() else {
-            continue;
-        };
-        if !mime.contains("html") && !mime.contains("xml") && !mime.contains("xhtml") {
-            continue;
-        }
-
-        let chapter_title = toc_label_for_spine_index(&doc, i)
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| format!("Chapter {}", i + 1));
-
-        let body = html_to_structured_plain(&html);
-        let chapter_header = format!("\n## {}\n\n", chapter_title.trim());
-        let full = format!("{chapter_header}{body}");
-
-        let sentences = chunking::split_sentences(&full);
-        // Group sentences so full-length EPUBs do not produce tens of thousands of vectors.
-        let mut parts = chunking::chunk_sentences(sentences, 4, 1);
-        all_chunks.append(&mut parts);
-    }
-
-    if all_chunks.is_empty() {
-        return Err(AppError::Io(
-            "No readable HTML chapters in EPUB.".into(),
-        ));
-    }
-
-    Ok(ScanExtract::Chunks(all_chunks))
-}
-
-fn extract_rtf(path: &Path) -> AppResult<String> {
-    let rtf_str = read_text_auto_detect(path)?;
-    let document = rtf_parser::RtfDocument::try_from(rtf_str)
-        .map_err(|e| AppError::Io(format!("RTF: {e}")))?;
-    let text = document.get_text();
-    if text.trim().is_empty() {
-        return Err(AppError::Io("No text in RTF.".into()));
-    }
-    Ok(text)
 }
 
 #[cfg(test)]

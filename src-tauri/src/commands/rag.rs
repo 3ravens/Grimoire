@@ -24,6 +24,7 @@ use sqlx::{QueryBuilder, SqlitePool};
 use tauri::{Emitter, State};
 use crate::folder_tree::folder_subtree_ids;
 use crate::{AppError, AppResult, EncryptedNoteStore, SharedKeyStore};
+#[cfg(debug_assertions)]
 use super::NoteRow;
 use crate::chunking::{split_sentences, chunk_sentences};
 use crate::config::SharedConfig;
