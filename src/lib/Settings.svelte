@@ -28,6 +28,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   import SettingsDeveloper from './settings/SettingsDeveloper.svelte';
   import SettingsWikipedia from './settings/SettingsWikipedia.svelte';
   import SettingsFileScanner from './settings/SettingsFileScanner.svelte';
+  import SettingsHelp from './settings/SettingsHelp.svelte';
 
   let {
     onClose,
@@ -66,6 +67,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     { id: 'wikipedia',    label: 'Wikipedia' },
     { id: 'file_scanner', label: 'File Scanner' },
     { id: 'keybinds',   label: 'Keybinds' },
+    { id: 'help',       label: 'Help' },
     ...(isDev ? [{ id: 'developer', label: 'Developer' }] : []),
   ]);
 </script>
@@ -111,6 +113,8 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         <SettingsFileScanner />
       {:else if activeSection === 'keybinds'}
         <SettingsKeybinds />
+      {:else if activeSection === 'help'}
+        <SettingsHelp />
       {:else if activeSection === 'developer'}
         <SettingsDeveloper {devNativeContextMenu} {onDevNativeContextMenuChange} />
       {/if}

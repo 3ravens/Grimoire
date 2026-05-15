@@ -18,7 +18,6 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 <script>
     import { invoke } from "@tauri-apps/api/core";
     import { getCurrentWindow } from "@tauri-apps/api/window";
-    import { openUrl } from "@tauri-apps/plugin-opener";
     import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
     import { listen } from "@tauri-apps/api/event";
     import { onMount, tick, untrack, setContext } from "svelte";
@@ -787,6 +786,28 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         if (result?.msg) err.showError(`✓ ${result.msg}.`);
         await refreshVaultReindexBanner();
     }
+
+    let bugReportOpening = $state(false);
+
+    async function openBugReportFromShell() {
+        if (bugReportOpening) return;
+        bugReportOpening = true;
+        try {
+            await invoke("open_bug_report");
+        } catch (e) {
+            err.showError(e);
+        } finally {
+            bugReportOpening = false;
+        }
+    }
+
+    async function openPublicSite(url) {
+        try {
+            await invoke("open_external_url", { url });
+        } catch (e) {
+            err.showError(e);
+        }
+    }
 </script>
 
 <svelte:window onkeydown={(e) => kbd.handle(e)} />
@@ -925,8 +946,10 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         onWikipedia={() => (ui.wikiSearchOpen = true)}
         onLock={lockVault}
         onSettings={() => (ui.settingsOpen = true)}
-        onHelp={() => openUrl("https://grimoire.app")}
-        onForum={() => openUrl("https://grimoire.app/forum")}
+        onHelp={() => openPublicSite("https://grimoireapp.dev/help")}
+        onDocs={() => openPublicSite("https://docs.grimoireapp.dev")}
+        onReportBug={openBugReportFromShell}
+        reportBugBusy={bugReportOpening}
     />
 
     <!-- ── Custom title bar ─────────────────────────────────────────────── -->

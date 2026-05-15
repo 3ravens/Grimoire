@@ -15,7 +15,9 @@ This file is part of Grimoire — licensed under GPL-3.0 or later. -->
     onLock,
     onSettings,
     onHelp,
-    onForum,
+    onDocs,
+    onReportBug,
+    reportBugBusy = false,
   } = $props();
 </script>
 
@@ -167,13 +169,30 @@ This file is part of Grimoire — licensed under GPL-3.0 or later. -->
 
     <button
       class="activity-bar-btn"
-      onclick={onForum}
-      title="Forum"
-      aria-label="Forum"
+      onclick={onDocs}
+      title="Documentation"
+      aria-label="Documentation"
     >
       <svg width="16" height="16" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M1.5 1.5h8a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4.5l-3 2.5V2.5a1 1 0 0 1 1-1z"/>
-        <path d="M10.5 4.5h2a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-1v2l-2-2"/>
+        <path d="M3.5 2.5h4a2 2 0 0 1 2 2v8.5H4a1 1 0 0 1-1-1v-8a1 1 0 0 1 .5-.87z"/>
+        <path d="M7.5 2.5H11a1.5 1.5 0 0 1 1.5 1.5v8.5"/>
+        <line x1="5.5" y1="5.5" x2="8.5" y2="5.5"/>
+        <line x1="5.5" y1="7.5" x2="8.5" y2="7.5"/>
+        <line x1="5.5" y1="9.5" x2="7.5" y2="9.5"/>
+      </svg>
+    </button>
+
+    <button
+      class="activity-bar-btn"
+      onclick={onReportBug}
+      disabled={reportBugBusy}
+      title="Report a bug"
+      aria-label="Report a bug"
+    >
+      <svg width="16" height="16" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M7.5 2.5v-1M5.2 3.2L4.5 2M9.8 3.2l.7-.8" />
+        <ellipse cx="7.5" cy="8.5" rx="2.3" ry="3.3" />
+        <path d="M5.2 6.2L3 5.5M9.8 6.2L12 5.5M5 8.5H2.5M10 8.5h2.5M5.2 10.8L3 11.5M9.8 10.8L12 11.5" />
       </svg>
     </button>
   </div>

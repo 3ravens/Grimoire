@@ -1,6 +1,6 @@
 # Performance FAQ
 
-This page documents what Grimoire means by “performance budget” for v1.0 and how numbers are produced. It is intended for [grimoire.app](https://grimoire.app) and can be copied verbatim into the site’s FAQ section.
+This page documents what Grimoire means by “performance budget” for v1.0 and how numbers are produced. It is intended for [grimoireapp.dev](https://grimoireapp.dev) and can be copied verbatim into the site’s FAQ section.
 
 ## What we measure
 

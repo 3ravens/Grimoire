@@ -292,6 +292,8 @@ pub fn run() {
         commands::export_audit_log,
         commands::preview_audit_retention_prune,
         commands::prune_audit_log,
+        commands::open_bug_report,
+        commands::open_external_url,
         // ── Debug-only commands (excluded from release builds) ───────────────
         #[cfg(debug_assertions)]
         commands::debug_search,

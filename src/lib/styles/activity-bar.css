@@ -54,6 +54,11 @@
   color: var(--accent);
 }
 
+.activity-bar-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .activity-bar-separator {
   width: 20px;
   border: none;
