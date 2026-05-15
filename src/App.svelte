@@ -33,6 +33,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     import TemplateModal from "./lib/TemplateModal.svelte";
     import DatabaseView from "./lib/DatabaseView.svelte";
     import Settings from "./lib/Settings.svelte";
+    import InstallationWizard from "./lib/InstallationWizard.svelte";
     import Search from "./lib/Search.svelte";
     import ConfirmModal from "./lib/ConfirmModal.svelte";
     import QuickSwitcher from "./lib/QuickSwitcher.svelte";
@@ -93,6 +94,27 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     let vaultReindexBanner = $state(null);
     let prevVaultReindexIncomplete = $state(false);
 
+    /** Non-null after `get_app_data_migration_banner` returns a message (preview data copy). */
+    let appDataMigrationBanner = $state(/** @type {string | null} */ (null));
+
+    /** First-run installation wizard (see `wizard_status`). */
+    let installationWizardOpen = $state(false);
+    /** False until `wizard_status` resolves (avoids a one-frame flash of the main shell). */
+    let wizardCheckDone = $state(false);
+
+    async function refreshInstallationWizardFromBackend() {
+        try {
+            const ws = await invoke("wizard_status");
+            // Rust serializes with serde rename_all = "camelCase" → showWizard (not show_wizard).
+            installationWizardOpen = Boolean(ws?.showWizard ?? ws?.show_wizard);
+        } catch (e) {
+            installationWizardOpen = false;
+            err.showError(e);
+        } finally {
+            wizardCheckDone = true;
+        }
+    }
+
     async function refreshVaultReindexBanner() {
         if (vault.vaultLocked) {
             vaultReindexBanner = null;
@@ -122,6 +144,24 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     function dismissVaultReindexBanner() {
         vaultReindexBannerDismissed = true;
         vaultReindexBanner = null;
+    }
+
+    async function refreshAppDataMigrationBanner() {
+        try {
+            const msg = await invoke("get_app_data_migration_banner");
+            appDataMigrationBanner = msg == null ? null : String(msg);
+        } catch {
+            appDataMigrationBanner = null;
+        }
+    }
+
+    async function dismissAppDataMigrationBanner() {
+        try {
+            await invoke("dismiss_app_data_migration_banner");
+        } catch (e) {
+            err.showError(e);
+        }
+        appDataMigrationBanner = null;
     }
 
     async function resumeVaultReindexFromBanner() {
@@ -300,6 +340,42 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         return ns.loadAllTags();
     }
 
+    async function loadMainShellAfterUnlock() {
+        await Promise.all([loadFolders(), loadNotes(), restoreTabs()]);
+        if (ts.tabs.length === 0) newTab();
+        loadAllTags();
+        tmpl.loadTemplates();
+        bm.loadBookmarks();
+
+        invoke("get_hardware_info")
+            .then((hw) => {
+                settings.hwCapability = hw.capability;
+                settings.llmForceEnabled = hw.llmForceEnabled;
+                settings.hardwareReport = hw;
+            })
+            .catch(() => {});
+
+        invoke("get_setting", { key: "wikipedia_enabled" })
+            .then((v) => {
+                settings.wikipediaEnabled = v === "true";
+            })
+            .catch(() => {});
+
+        void refreshVaultReindexBanner();
+        void refreshAppDataMigrationBanner();
+    }
+
+    async function onInstallationWizardDone() {
+        installationWizardOpen = false;
+        await loadMainShellAfterUnlock();
+        if (ui.settingsPendingSection) {
+            ui.settingsOpen = true;
+        }
+        window.dispatchEvent(new CustomEvent("grimoire:vault-data-changed"));
+        await tick();
+        window.__GRIMOIRE_PERF_READY__ = true;
+    }
+
     // Context menu listener — managed via $effect so Svelte handles
     // cleanup automatically, including during HMR.
     $effect(() => ctx.setup());
@@ -377,32 +453,19 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
             await vault.checkLockState();
 
             if (!vault.vaultLocked) {
-                await Promise.all([loadFolders(), loadNotes(), restoreTabs()]);
-                if (ts.tabs.length === 0) newTab();
-                loadAllTags();
-                tmpl.loadTemplates();
-                bm.loadBookmarks();
-
-                invoke("get_hardware_info")
-                    .then((hw) => {
-                        settings.hwCapability = hw.capability;
-                        settings.llmForceEnabled = hw.llmForceEnabled;
-                        settings.hardwareReport = hw;
-                    })
-                    .catch(() => {});
-
-                invoke("get_setting", { key: "wikipedia_enabled" })
-                    .then((v) => {
-                        settings.wikipediaEnabled = v === "true";
-                    })
-                    .catch(() => {});
-
-                void refreshVaultReindexBanner();
+                await refreshInstallationWizardFromBackend();
+                if (!installationWizardOpen) {
+                    await loadMainShellAfterUnlock();
+                }
+            } else {
+                wizardCheckDone = true;
             }
 
             await tick();
             await getCurrentWindow().show();
-            window.__GRIMOIRE_PERF_READY__ = true;
+            if (wizardCheckDone && !installationWizardOpen) {
+                window.__GRIMOIRE_PERF_READY__ = true;
+            }
         })();
 
         return () => {
@@ -730,14 +793,13 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     // ── Lock / unlock ───────────────────────────────────────────────────────────────
 
     async function onVaultUnlocked() {
+        await refreshInstallationWizardFromBackend();
         await vault.onVaultUnlocked(async () => {
-            await loadFolders();
-            await loadNotes();
-            loadAllTags();
-            await restoreTabs();
-            if (ts.tabs.length === 0) newTab();
-            invoke("reindex_all").catch(() => {});
-            await refreshVaultReindexBanner();
+            if (!installationWizardOpen) {
+                await loadMainShellAfterUnlock();
+                invoke("reindex_all").catch(() => {});
+                await refreshVaultReindexBanner();
+            }
         });
     }
 
@@ -817,6 +879,10 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     <!-- Blank while we check vault lock state to avoid a flash of content -->
 {:else if vault.vaultLocked}
     <LockScreen onUnlocked={onVaultUnlocked} />
+{:else if !wizardCheckDone}
+    <!-- Blank until `wizard_status` returns (unlocked startup) -->
+{:else if installationWizardOpen}
+    <InstallationWizard onCompleted={onInstallationWizardDone} />
 {:else}
     {#if err.errorMsg}
         <div class="error-banner" role="alert">{err.errorMsg}</div>
@@ -837,6 +903,15 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                     Resume
                 </button>
                 <button type="button" onclick={dismissVaultReindexBanner}>Dismiss</button>
+            </span>
+        </div>
+    {/if}
+
+    {#if appDataMigrationBanner}
+        <div class="vault-reindex-banner" role="status">
+            <span>{appDataMigrationBanner}</span>
+            <span class="banner-actions">
+                <button type="button" onclick={dismissAppDataMigrationBanner}>Dismiss</button>
             </span>
         </div>
     {/if}
@@ -1384,6 +1459,10 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     {#if ui.settingsOpen}
         <Settings
             onClose={() => (ui.settingsOpen = false)}
+            initialSection={ui.settingsPendingSection}
+            onInitialSectionConsumed={() => {
+                ui.settingsPendingSection = null;
+            }}
             vaultHasPassword={vault.vaultHasPassword}
             onSetVaultPassword={() => (vault.vaultPwModal = "set")}
             onChangeVaultPassword={() => (vault.vaultPwModal = "change")}

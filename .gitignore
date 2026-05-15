@@ -31,5 +31,8 @@ dist-ssr
 # Vendored runtime DLLs (copied from vcpkg at dev setup time)
 src-tauri/vendor-dlls/
 
+# Populated by src-tauri/build.rs for Tauri NSIS (WiX already globs target/*.dll)
+src-tauri/nsis-dll-staging/
+
 # Cursor files
 .cursor/*

@@ -354,6 +354,7 @@ pub async fn search(
 
 /// Like search() but returns all top-N hits with their raw distance scores,
 /// ignoring NOTE_MAX_DISTANCE. Used by the debug_search command to calibrate the threshold.
+#[cfg(debug_assertions)]
 pub async fn raw_search(
     conn: &Connection,
     query: Vec<f32>,

@@ -20,7 +20,7 @@ use tauri::{AppHandle, Manager};
 
 pub async fn init_db(app: &AppHandle) -> Result<SqlitePool, sqlx::Error> {
     // Resolve a path inside the app's data directory, e.g.:
-    // C:\Users\<user>\AppData\Roaming\grimoire\grimoire.db
+    // Windows: C:\Users\<user>\AppData\Roaming\com.grimoire.app\grimoire.db
     let app_dir = app
         .path()
         .app_data_dir()

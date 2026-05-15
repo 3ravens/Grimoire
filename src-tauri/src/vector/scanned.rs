@@ -302,6 +302,7 @@ pub async fn scanned_file_search(
 
 /// Raw scanned-file search for debug calibration.
 /// Returns the top vector hits with no domain filtering, grouped only by row.
+#[cfg(debug_assertions)]
 pub async fn raw_scanned_search(
     conn: &Connection,
     query: Vec<f32>,

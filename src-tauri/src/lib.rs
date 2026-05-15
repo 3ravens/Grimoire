@@ -16,6 +16,7 @@
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
 mod access_filter;
+pub mod app_data_migration;
 mod audit;
 mod auth;
 mod chunking;
@@ -33,13 +34,23 @@ mod retry;
 #[cfg(debug_assertions)]
 pub mod test_data;
 mod vector;
+mod wizard_starter_packs;
 
 #[cfg(debug_assertions)]
 pub mod search_quality;
 
 pub use access_filter::AccessFilter;
+pub use config::AppConfig;
 pub use error::{AppError, AppResult};
 pub use note_store::EncryptedNoteStore;
+pub use vector::connect_dir;
+pub use commands::wizard::{
+    maybe_backfill_wizard_completed,
+    wizard_finish_impl,
+    wizard_status_impl,
+    WizardFinishResult,
+    WizardStatus,
+};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -112,6 +123,16 @@ pub fn run() {
 
             let app_handle = app.handle().clone();
             tauri::async_runtime::block_on(async move {
+                app_data_migration::migrate_legacy_app_data_if_needed(&app_handle).unwrap_or_else(
+                    |e| {
+                        panic!(
+                            "Failed to migrate app data from a preview install: {e}\n\
+Your note vault on disk is unchanged. Preview app data was not deleted — \
+see the app documentation for old folder names."
+                        );
+                    },
+                );
+
                 let pool = db::init_db(&app_handle)
                     .await
                     .expect("failed to initialise database");
@@ -246,6 +267,10 @@ pub fn run() {
         commands::get_running_models,
         commands::get_setting,
         commands::set_setting,
+        commands::get_app_data_migration_banner,
+        commands::dismiss_app_data_migration_banner,
+        commands::wizard_status,
+        commands::wizard_finish,
         auth::vault_has_password,
         auth::is_vault_locked,
         auth::unlock_vault,

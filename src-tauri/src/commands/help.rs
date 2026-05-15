@@ -30,7 +30,12 @@ const BUG_REPORT_PAGE: &str = "https://grimoireapp.dev/bug-report";
 
 /// Hosts the UI may ask the shell browser to open (user-initiated only).
 fn is_allowlisted_public_https(url: &str) -> bool {
-    const PREFIXES: &[&str] = &["https://grimoireapp.dev", "https://docs.grimoireapp.dev"];
+    const PREFIXES: &[&str] = &[
+        "https://grimoireapp.dev",
+        "https://docs.grimoireapp.dev",
+        "https://ollama.com",
+        "https://www.amd.com",
+    ];
     for p in PREFIXES {
         if let Some(rest) = url.strip_prefix(p) {
             let ok = rest.is_empty()
@@ -57,8 +62,8 @@ fn open_https_in_browser(
 }
 
 /// Opens a known public Grimoire website URL in the default browser.
-/// Restricted to `grimoireapp.dev` and `docs.grimoireapp.dev` so arbitrary URLs
-/// cannot be opened from the frontend.
+/// Restricted to an allowlist (`grimoireapp.dev`, `docs.grimoireapp.dev`, `ollama.com`, `amd.com`)
+/// so arbitrary URLs cannot be opened from the frontend.
 #[tauri::command]
 pub fn open_external_url(app_handle: tauri::AppHandle, url: String) -> AppResult<()> {
     let url = url.trim();
@@ -131,6 +136,8 @@ mod tests {
         assert!(is_allowlisted_public_https("https://grimoireapp.dev/forum"));
         assert!(is_allowlisted_public_https("https://docs.grimoireapp.dev"));
         assert!(is_allowlisted_public_https("https://docs.grimoireapp.dev/getting-started"));
+        assert!(is_allowlisted_public_https("https://ollama.com/download"));
+        assert!(is_allowlisted_public_https("https://www.amd.com/en/support"));
     }
 
     #[test]

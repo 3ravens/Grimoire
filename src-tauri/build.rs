@@ -47,15 +47,26 @@ fn copy_zim_dlls_to_out() {
         std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"),
     );
     let src_dir = manifest_dir.join("vendor-dlls");
+
+    // NSIS bundles do not auto-include `target/<profile>/*.dll` (WiX/MSI does).
+    // Stage copies here so `tauri.conf.json > bundle.resources` can list them.
+    let nsis_staging = manifest_dir.join("nsis-dll-staging");
+    let _ = std::fs::remove_dir_all(&nsis_staging);
+    let _ = std::fs::create_dir_all(&nsis_staging);
+
     if !src_dir.exists() {
-        return; // vendor-dlls not set up — skip silently
+        println!(
+            "cargo:warning=Missing {} — copy libzim + ICU runtime DLLs from vcpkg (see src-tauri/vendor-dlls/). NSIS bundle will fail until they exist.",
+            src_dir.display()
+        );
+        return;
     }
 
     // OUT_DIR = target/<profile>/build/<pkg>/out — we need target/<profile>/
     let out_dir = std::path::PathBuf::from(
         std::env::var("OUT_DIR").expect("OUT_DIR not set"),
     );
-    // out_dir / .. / .. == target/<profile>/
+    // out_dir / .. / .. / .. == target/<profile>/
     let bin_dir = out_dir
         .parent().unwrap() // out
         .parent().unwrap() // <pkg>
@@ -65,11 +76,19 @@ fn copy_zim_dlls_to_out() {
         "zim-9.dll", "zstd.dll", "liblzma.dll",
         "icudt78.dll", "icuin78.dll", "icuio78.dll", "icutu78.dll", "icuuc78.dll",
     ];
+
     for dll in &dlls {
         let src = src_dir.join(dll);
         let dst = bin_dir.join(dll);
         if src.exists() {
             let _ = std::fs::copy(&src, &dst);
+            let _ = std::fs::copy(&src, nsis_staging.join(dll));
+        } else {
+            println!(
+                "cargo:warning=Missing `{}` under {} — NSIS/MSI bundles need these for libzim at runtime.",
+                dll,
+                src_dir.display()
+            );
         }
         // Rerun if the source DLL changes.
         println!("cargo:rerun-if-changed={}", src.display());

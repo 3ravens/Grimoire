@@ -32,6 +32,16 @@ use serde::Serialize;
 use sysinfo::{ProcessesToUpdate, System};
 use tokio::process::Command;
 
+/// Avoid brief console flashes when spawning helper tools on Windows.
+#[cfg(target_os = "windows")]
+fn command_no_console(program: &str) -> Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut std_cmd = std::process::Command::new(program);
+    std_cmd.creation_flags(CREATE_NO_WINDOW);
+    Command::from(std_cmd)
+}
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -200,6 +210,16 @@ async fn collect_gpus() -> Vec<GpuInfo> {
 // ── NVIDIA-SMI (works on Windows, Linux, macOS with NVIDIA drivers) ────────
 
 async fn try_nvidia_smi() -> Option<Vec<GpuInfo>> {
+    #[cfg(target_os = "windows")]
+    let output = command_no_console("nvidia-smi")
+        .args([
+            "--query-gpu=name,memory.total,memory.used",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .await
+        .ok()?;
+    #[cfg(not(target_os = "windows"))]
     let output = Command::new("nvidia-smi")
         .args([
             "--query-gpu=name,memory.total,memory.used",
@@ -456,7 +476,7 @@ fn wmic_adapter_ram_to_mb(bytes: u64) -> u64 {
 
 #[cfg(target_os = "windows")]
 async fn try_windows_wmic() -> Option<Vec<GpuInfo>> {
-    let output = Command::new("wmic")
+    let output = command_no_console("wmic")
         .args(["path", "win32_VideoController", "get", "Name,AdapterRAM", "/value"])
         .output()
         .await
@@ -697,7 +717,7 @@ async fn try_windows_dxgi() -> Option<Vec<GpuInfo>> {
 /// adapter LUID: `luid_0xHHHHHHHH_0xLLLLLLLL_phys_N`.
 #[cfg(target_os = "windows")]
 async fn query_gpu_vram_usage() -> Vec<(String, u64)> {
-    let output = Command::new("wmic")
+    let output = command_no_console("wmic")
         .args([
             "path", "Win32_PerfFormattedData_GPUPerformanceCounters_GPUAdapterMemory",
             "get", "DedicatedUsage,Name", "/value",

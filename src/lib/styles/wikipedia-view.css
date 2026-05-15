@@ -223,13 +223,13 @@
   color: var(--text);
 }
 
-/* Headings */
-.wiki-article-body :global(h1),
-.wiki-article-body :global(h2),
-.wiki-article-body :global(h3),
-.wiki-article-body :global(h4),
-.wiki-article-body :global(h5),
-.wiki-article-body :global(h6) {
+/* Headings — plain descendants (this file is global CSS; :global() is Svelte-only). */
+.wiki-article-body h1,
+.wiki-article-body h2,
+.wiki-article-body h3,
+.wiki-article-body h4,
+.wiki-article-body h5,
+.wiki-article-body h6 {
   color: var(--text-h, var(--text));
   font-family: var(--sans);
   margin: 1.4em 0 0.5em;
@@ -238,30 +238,30 @@
   padding-bottom: 4px;
 }
 
-.wiki-article-body :global(h1) { font-size: 1.8em; }
-.wiki-article-body :global(h2) { font-size: 1.4em; }
-.wiki-article-body :global(h3) { font-size: 1.15em; border-bottom: none; }
-.wiki-article-body :global(h4),
-.wiki-article-body :global(h5),
-.wiki-article-body :global(h6) { font-size: 1em; border-bottom: none; }
+.wiki-article-body h1 { font-size: 1.8em; }
+.wiki-article-body h2 { font-size: 1.4em; }
+.wiki-article-body h3 { font-size: 1.15em; border-bottom: none; }
+.wiki-article-body h4,
+.wiki-article-body h5,
+.wiki-article-body h6 { font-size: 1em; border-bottom: none; }
 
 /* Paragraphs */
-.wiki-article-body :global(p) {
+.wiki-article-body p {
   margin: 0.8em 0;
 }
 
 /* Links */
-.wiki-article-body :global(a) {
+.wiki-article-body a {
   color: var(--accent);
   text-decoration: none;
   cursor: pointer;
 }
 
-.wiki-article-body :global(a:hover) {
+.wiki-article-body a:hover {
   text-decoration: underline;
 }
 
-.wiki-article-body :global(a[data-external]) {
+.wiki-article-body a[data-external] {
   color: var(--text-muted);
   cursor: not-allowed;
   text-decoration: line-through;
@@ -269,18 +269,18 @@
 }
 
 /* Lists */
-.wiki-article-body :global(ul),
-.wiki-article-body :global(ol) {
+.wiki-article-body ul,
+.wiki-article-body ol {
   margin: 0.6em 0;
   padding-left: 2em;
 }
 
-.wiki-article-body :global(li) {
+.wiki-article-body li {
   margin: 0.25em 0;
 }
 
 /* Tables */
-.wiki-article-body :global(table) {
+.wiki-article-body table {
   border-collapse: collapse;
   margin: 1em 0;
   font-size: 13px;
@@ -289,14 +289,14 @@
   display: block;
 }
 
-.wiki-article-body :global(th),
-.wiki-article-body :global(td) {
+.wiki-article-body th,
+.wiki-article-body td {
   border: 1px solid var(--border);
   padding: 6px 10px;
   text-align: left;
 }
 
-.wiki-article-body :global(th) {
+.wiki-article-body th {
   background: var(--bg2);
   font-weight: 600;
   color: var(--text-h, var(--text));
@@ -305,16 +305,16 @@
 /* Force our theme colours over Wikipedia inline styles on table cells.
    Wikipedia ZIM articles carry inline background-color / color attributes
    (e.g. white infobox headers) that clash badly in dark mode. */
-.wiki-article-body :global(table th),
-.wiki-article-body :global(table td),
-.wiki-article-body :global(table caption) {
+.wiki-article-body table th,
+.wiki-article-body table td,
+.wiki-article-body table caption {
   background-color: var(--bg2) !important;
   color: var(--text) !important;
   border-color: var(--border) !important;
 }
 
 /* Images */
-.wiki-article-body :global(img) {
+.wiki-article-body img {
   max-width: 100%;
   height: auto;
   border-radius: 3px;
@@ -323,7 +323,7 @@
 }
 
 /* Blockquotes */
-.wiki-article-body :global(blockquote) {
+.wiki-article-body blockquote {
   border-left: 3px solid var(--accent);
   margin: 1em 0;
   padding: 0.5em 1em;
@@ -333,41 +333,41 @@
 }
 
 /* Code */
-.wiki-article-body :global(code),
-.wiki-article-body :global(pre) {
+.wiki-article-body code,
+.wiki-article-body pre {
   font-family: var(--mono);
   font-size: 13px;
   background: var(--bg2);
   border-radius: 3px;
 }
 
-.wiki-article-body :global(code) {
+.wiki-article-body code {
   padding: 1px 5px;
 }
 
-.wiki-article-body :global(pre) {
+.wiki-article-body pre {
   padding: 12px;
   overflow-x: auto;
   border: 1px solid var(--border);
 }
 
 /* Wikipedia-specific: hide edit section links, language links, hatnotes nav */
-.wiki-article-body :global(.mw-editsection),
-.wiki-article-body :global(.noprint),
-.wiki-article-body :global(.mw-jump-link),
-.wiki-article-body :global(#toc),
-.wiki-article-body :global(.toc),
-.wiki-article-body :global(.navbox),
-.wiki-article-body :global(.reflist),
-.wiki-article-body :global(#catlinks),
-.wiki-article-body :global(.catlinks),
-.wiki-article-body :global(.sistersitebox) {
+.wiki-article-body .mw-editsection,
+.wiki-article-body .noprint,
+.wiki-article-body .mw-jump-link,
+.wiki-article-body #toc,
+.wiki-article-body .toc,
+.wiki-article-body .navbox,
+.wiki-article-body .reflist,
+.wiki-article-body #catlinks,
+.wiki-article-body .catlinks,
+.wiki-article-body .sistersitebox {
   display: none !important;
 }
 
 /* Wikipedia infoboxes / thumbs */
-.wiki-article-body :global(.infobox),
-.wiki-article-body :global(.thumb) {
+.wiki-article-body .infobox,
+.wiki-article-body .thumb {
   float: right;
   clear: right;
   margin: 0 0 1em 1.5em;
@@ -381,7 +381,7 @@
 
 /* ── Highlights ───────────────────────────────────────────────────────────── */
 
-.wiki-article-body :global(mark.wiki-highlight) {
+.wiki-article-body mark.wiki-highlight {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--text);
   border-radius: 2px;
@@ -389,11 +389,11 @@
   cursor: pointer;
 }
 
-.wiki-article-body :global(mark.wiki-highlight:hover) {
+.wiki-article-body mark.wiki-highlight:hover {
   background: color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
-.wiki-article-body :global(mark.wiki-highlight-orphaned) {
+.wiki-article-body mark.wiki-highlight-orphaned {
   background: rgba(128, 128, 128, 0.2);
   color: var(--text-muted);
   text-decoration: underline dotted;

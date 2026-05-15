@@ -32,6 +32,9 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
   let {
     onClose,
+    /** When set, switch to this section once when the overlay opens (then cleared via callback). */
+    initialSection = null,
+    onInitialSectionConsumed = () => {},
     vaultHasPassword = false,
     onSetVaultPassword = () => {},
     onChangeVaultPassword = () => {},
@@ -70,6 +73,15 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     { id: 'help',       label: 'Help' },
     ...(isDev ? [{ id: 'developer', label: 'Developer' }] : []),
   ]);
+
+  $effect(() => {
+    const s = initialSection;
+    const list = sections;
+    if (s && list.some((x) => x.id === s)) {
+      activeSection = s;
+      onInitialSectionConsumed();
+    }
+  });
 </script>
 
 <div class="settings-overlay" use:focusTrap>

@@ -32,7 +32,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     try {
       const ok = await invoke('unlock_vault', { password });
       if (ok) {
-        onUnlocked();
+        await onUnlocked?.();
       } else {
         error = 'Incorrect password.';
         password = '';

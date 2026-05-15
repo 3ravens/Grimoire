@@ -311,6 +311,7 @@ pub async fn wikipedia_search(
 
 /// Like wikipedia_search() but returns raw distance scores without any filtering.
 /// Used by the debug panel to calibrate WIKI_MAX_DISTANCE.
+#[cfg(debug_assertions)]
 pub async fn raw_wikipedia_search(
     conn: &Connection,
     query: Vec<f32>,

@@ -102,6 +102,7 @@ pub mod tags;
 pub mod properties;
 pub mod templates;
 pub mod wikipedia;
+pub mod wizard;
 
 // Re-export all public command functions so lib.rs can keep using commands::create_note etc.
 pub use audit::*;
@@ -120,6 +121,7 @@ pub use tags::*;
 pub use properties::*;
 pub use templates::*;
 pub use wikipedia::*;
+pub use wizard::*;
 
 // ---------------------------------------------------------------------------
 // Shared structs

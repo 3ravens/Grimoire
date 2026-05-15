@@ -22,6 +22,11 @@ npm install
 npm run tauri dev
 ```
 
+## Where app data lives
+
+- SQLite (`grimoire.db`), LanceDB (`lancedb/`), and migration markers live under the OS app data directory for the bundle id **`com.grimoire.app`** (for example `%APPDATA%\com.grimoire.app` on Windows). Your **note vault** is a separate folder you choose; it is not deleted by app updates.
+- Preview builds may have used **`com.tauri.dev`**, **`dev.grimoireapp.grimoire`**, or **`app.grimoire.grimoire`** under the same kinds of paths. On first launch after upgrading the bundle identifier, Grimoire **copies** the database and vector index from a matching preview folder if the new location is still empty; old preview folders are left on disk.
+
 ## Tests
 
 - **Rust** (library + `src-tauri/tests/` integration): from `src-tauri`, run `cargo test`. Optional ignored tests (e.g. LanceDB smoke): `cargo test -- --ignored`.

@@ -259,30 +259,10 @@ pub async fn wikipedia_fts_initial_sync(pool: &SqlitePool, conn: &lancedb::Conne
 }
 
 fn resolve_wiki_perf_log_path(app: &AppHandle) -> Option<PathBuf> {
-    if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
-        let candidate = PathBuf::from(local_appdata)
-            .join("com.tauri.dev")
-            .join("logs")
-            .join("wiki-index-perf.log");
-        if candidate.parent().is_some() {
-            return Some(candidate);
-        }
-    }
-
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        let candidate = PathBuf::from(appdata)
-            .join("com.tauri.dev")
-            .join("logs")
-            .join("wiki-index-perf.log");
-        if candidate.parent().is_some() {
-            return Some(candidate);
-        }
-    }
-
-    app.path()
-        .app_data_dir()
-        .ok()
-        .map(|p| p.join("logs").join("wiki-index-perf.log"))
+    let base = app.path().app_data_dir().ok()?;
+    let logs = base.join("logs");
+    let _ = std::fs::create_dir_all(&logs);
+    Some(logs.join("wiki-index-perf.log"))
 }
 
 // ---------------------------------------------------------------------------

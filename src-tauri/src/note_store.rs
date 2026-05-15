@@ -23,7 +23,7 @@
 //! `crypto::decrypt` calls live exclusively inside this module.
 
 use std::collections::HashMap;
-use sqlx::SqlitePool;
+use sqlx::{Sqlite, SqlitePool, Transaction};
 use crate::{AccessFilter, KeyStore, AppError, AppResult};
 use crate::commands::{NoteRow, FolderRow, Note, Folder};
 
@@ -624,6 +624,45 @@ impl<'a> EncryptedNoteStore<'a> {
         .await?;
 
         Ok(self.to_folder(row))
+    }
+
+    /// Same as [`Self::create_folder`] but participates in an open transaction.
+    pub async fn create_folder_tx(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        name: &str,
+        parent_id: Option<i64>,
+    ) -> AppResult<i64> {
+        let stored_name = self.encrypt_str(None, name);
+        let (id,): (i64,) = sqlx::query_as(
+            "INSERT INTO folders (name, parent_id) VALUES (?, ?) RETURNING id",
+        )
+        .bind(&stored_name)
+        .bind(parent_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        Ok(id)
+    }
+
+    /// Insert a note with title and body inside a transaction (wizard starter packs).
+    pub async fn insert_note_full_tx(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+        title: &str,
+        content: &str,
+        folder_id: Option<i64>,
+    ) -> AppResult<i64> {
+        let stored_title = self.encrypt_str(folder_id, title);
+        let stored_content = self.encrypt_str(folder_id, content);
+        let (id,): (i64,) = sqlx::query_as(
+            "INSERT INTO notes (title, content, folder_id) VALUES (?, ?, ?) RETURNING id",
+        )
+        .bind(&stored_title)
+        .bind(&stored_content)
+        .bind(folder_id)
+        .fetch_one(&mut **tx)
+        .await?;
+        Ok(id)
     }
 
     /// Rename a folder, encrypting the new name.

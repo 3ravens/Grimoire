@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 use arrow_schema::{DataType, Schema};
 use lancedb::Connection;
+#[cfg(debug_assertions)]
 use serde::Serialize;
 use tauri::Manager;
 
@@ -42,6 +43,7 @@ pub struct VectorDb(pub Connection);
 /// A raw search hit including the distance score. Used for debugging threshold
 /// calibration. Shared by both the notes and Wikipedia raw search paths.
 /// `note_id` is 0 for Wikipedia results.
+#[cfg(debug_assertions)]
 #[derive(Debug, Serialize)]
 pub struct RawMatch {
     pub note_id: i64,
@@ -171,8 +173,7 @@ pub async fn init(app: &tauri::AppHandle) -> Result<Connection, String> {
     Ok(conn)
 }
 
-/// LanceDB in a directory (for `perf-budget` and other debug harnesses).
-#[cfg(debug_assertions)]
+/// LanceDB in a directory (integration tests, `perf-budget` / `search-quality` harnesses).
 pub async fn connect_dir(dir: &std::path::Path) -> Result<Connection, String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = dir
