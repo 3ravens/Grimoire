@@ -145,7 +145,7 @@ async fn wiki_append_with_salvage(
             || {
                 let b = batch.clone();
                 async move {
-                    crate::vector::wikipedia_append_batch(conn, b).await.map_err(|e| {
+                    crate::vector::wiki::wikipedia_append_batch(conn, b).await.map_err(|e| {
                         AppError::VectorStore(format!("Failed to append wikipedia window batch: {e}"))
                     })
                 }
@@ -244,7 +244,7 @@ pub async fn wikipedia_fts_initial_sync(pool: &SqlitePool, conn: &lancedb::Conne
         let pool_inner = pool.clone();
         let bid_inner = bid.clone();
         if let Err(e) =
-            crate::vector::for_each_wikipedia_bundle_batch(conn, &bid, |rows| {
+            crate::vector::wiki::for_each_wikipedia_bundle_batch(conn, &bid, |rows| {
                 let handle = tokio::runtime::Handle::current();
                 let pool_c = pool_inner.clone();
                 let b = bid_inner.clone();
@@ -920,7 +920,7 @@ pub async fn remove_wikipedia_bundle(
         ?;
 
     // Remove from LanceDB.
-    crate::vector::wikipedia_remove_bundle(&vdb.0, &bundle_id).await.map_err(|e| AppError::VectorStore(e))?;
+    crate::vector::wiki::wikipedia_remove_bundle(&vdb.0, &bundle_id).await.map_err(|e| AppError::VectorStore(e))?;
 
     // Optionally delete the .zim file from disk.
     if delete_file {
@@ -949,7 +949,7 @@ pub async fn index_wikipedia_bundle(
     bundle_id: String,
     reset: Option<bool>,
 ) -> AppResult<()> {
-    crate::vector::reset_embed_batch_telemetry();
+    crate::vector::embedder::reset_embed_batch_telemetry();
 
     // Look up the bundle.
     let bundle: WikiBundle = sqlx::query_as(
@@ -990,7 +990,7 @@ pub async fn index_wikipedia_bundle(
             .bind(&bundle_id)
             .execute(pool.inner())
             .await;
-        crate::vector::wikipedia_remove_bundle(&vdb.0, &bundle_id).await.map_err(|e| AppError::VectorStore(e))?;
+        crate::vector::wiki::wikipedia_remove_bundle(&vdb.0, &bundle_id).await.map_err(|e| AppError::VectorStore(e))?;
     }
 
     // Load checkpoint (resume offset + previously indexed count).
@@ -1047,12 +1047,12 @@ pub async fn index_wikipedia_bundle(
         ?;
 
         let model = embedding_model;
-        let embed_bulk_opts = crate::vector::EmbedBatchOptions {
+        let embed_bulk_opts = crate::vector::embedder::EmbedBatchOptions {
             skip_ollama_entry_eviction: true,
             ..Default::default()
         };
 
-        rt.block_on(crate::vector::evict_ollama_models_except(&model));
+        rt.block_on(crate::vector::embedder::evict_ollama_models_except(&model));
 
         let mut indexed = base_indexed;
         let mut last_checkpoint_idx = start_entry;
@@ -1066,7 +1066,7 @@ pub async fn index_wikipedia_bundle(
         // Scan window, embed batch caps, and Lance chunk sizes are scaled by
         // [`crate::indexing_profile::IndexingThroughputPlan`] from host hardware.
         let base_batch_size: usize = plan.embed_cap_for_model(&model).max(8);
-        let content_chars: usize = crate::vector::content_chars_for_model(&model);
+        let content_chars: usize = crate::vector::embedder::content_chars_for_model(&model);
         let scan_window: u32 = plan.wiki_scan_window;
         let embed_ceiling: usize = plan.wiki_dynamic_embed_ceiling;
         let lance_chunk_rows: usize = plan.wiki_lance_initial_chunk_rows;
@@ -1087,7 +1087,7 @@ pub async fn index_wikipedia_bundle(
                 return Err(AppError::InvalidInput("Indexing cancelled".to_string()));
             }
             if window_idx > 0 && window_idx % WIKI_INDEX_OLLAMA_EVICT_EVERY_WINDOWS == 0 {
-                rt.block_on(crate::vector::evict_ollama_models_except(&model));
+                rt.block_on(crate::vector::embedder::evict_ollama_models_except(&model));
             }
             let window_end = (scan_pos + scan_window).min(total_entries);
 
@@ -1170,7 +1170,7 @@ pub async fn index_wikipedia_bundle(
             ));
 
             // ── Phase 3 + 4: embed in batches, then bulk-upsert to LanceDB ──────
-            let (split_win_t0, single_win_t0) = crate::vector::snapshot_embed_batch_telemetry();
+            let (split_win_t0, single_win_t0) = crate::vector::embedder::snapshot_embed_batch_telemetry();
             let mut embed_ms: u128 = 0;
             let mut upsert_ms: u128 = 0;
             let mut batch_count: u64 = 0;
@@ -1190,7 +1190,7 @@ pub async fn index_wikipedia_bundle(
                         .map(|(_, _, title, content)| format!("search_document: {title}\n{content}"))
                         .collect();
                 let phase_embed_t0 = Instant::now();
-                let (splits_before, singles_before) = crate::vector::snapshot_embed_batch_telemetry();
+                let (splits_before, singles_before) = crate::vector::embedder::snapshot_embed_batch_telemetry();
                 const EMBED_RETRY_MAX_DELAY_MS: u64 = 800;
                 let embeddings: Vec<Vec<f32>> = match rt.block_on(
                     crate::retry::with_retries_counting_background(
@@ -1201,7 +1201,7 @@ pub async fn index_wikipedia_bundle(
                         )),
                         EMBED_RETRY_MAX_DELAY_MS,
                         || async {
-                            crate::vector::embed_batch_with_options(
+                            crate::vector::embedder::embed_batch_with_options(
                                 &doc_texts,
                                 &model,
                                 embed_bulk_opts.clone(),
@@ -1233,7 +1233,7 @@ pub async fn index_wikipedia_bundle(
                                 )),
                                 EMBED_RETRY_MAX_DELAY_MS,
                                 || async {
-                                    crate::vector::embed_with_keep_alive(&doc_text, &model, 300)
+                                    crate::vector::embedder::embed_with_keep_alive(&doc_text, &model, 300)
                                         .await
                                         .map_err(AppError::EmbeddingFailed)
                                 },
@@ -1260,7 +1260,7 @@ pub async fn index_wikipedia_bundle(
                     }
                 };
                 embed_ms += phase_embed_t0.elapsed().as_millis();
-                let (splits_after, singles_after) = crate::vector::snapshot_embed_batch_telemetry();
+                let (splits_after, singles_after) = crate::vector::embedder::snapshot_embed_batch_telemetry();
                 let split_delta = splits_after.saturating_sub(splits_before);
                 let single_delta = singles_after.saturating_sub(singles_before);
 
@@ -1288,7 +1288,7 @@ pub async fn index_wikipedia_bundle(
                 batch_cursor = chunk_end;
             }
 
-            let (split_win_t1, single_win_t1) = crate::vector::snapshot_embed_batch_telemetry();
+            let (split_win_t1, single_win_t1) = crate::vector::embedder::snapshot_embed_batch_telemetry();
             let window_split_delta =
                 split_win_t1.saturating_sub(split_win_t0);
             let window_single_fallback_delta =
@@ -1351,7 +1351,7 @@ pub async fn index_wikipedia_bundle(
             let checkpoint_ms = phase_checkpoint_t0.elapsed().as_millis();
 
             let phase_emit_t0 = Instant::now();
-            let (batch_splits, single_fallbacks) = crate::vector::snapshot_embed_batch_telemetry();
+            let (batch_splits, single_fallbacks) = crate::vector::embedder::snapshot_embed_batch_telemetry();
             let mut payload = serde_json::json!({
                 "bundle_id": bundle_id_clone,
                 "indexed": indexed,
@@ -1482,7 +1482,7 @@ pub async fn index_wikipedia_bundle(
             .await
             ?;
 
-            let (batch_splits, single_fallbacks) = crate::vector::snapshot_embed_batch_telemetry();
+            let (batch_splits, single_fallbacks) = crate::vector::embedder::snapshot_embed_batch_telemetry();
             let _ = app.emit("wikipedia:index-progress", serde_json::json!({
                 "bundle_id": bundle_id,
                 "batch_splits": batch_splits,
@@ -1506,7 +1506,7 @@ pub async fn index_wikipedia_bundle(
                 .await
                 ?;
 
-                let (batch_splits, single_fallbacks) = crate::vector::snapshot_embed_batch_telemetry();
+                let (batch_splits, single_fallbacks) = crate::vector::embedder::snapshot_embed_batch_telemetry();
                 let _ = app.emit("wikipedia:index-progress", serde_json::json!({
                     "bundle_id": bundle_id,
                     "batch_splits": batch_splits,
@@ -1524,7 +1524,7 @@ pub async fn index_wikipedia_bundle(
                 .await
                 ?;
 
-                let (batch_splits, single_fallbacks) = crate::vector::snapshot_embed_batch_telemetry();
+                let (batch_splits, single_fallbacks) = crate::vector::embedder::snapshot_embed_batch_telemetry();
                 let _ = app.emit("wikipedia:index-progress", serde_json::json!({
                     "bundle_id": bundle_id,
                     "batch_splits": batch_splits,
@@ -1552,7 +1552,7 @@ pub async fn search_wikipedia(
     vdb: State<'_, crate::vector::VectorDb>,
     config: State<'_, SharedConfig>,
     query: String,
-) -> AppResult<Vec<crate::vector::WikiMatch>> {
+) -> AppResult<Vec<crate::vector::wiki::WikiMatch>> {
     const CANDIDATE_LIMIT: usize = 40;
     const FINAL_LIMIT: usize = 5;
 
@@ -1570,7 +1570,7 @@ pub async fn search_wikipedia(
     let sem_fut = async {
         let model = config.read().unwrap().embedding_model.clone();
         match super::rag::embed_query(&query, &model).await {
-            Ok(emb) => crate::vector::wikipedia_search(&vdb.0, emb, CANDIDATE_LIMIT)
+            Ok(emb) => crate::vector::wiki::wikipedia_search(&vdb.0, emb, CANDIDATE_LIMIT)
                 .await
                 .unwrap_or_default(),
             Err(_) => vec![],
@@ -1635,7 +1635,7 @@ pub async fn search_wikipedia(
         }
     }
 
-    let mut scored: Vec<(f64, crate::vector::WikiMatch)> = entries
+    let mut scored: Vec<(f64, crate::vector::wiki::WikiMatch)> = entries
         .into_values()
         .map(|e| {
             let score = e.score;
@@ -1648,7 +1648,7 @@ pub async fn search_wikipedia(
             if excerpts.is_empty() {
                 excerpts.push(String::new());
             }
-            let m = crate::vector::WikiMatch {
+            let m = crate::vector::wiki::WikiMatch {
                 article_id: e.article_id,
                 bundle_id: e.bundle_id,
                 title: e.title,
@@ -1661,7 +1661,7 @@ pub async fn search_wikipedia(
 
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(FINAL_LIMIT);
-    let out: Vec<crate::vector::WikiMatch> = scored.into_iter().map(|(_, m)| m).collect();
+    let out: Vec<crate::vector::wiki::WikiMatch> = scored.into_iter().map(|(_, m)| m).collect();
 
     let _ = crate::audit::log_event(
         pool.inner(),
@@ -2336,7 +2336,7 @@ pub async fn benchmark_wikipedia_quality(
         let sem_fut = async {
             let model = config.read().unwrap().embedding_model.clone();
             match super::rag::embed_query(&query, &model).await {
-                Ok(emb) => crate::vector::wikipedia_search(&vdb.0, emb, 40)
+                Ok(emb) => crate::vector::wiki::wikipedia_search(&vdb.0, emb, 40)
                     .await
                     .unwrap_or_default(),
                 Err(_) => vec![],
@@ -2423,7 +2423,7 @@ pub async fn benchmark_wikipedia_indexing(
         let total_entries = archive.get_all_entrycount();
         let limit = total_entries.min(scan_budget);
         let batch_size: usize = plan.embed_cap_for_model(&model_for_task).max(8);
-        let content_chars: usize = crate::vector::content_chars_for_model(&model_for_task);
+        let content_chars: usize = crate::vector::embedder::content_chars_for_model(&model_for_task);
         let scan_window = plan.wiki_scan_window;
 
         let mut scan_pos: u32 = 0;
@@ -2436,15 +2436,15 @@ pub async fn benchmark_wikipedia_indexing(
         let mut total_embed_ms: u128 = 0;
         let total_t0 = Instant::now();
 
-        let embed_bulk_opts = crate::vector::EmbedBatchOptions {
+        let embed_bulk_opts = crate::vector::embedder::EmbedBatchOptions {
             skip_ollama_entry_eviction: true,
             ..Default::default()
         };
-        rt.block_on(crate::vector::evict_ollama_models_except(&model_for_task));
+        rt.block_on(crate::vector::embedder::evict_ollama_models_except(&model_for_task));
 
         while scan_pos < limit {
             if windows > 0 && windows % 10 == 0 {
-                rt.block_on(crate::vector::evict_ollama_models_except(&model_for_task));
+                rt.block_on(crate::vector::embedder::evict_ollama_models_except(&model_for_task));
             }
             let window_end = (scan_pos + scan_window).min(limit);
             let window_len = window_end - scan_pos;
@@ -2520,7 +2520,7 @@ pub async fn benchmark_wikipedia_indexing(
                     .iter()
                     .map(|(title, content)| format!("search_document: {title}\n{content}"))
                     .collect();
-                let n = match rt.block_on(crate::vector::embed_batch_with_options(
+                let n = match rt.block_on(crate::vector::embedder::embed_batch_with_options(
                     &doc_texts,
                     &model_for_task,
                     embed_bulk_opts.clone(),
@@ -2529,7 +2529,7 @@ pub async fn benchmark_wikipedia_indexing(
                     Err(_) => {
                         let mut ok = 0usize;
                         for t in &doc_texts {
-                            if let Ok(v) = rt.block_on(crate::vector::embed_with_keep_alive(
+                            if let Ok(v) = rt.block_on(crate::vector::embedder::embed_with_keep_alive(
                                 t,
                                 &model_for_task,
                                 300,

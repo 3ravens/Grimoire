@@ -93,7 +93,7 @@ pub mod search_quality_bin {
     };
     pub use crate::test_data::{seed_test_vault_inner, SeedTestVaultParams};
     pub use crate::vector::connect_dir;
-    pub use crate::vector::CHUNK_FETCH_LIMIT;
+    pub use crate::vector::notes::CHUNK_FETCH_LIMIT;
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -233,6 +233,7 @@ pub fn run() {
         commands::get_notes_for_day,
         commands::get_or_create_daily_note,
         commands::create_daily_note,
+        commands::resolve_daily_note_from_query,
         commands::export_notes,
         commands::export_single_note_markdown,
         commands::save_note_html_export,

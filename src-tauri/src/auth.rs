@@ -129,7 +129,7 @@ pub async fn lock_vault(
         *key_guard = None;
     } // key_guard dropped here before the await
     // Purge LanceDB so note excerpts aren't readable while the vault is locked.
-    crate::vector::purge_all(&vdb.0).await?;
+    crate::vector::notes::purge_all(&vdb.0).await?;
     crate::commands::rag::clear_vault_reindex_checkpoint(pool.inner())
         .await
         .map_err(|e| e.to_string())?;
@@ -259,7 +259,7 @@ pub async fn set_vault_password(
     } // key_guard dropped here
 
     // Purge LanceDB — encrypted notes must not remain searchable.
-    crate::vector::purge_all(&vdb.0).await?;
+    crate::vector::notes::purge_all(&vdb.0).await?;
     crate::commands::rag::clear_vault_reindex_checkpoint(pool.inner())
         .await
         .map_err(|e| e.to_string())?;
@@ -437,7 +437,7 @@ pub async fn set_folder_password(
 
         // Remove notes from LanceDB.
         for (id, _, _) in &note_rows {
-            crate::vector::remove(&vdb.0, *id).await?;
+            crate::vector::notes::remove(&vdb.0, *id).await?;
         }
     }
 

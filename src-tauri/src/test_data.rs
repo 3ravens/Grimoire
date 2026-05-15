@@ -440,7 +440,7 @@ pub async fn seed_test_vault_inner(
                     note_id,
                     &title,
                     &body,
-                    crate::vector::EmbedBatchOptions::default(),
+                    crate::vector::embedder::EmbedBatchOptions::default(),
                 )
                 .await
                 {
@@ -484,13 +484,13 @@ pub async fn clean_developer_database(
 ) -> AppResult<()> {
     // Match `clear_notes_index` / `clear_wiki_index` / `clear_scanned_index` behaviour.
     crate::commands::rag::clear_vault_reindex_checkpoint(pool.inner()).await?;
-    crate::vector::clear_notes_index(&vdb.0)
+    crate::vector::notes::clear_notes_index(&vdb.0)
         .await
         .map_err(AppError::VectorStore)?;
-    crate::vector::clear_wiki_index(&vdb.0)
+    crate::vector::wiki::clear_wiki_index(&vdb.0)
         .await
         .map_err(AppError::VectorStore)?;
-    crate::vector::clear_scanned_index(&vdb.0)
+    crate::vector::scanned::clear_scanned_index(&vdb.0)
         .await
         .map_err(AppError::VectorStore)?;
 

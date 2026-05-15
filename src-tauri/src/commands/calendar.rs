@@ -16,6 +16,7 @@
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
 use std::collections::HashMap;
+use chrono::NaiveDate;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
@@ -29,7 +30,7 @@ use super::Note;
 
 /// Re-format an ISO date string (`YYYY-MM-DD`) into the user's preferred display
 /// format. Returns the input unchanged for `YYYY-MM-DD` or any unrecognised format.
-fn format_display_date(iso: &str, fmt: &str) -> String {
+pub(crate) fn format_display_date(iso: &str, fmt: &str) -> String {
     let parts: Vec<&str> = iso.split('-').collect();
     if parts.len() != 3 {
         return iso.to_string();
@@ -42,9 +43,225 @@ fn format_display_date(iso: &str, fmt: &str) -> String {
     }
 }
 
+/// Parse an ISO date from a display-formatted token (e.g. `05-05-2026` with DD-MM-YYYY).
+fn parse_display_date_token(token: &str, date_format: &str) -> Option<NaiveDate> {
+    let parts: Vec<&str> = token.split('-').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let (a, b, c): (u32, u32, i32) = (parts[0].parse().ok()?, parts[1].parse().ok()?, parts[2].parse().ok()?);
+    if c < 1900 || c > 2100 {
+        return None;
+    }
+    let (y, m, d) = match date_format {
+        "DD-MM-YYYY" => (c, b, a),
+        "MM-DD-YYYY" => (c, a, b),
+        "YYYY-MM-DD" if parts[0].len() == 4 => return NaiveDate::parse_from_str(token, "%Y-%m-%d").ok(),
+        _ => return None,
+    };
+    NaiveDate::from_ymd_opt(y, m, d)
+}
+
+const MONTH_NAMES: &[(&str, u32)] = &[
+    ("january", 1),
+    ("february", 2),
+    ("march", 3),
+    ("april", 4),
+    ("may", 5),
+    ("june", 6),
+    ("july", 7),
+    ("august", 8),
+    ("september", 9),
+    ("october", 10),
+    ("november", 11),
+    ("december", 12),
+    ("jan", 1),
+    ("feb", 2),
+    ("mar", 3),
+    ("apr", 4),
+    ("jun", 6),
+    ("jul", 7),
+    ("aug", 8),
+    ("sep", 9),
+    ("sept", 9),
+    ("oct", 10),
+    ("nov", 11),
+    ("dec", 12),
+];
+
+/// Day number immediately before a month name (e.g. "5th" or "5" in "… 5th of ").
+fn extract_trailing_day(before: &str) -> Option<u32> {
+    for token in before.split_whitespace().rev() {
+        let digits: String = token.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            continue;
+        }
+        let day: u32 = digits.parse().ok()?;
+        if (1..=31).contains(&day) {
+            return Some(day);
+        }
+    }
+    None
+}
+
+fn extract_leading_day(s: &str) -> Option<u32> {
+    let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    let day: u32 = digits.parse().ok()?;
+    (1..=31).contains(&day).then_some(day)
+}
+
+fn extract_leading_year(s: &str) -> Option<i32> {
+    let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.len() != 4 {
+        return None;
+    }
+    let y: i32 = digits.parse().ok()?;
+    (1900..=2100).contains(&y).then_some(y)
+}
+
+/// Best-effort natural-language date, e.g. "5th of may 2026" or "may 5 2026".
+fn parse_natural_language_date(text: &str) -> Option<NaiveDate> {
+    let lower = text.to_lowercase();
+    for &(month_name, month) in MONTH_NAMES {
+        let Some(mpos) = lower.find(month_name) else {
+            continue;
+        };
+        let before = &lower[..mpos];
+        let after = lower[mpos + month_name.len()..].trim_start();
+
+        if let Some(day) = extract_trailing_day(before) {
+            if let Some(year) = extract_leading_year(after) {
+                return NaiveDate::from_ymd_opt(year, month, day);
+            }
+        }
+        if let Some(day) = extract_leading_day(after) {
+            let rest = after
+                .chars()
+                .skip_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .trim_start()
+                .to_string();
+            if let Some(year) = extract_leading_year(&rest) {
+                return NaiveDate::from_ymd_opt(year, month, day);
+            }
+        }
+    }
+    None
+}
+
+struct DateMatch {
+    date: NaiveDate,
+    start: usize,
+}
+
+fn scan_iso_dates(text: &str) -> Vec<DateMatch> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i + 10 <= bytes.len() {
+        if bytes[i + 4] == b'-' && bytes[i + 7] == b'-' {
+            let slice = &text[i..i + 10];
+            if slice.chars().all(|c| c.is_ascii_digit() || c == '-') {
+                if let Ok(date) = NaiveDate::parse_from_str(slice, "%Y-%m-%d") {
+                    out.push(DateMatch { date, start: i });
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+fn scan_display_dates(text: &str, date_format: &str) -> Vec<DateMatch> {
+    let mut out = Vec::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0usize;
+    while i < chars.len() {
+        if !chars[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut j = i;
+        let mut dashes = 0usize;
+        while j < chars.len() {
+            if chars[j].is_ascii_digit() {
+                j += 1;
+            } else if chars[j] == '-' {
+                if dashes < 2 {
+                    dashes += 1;
+                    j += 1;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        if dashes == 2 && j > start {
+            let token: String = chars[start..j].iter().collect();
+            if let Some(date) = parse_display_date_token(&token, date_format) {
+                out.push(DateMatch { date, start });
+            }
+        }
+        i = if j > i { j } else { i + 1 };
+    }
+    out
+}
+
+/// Extract calendar dates from free text, ordered by first appearance.
+pub(crate) fn parse_dates_from_text(text: &str, date_format: &str) -> Vec<String> {
+    let mut matches = scan_iso_dates(text);
+    matches.extend(scan_display_dates(text, date_format));
+    let lower = text.to_lowercase();
+    if let Some(date) = parse_natural_language_date(&lower) {
+        let start = MONTH_NAMES
+            .iter()
+            .filter_map(|(name, _)| lower.find(name))
+            .min()
+            .unwrap_or(0);
+        matches.push(DateMatch { date, start });
+    }
+    matches.sort_by_key(|m| m.start);
+    let mut seen = HashMap::new();
+    let mut ordered = Vec::new();
+    for m in matches {
+        let iso = m.date.format("%Y-%m-%d").to_string();
+        if seen.insert(iso.clone(), ()).is_none() {
+            ordered.push(iso);
+        }
+    }
+    ordered
+}
+
+async fn find_daily_note_in_folder(
+    store: &EncryptedNoteStore<'_>,
+    folder_id: i64,
+    iso_date: &str,
+    date_format: &str,
+) -> AppResult<Option<Note>> {
+    let display_title = format_display_date(iso_date, date_format);
+    let notes = store.list_notes(Some(folder_id), false).await?;
+    Ok(notes
+        .into_iter()
+        .find(|n| n.title == display_title || n.title == iso_date))
+}
+
 // ---------------------------------------------------------------------------
 // Structs
 // ---------------------------------------------------------------------------
+
+/// Result of resolving a calendar day mentioned in chat text to a daily note title.
+#[derive(Debug, Serialize)]
+pub struct ResolvedDailyNote {
+    pub iso_date: String,
+    pub display_title: String,
+    /// Present when a matching daily note exists and is accessible (not locked).
+    pub note: Option<Note>,
+}
 
 /// Per-day activity counts returned to the frontend for the heatmap.
 ///
@@ -165,8 +382,6 @@ pub async fn get_or_create_daily_note(
 ) -> AppResult<Note> {
     let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let fmt = date_format.as_deref().unwrap_or("DD-MM-YYYY");
-    let display_title = format_display_date(&date_str, fmt);
-
 
     let folder_id: i64 = if let Some(id) = store.find_root_folder_by_name("Daily Notes").await? {
         id
@@ -174,11 +389,11 @@ pub async fn get_or_create_daily_note(
         store.create_folder("Daily Notes", None).await?.id
     };
 
-    let notes = store.list_notes(Some(folder_id), false).await?;
-    if let Some(note) = notes.into_iter().find(|n| n.title == display_title || n.title == date_str) {
+    if let Some(note) = find_daily_note_in_folder(&store, folder_id, &date_str, fmt).await? {
         return Ok(note);
     }
 
+    let display_title = format_display_date(&date_str, fmt);
     let note = store.create_note(&display_title, Some(folder_id)).await?;
     super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
     Ok(note)
@@ -235,9 +450,48 @@ pub async fn create_daily_note(
     Ok(note)
 }
 
+/// Parse calendar dates from chat text and look up matching daily notes (read-only).
+///
+/// Used before RAG to pin the correct daily note and expose the display title format.
+/// Does not create notes or folders.
+#[tauri::command]
+pub async fn resolve_daily_note_from_query(
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
+    query: String,
+    date_format: Option<String>,
+) -> AppResult<Option<ResolvedDailyNote>> {
+    let fmt = date_format.as_deref().unwrap_or("DD-MM-YYYY");
+    let dates = parse_dates_from_text(query.trim(), fmt);
+    let Some(first_iso) = dates.first() else {
+        return Ok(None);
+    };
+
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
+    let mut iso_date = first_iso.clone();
+    let mut note = None;
+
+    if let Some(folder_id) = store.find_root_folder_by_name("Daily Notes").await? {
+        for iso in &dates {
+            if let Some(n) = find_daily_note_in_folder(&store, folder_id, iso, fmt).await? {
+                iso_date = iso.clone();
+                note = Some(n);
+                break;
+            }
+        }
+    }
+
+    let display_title = format_display_date(&iso_date, fmt);
+    Ok(Some(ResolvedDailyNote {
+        iso_date,
+        display_title,
+        note,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::format_display_date;
+    use super::{format_display_date, parse_dates_from_text, parse_natural_language_date};
 
     #[test]
     fn format_display_date_dd_mm_yyyy() {
@@ -263,5 +517,36 @@ mod tests {
     #[test]
     fn format_display_date_non_iso_passthrough() {
         assert_eq!(format_display_date("hello", "DD-MM-YYYY"), "hello");
+    }
+
+    #[test]
+    fn parse_natural_fifth_of_may_2026() {
+        let d = parse_natural_language_date("what did i write on the 5th of may 2026")
+            .expect("date");
+        assert_eq!(d.format("%Y-%m-%d").to_string(), "2026-05-05");
+    }
+
+    #[test]
+    fn parse_natural_may_5_2026() {
+        let d = parse_natural_language_date("notes from may 5 2026").expect("date");
+        assert_eq!(d.format("%Y-%m-%d").to_string(), "2026-05-05");
+    }
+
+    #[test]
+    fn parse_dates_from_text_ordinal_and_display() {
+        let dates = parse_dates_from_text(
+            "what did i write on the 5th of may 2026",
+            "DD-MM-YYYY",
+        );
+        assert_eq!(dates.first().map(String::as_str), Some("2026-05-05"));
+
+        let dates = parse_dates_from_text("see 05-05-2026 for details", "DD-MM-YYYY");
+        assert!(dates.contains(&"2026-05-05".to_string()));
+    }
+
+    #[test]
+    fn parse_dates_iso_in_text() {
+        let dates = parse_dates_from_text("meeting on 2026-05-05", "DD-MM-YYYY");
+        assert_eq!(dates, vec!["2026-05-05".to_string()]);
     }
 }

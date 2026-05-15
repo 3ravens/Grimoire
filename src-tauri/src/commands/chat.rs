@@ -210,7 +210,7 @@ pub async fn measure_rag_chat_ttft(
         vdb,
         embedding_model,
         query,
-        crate::vector::CHUNK_FETCH_LIMIT,
+        crate::vector::notes::CHUNK_FETCH_LIMIT,
         false,
     )
     .await?;

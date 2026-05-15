@@ -222,7 +222,7 @@ pub async fn combined_search(
     let semantic_fut = async {
         let model = config.read().unwrap().embedding_model.clone();
         match crate::commands::rag::embed_query(&query, &model).await {
-            Ok(vec) => crate::vector::search(&vdb.0, vec, limit * 2).await.ok(),
+            Ok(vec) => crate::vector::notes::search(&vdb.0, vec, limit * 2).await.ok(),
             Err(_) => None,
         }
     };

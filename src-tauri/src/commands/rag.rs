@@ -53,11 +53,11 @@ fn truncate_reindex_title(title: &str) -> String {
 // Other models may require different prefixes or none at all.
 
 pub(crate) async fn embed_document(text: &str, model: &str) -> AppResult<Vec<f32>> {
-    crate::vector::embed(&format!("search_document: {text}"), model).await.map_err(|e| AppError::EmbeddingFailed(e))
+    crate::vector::embedder::embed(&format!("search_document: {text}"), model).await.map_err(|e| AppError::EmbeddingFailed(e))
 }
 
 pub(crate) async fn embed_query(text: &str, model: &str) -> AppResult<Vec<f32>> {
-    crate::vector::embed(&format!("search_query: {text}"), model).await.map_err(|e| AppError::EmbeddingFailed(e))
+    crate::vector::embedder::embed(&format!("search_query: {text}"), model).await.map_err(|e| AppError::EmbeddingFailed(e))
 }
 
 /// Build a "Properties: key=value, …" suffix for a note, to be appended to
@@ -106,7 +106,7 @@ pub(crate) async fn index_note_vectors_inner(
     note_id: i64,
     title: &str,
     content: &str,
-    embed_opts: crate::vector::EmbedBatchOptions,
+    embed_opts: crate::vector::embedder::EmbedBatchOptions,
 ) -> AppResult<()> {
     let props_suffix = build_properties_suffix(pool, note_id).await;
     let full_content = if props_suffix.is_empty() {
@@ -119,7 +119,7 @@ pub(crate) async fn index_note_vectors_inner(
     let raw_chunks = chunk_sentences(sentences, 1, 0);
 
     if raw_chunks.iter().all(|c| c.trim().is_empty()) {
-        return crate::vector::remove(vdb, note_id)
+        return crate::vector::notes::remove(vdb, note_id)
             .await
             .map_err(AppError::VectorStore);
     }
@@ -134,14 +134,14 @@ pub(crate) async fn index_note_vectors_inner(
 
     let embeddings_result = if use_simple_batch {
         crate::retry::with_retries(max_retries, None, || async {
-            crate::vector::embed_batch(&doc_texts, model)
+            crate::vector::embedder::embed_batch(&doc_texts, model)
                 .await
                 .map_err(AppError::EmbeddingFailed)
         })
         .await
     } else {
         crate::retry::with_retries(max_retries, None, || async {
-            crate::vector::embed_batch_with_options(&doc_texts, model, embed_opts.clone())
+            crate::vector::embedder::embed_batch_with_options(&doc_texts, model, embed_opts.clone())
                 .await
                 .map_err(AppError::EmbeddingFailed)
         })
@@ -173,7 +173,7 @@ pub(crate) async fn index_note_vectors_inner(
     crate::retry::with_retries(max_retries, None, || {
         let ch = chunks.clone();
         async {
-            crate::vector::upsert(vdb, note_id, title, ch)
+            crate::vector::notes::upsert(vdb, note_id, title, ch)
                 .await
                 .map_err(AppError::VectorStore)
         }
@@ -202,7 +202,7 @@ pub async fn index_note(
         note_id,
         &title,
         &content,
-        crate::vector::EmbedBatchOptions::default(),
+        crate::vector::embedder::EmbedBatchOptions::default(),
     )
     .await
 }
@@ -225,7 +225,7 @@ pub async fn index_note_vectors_for_benchmark(
         note_id,
         title,
         content,
-        crate::vector::EmbedBatchOptions::default(),
+        crate::vector::embedder::EmbedBatchOptions::default(),
     )
     .await
 }
@@ -236,7 +236,7 @@ pub async fn remove_note_index(
     vdb: State<'_, crate::vector::VectorDb>,
     note_id: i64,
 ) -> AppResult<()> {
-    crate::vector::remove(&vdb.0, note_id).await.map_err(|e| AppError::VectorStore(e))
+    crate::vector::notes::remove(&vdb.0, note_id).await.map_err(|e| AppError::VectorStore(e))
 }
 
 /// Semantic note search: embed query, LanceDB search, decrypt titles, filter locked.
@@ -250,9 +250,9 @@ pub async fn search_notes_semantic(
     query: &str,
     limit: usize,
     log_audit: bool,
-) -> AppResult<Vec<crate::vector::NoteMatch>> {
+) -> AppResult<Vec<crate::vector::notes::NoteMatch>> {
     let embedding = embed_query(query, embedding_model).await?;
-    let mut matches = crate::vector::search(vdb, embedding, limit)
+    let mut matches = crate::vector::notes::search(vdb, embedding, limit)
         .await
         .map_err(|e| AppError::VectorStore(e))?;
 
@@ -300,7 +300,7 @@ pub async fn search_notes(
     config: State<'_, SharedConfig>,
     query: String,
     limit: Option<usize>,
-) -> AppResult<Vec<crate::vector::NoteMatch>> {
+) -> AppResult<Vec<crate::vector::notes::NoteMatch>> {
     let model = config.read().unwrap().embedding_model.clone();
     search_notes_semantic(
         pool.inner(),
@@ -308,7 +308,7 @@ pub async fn search_notes(
         &vdb.0,
         &model,
         &query,
-        limit.unwrap_or(crate::vector::CHUNK_FETCH_LIMIT),
+        limit.unwrap_or(crate::vector::notes::CHUNK_FETCH_LIMIT),
         true,
     )
     .await
@@ -535,7 +535,7 @@ async fn folder_unlock_reindex_task_inner(
         let indexed_ui = indexed_ok;
         let skipped_snap = skipped_locked;
         let failed_snap = failed_notes;
-        let embed_opts = crate::vector::EmbedBatchOptions {
+        let embed_opts = crate::vector::embedder::EmbedBatchOptions {
             on_slice_progress: Some(Arc::new({
                 let app = app.clone();
                 let last_emit = last_emit_chunks.clone();
@@ -1060,7 +1060,7 @@ async fn reindex_all_inner(
         let indexed_ui = indexed_ok;
         let title_short = truncate_reindex_title(&note.title);
         let last_emit_chunks = Arc::new(AtomicUsize::new(0));
-        let embed_opts = crate::vector::EmbedBatchOptions {
+        let embed_opts = crate::vector::embedder::EmbedBatchOptions {
             on_slice_progress: Some(Arc::new({
                 let app = app.clone();
                 let last_emit = last_emit_chunks.clone();
@@ -1093,7 +1093,7 @@ async fn reindex_all_inner(
         };
 
         let embeddings = match crate::retry::with_retries(max_retries, None, || async {
-            crate::vector::embed_batch_with_options(&doc_texts, model, embed_opts.clone())
+            crate::vector::embedder::embed_batch_with_options(&doc_texts, model, embed_opts.clone())
                 .await
                 .map_err(AppError::EmbeddingFailed)
         })
@@ -1129,7 +1129,7 @@ async fn reindex_all_inner(
             match crate::retry::with_retries(max_retries, None, || {
                 let ch = chunks.clone();
                 async {
-                    crate::vector::upsert(vdb, note.id, &note.title, ch)
+                    crate::vector::notes::upsert(vdb, note.id, &note.title, ch)
                         .await
                         .map_err(AppError::VectorStore)
                 }
@@ -1226,7 +1226,7 @@ pub async fn clear_notes_index(
     vdb: State<'_, crate::vector::VectorDb>,
 ) -> AppResult<()> {
     clear_vault_reindex_checkpoint(pool.inner()).await?;
-    crate::vector::clear_notes_index(&vdb.0)
+    crate::vector::notes::clear_notes_index(&vdb.0)
         .await
         .map_err(|e| AppError::VectorStore(e))
 }
@@ -1236,7 +1236,7 @@ pub async fn clear_notes_index(
 pub async fn clear_wiki_index(
     vdb: State<'_, crate::vector::VectorDb>,
 ) -> AppResult<()> {
-    crate::vector::clear_wiki_index(&vdb.0).await.map_err(|e| AppError::VectorStore(e))
+    crate::vector::wiki::clear_wiki_index(&vdb.0).await.map_err(|e| AppError::VectorStore(e))
 }
 
 /// Drop the scanned-files vector index so it can be rebuilt with a new embedding model.
@@ -1244,7 +1244,7 @@ pub async fn clear_wiki_index(
 pub async fn clear_scanned_index(
     vdb: State<'_, crate::vector::VectorDb>,
 ) -> AppResult<()> {
-    crate::vector::clear_scanned_index(&vdb.0).await.map_err(|e| AppError::VectorStore(e))
+    crate::vector::scanned::clear_scanned_index(&vdb.0).await.map_err(|e| AppError::VectorStore(e))
 }
 
 /// Debug command: returns the top 10 vector search hits with raw distance scores.
@@ -1257,7 +1257,7 @@ pub async fn debug_search(
 ) -> AppResult<Vec<crate::vector::RawMatch>> {
     let model = config.read().unwrap().embedding_model.clone();
     let embedding = embed_query(&query, &model).await?;
-    crate::vector::raw_search(&vdb.0, embedding, 10).await.map_err(|e| AppError::VectorStore(e))
+    crate::vector::notes::raw_search(&vdb.0, embedding, 10).await.map_err(|e| AppError::VectorStore(e))
 }
 
 /// Debug command: returns top Wikipedia search hits with raw distance scores, no filtering.
@@ -1270,7 +1270,7 @@ pub async fn debug_search_wikipedia(
 ) -> AppResult<Vec<crate::vector::RawMatch>> {
     let model = config.read().unwrap().embedding_model.clone();
     let embedding = embed_query(&query, &model).await?;
-    crate::vector::raw_wikipedia_search(&vdb.0, embedding, 10).await.map_err(|e| AppError::VectorStore(e))
+    crate::vector::wiki::raw_wikipedia_search(&vdb.0, embedding, 10).await.map_err(|e| AppError::VectorStore(e))
 }
 
 /// Debug command: returns top scanned-file search hits with raw distance scores, no filtering.
@@ -1283,7 +1283,7 @@ pub async fn debug_search_scanned_files(
 ) -> AppResult<Vec<crate::vector::RawMatch>> {
     let model = config.read().unwrap().embedding_model.clone();
     let embedding = embed_query(&query, &model).await?;
-    crate::vector::raw_scanned_search(&vdb.0, embedding, 10).await.map_err(|e| AppError::VectorStore(e))
+    crate::vector::scanned::raw_scanned_search(&vdb.0, embedding, 10).await.map_err(|e| AppError::VectorStore(e))
 }
 
 /// Insert a set of varied seed notes and index them all.
@@ -1415,7 +1415,7 @@ pub async fn seed_notes(
             }
         }
         if embed_ok {
-            if let Ok(()) = crate::vector::upsert(&vdb.0, row.id, &row.title, chunks).await {
+            if let Ok(()) = crate::vector::notes::upsert(&vdb.0, row.id, &row.title, chunks).await {
                 indexed += 1;
             }
         }

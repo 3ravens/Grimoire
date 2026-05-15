@@ -15,7 +15,7 @@
 // You should have received a copy of the GNU General Public License
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
-mod embedder;
+pub mod embedder;
 pub mod notes;
 pub mod scanned;
 pub mod wiki;
@@ -185,31 +185,6 @@ pub async fn connect_dir(dir: &std::path::Path) -> Result<Connection, String> {
     notes::open_notes_table(&conn, embedder::DIMS).await?;
     Ok(conn)
 }
-
-// ---------------------------------------------------------------------------
-// Re-exports — all existing crate::vector::* call sites compile unchanged
-// ---------------------------------------------------------------------------
-
-pub use embedder::{
-    batch_size_for_model, content_chars_for_model, embed, embed_batch, embed_batch_with_options,
-    embed_with_keep_alive, evict_ollama_models_except, reset_embed_batch_telemetry,
-    snapshot_embed_batch_telemetry, EmbedBatchOptions,
-};
-
-pub use notes::{
-    clear_notes_index, purge_all, raw_search, remove, search, upsert,
-    NoteMatch, CHUNK_FETCH_LIMIT,
-};
-
-pub use wiki::{
-    clear_wiki_index, for_each_wikipedia_bundle_batch, raw_wikipedia_search,
-    wikipedia_append_batch, wikipedia_remove_bundle, wikipedia_search, WikiMatch,
-};
-
-pub use scanned::{
-    clear_scanned_index, raw_scanned_search, scanned_file_remove, scanned_file_remove_prefix,
-    scanned_file_search, scanned_file_upsert_batch, ScannedFileMatch,
-};
 
 #[cfg(test)]
 mod tests {

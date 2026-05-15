@@ -599,19 +599,41 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       .replace(/show me (my notes? on|what i wrote about)\s*/gi, '')
       .trim() || recentUserMessages;
 
+    /** @type {{ iso_date: string, display_title: string, note?: { title: string, content: string, locked: boolean } } | null} */
+    let dailyNoteResolution = null;
+    if (useNotes) {
+      try {
+        dailyNoteResolution = await invoke('resolve_daily_note_from_query', {
+          query: recentUserMessages,
+          dateFormat: settings.dailyNoteFormat,
+        });
+      } catch (_) {
+        // Best-effort — semantic search still runs without a pinned daily note.
+      }
+    }
+
+    const notesSearchQuery = dailyNoteResolution?.display_title
+      ? `${ragQuery} ${dailyNoteResolution.display_title}`.trim()
+      : ragQuery;
+
     if (useNotes) {
       let matches = [];
       try {
-        matches = await invoke('search_notes', { query: ragQuery });
+        matches = await invoke('search_notes', { query: notesSearchQuery });
       } catch (e) {
         notesError = `Note search failed: ${fmtAppError(e)}`;
       }
-      if (matches.length > 0) {
-        const byTitle = {};
-        for (const m of matches) {
-          if (!byTitle[m.title]) byTitle[m.title] = [];
-          byTitle[m.title].push(...m.excerpts);
-        }
+      const byTitle = {};
+      const pinned = dailyNoteResolution?.note;
+      if (pinned && !pinned.locked) {
+        byTitle[pinned.title] = [pinned.content?.trim() ? pinned.content : '(empty note)'];
+      }
+      for (const m of matches) {
+        if (pinned && m.title === pinned.title) continue;
+        if (!byTitle[m.title]) byTitle[m.title] = [];
+        byTitle[m.title].push(...m.excerpts);
+      }
+      if (Object.keys(byTitle).length > 0) {
         sourcesUsed = Object.keys(byTitle);
         const context = Object.entries(byTitle)
           .map(([title, excerpts]) => `[Note: "${title}"]\n${excerpts.join('\n')}`)
@@ -669,6 +691,14 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       let preamble =
         `You are a personal knowledge assistant embedded in Grimoire, a local note-taking app.\n` +
         `You also have access to a feature guide that documents Grimoire's keyboard shortcuts and features.\n`;
+
+      if (dailyNoteResolution) {
+        const fmt = settings.dailyNoteFormat;
+        preamble +=
+          `Daily notes in the "Daily Notes" folder use ${fmt} titles ` +
+          `(e.g. 5 May 2026 → "${dailyNoteResolution.display_title}"). ` +
+          `When the user asks about a calendar day, match that title format.\n`;
+      }
 
       const sourceList = [hasNotesContext && 'notes', hasWikiContext && 'wiki', hasFilesContext && 'files'].filter(Boolean);
 

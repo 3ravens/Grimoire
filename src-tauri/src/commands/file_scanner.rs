@@ -30,7 +30,8 @@ use std::path::Path;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use crate::{AppError, AppResult};
-use crate::vector::{VectorDb, ScannedFileMatch};
+use crate::vector::VectorDb;
+use crate::vector::scanned::ScannedFileMatch;
 use crate::config::SharedConfig;
 use crate::chunking::{split_sentences, chunk_sentences};
 
@@ -300,12 +301,12 @@ async fn embed_scanned_chunks_with_progress(
         "error": null,
     }));
 
-    let bs = crate::vector::batch_size_for_model(model).max(1);
-    let embed_bulk_opts = crate::vector::EmbedBatchOptions {
+    let bs = crate::vector::embedder::batch_size_for_model(model).max(1);
+    let embed_bulk_opts = crate::vector::embedder::EmbedBatchOptions {
         skip_ollama_entry_eviction: true,
         ..Default::default()
     };
-    crate::vector::evict_ollama_models_except(model).await;
+    crate::vector::embedder::evict_ollama_models_except(model).await;
     let mut embeddings: Vec<Vec<f32>> = Vec::with_capacity(chunks_total);
     let mut offset = 0usize;
     let mut embed_batch_idx: u32 = 0;
@@ -315,7 +316,7 @@ async fn embed_scanned_chunks_with_progress(
             return Err("Indexing cancelled".into());
         }
         if embed_batch_idx > 0 && embed_batch_idx % 10 == 0 {
-            crate::vector::evict_ollama_models_except(model).await;
+            crate::vector::embedder::evict_ollama_models_except(model).await;
         }
 
         let end = (offset + bs).min(chunks_total);
@@ -329,7 +330,7 @@ async fn embed_scanned_chunks_with_progress(
             mk_cancel(),
             EMBED_RETRY_MAX_DELAY_MS,
             || async {
-                crate::vector::embed_batch_with_options(slice, model, embed_bulk_opts.clone()).await
+                crate::vector::embedder::embed_batch_with_options(slice, model, embed_bulk_opts.clone()).await
             },
         )
         .await
@@ -349,7 +350,7 @@ async fn embed_scanned_chunks_with_progress(
                         mk_cancel(),
                         EMBED_RETRY_MAX_DELAY_MS,
                         || async {
-                            crate::vector::embed_with_keep_alive(&doc_texts[j], model, 300)
+                            crate::vector::embedder::embed_with_keep_alive(&doc_texts[j], model, 300)
                                 .await
                         },
                     )
@@ -642,7 +643,7 @@ async fn index_path(
             max_retries,
             cancel.as_ref().map(|c| (c, "Indexing cancelled".to_string())),
             || async {
-                crate::vector::scanned_file_upsert_batch(vdb, file_path, chunks_for_lance.clone())
+                crate::vector::scanned::scanned_file_upsert_batch(vdb, file_path, chunks_for_lance.clone())
                     .await
             },
         )
@@ -732,7 +733,7 @@ async fn index_path(
     .unwrap_or_default();
     for (fp,) in indexed_rows {
         if !allowed.contains(&fp) {
-            let _ = crate::vector::scanned_file_remove(vdb, &fp).await;
+            let _ = crate::vector::scanned::scanned_file_remove(vdb, &fp).await;
             let _ = sqlx::query("DELETE FROM scanned_files WHERE file_path = ? AND path_id = ?")
                 .bind(&fp)
                 .bind(path_id)
@@ -772,7 +773,7 @@ async fn index_path(
 
         for (stale_path,) in &stale_rows {
             if !std::path::Path::new(stale_path).exists() {
-                let _ = crate::vector::scanned_file_remove(vdb, stale_path).await;
+                let _ = crate::vector::scanned::scanned_file_remove(vdb, stale_path).await;
                 let _ = sqlx::query("DELETE FROM scanned_files WHERE file_path = ? AND path_id = ?")
                     .bind(stale_path)
                     .bind(path_id)
@@ -1086,7 +1087,7 @@ pub async fn clear_stale_scanned_files(
         if Path::new(&file_path).exists() {
             continue;
         }
-        let _ = crate::vector::scanned_file_remove(&vdb.0, &file_path).await;
+        let _ = crate::vector::scanned::scanned_file_remove(&vdb.0, &file_path).await;
         let r = sqlx::query("DELETE FROM scanned_files WHERE file_path = ? AND path_id = ?")
             .bind(&file_path)
             .bind(id)
@@ -1123,9 +1124,9 @@ pub async fn remove_scanned_path(
             } else {
                 format!("{path}{}", std::path::MAIN_SEPARATOR)
             };
-            crate::vector::scanned_file_remove_prefix(&vdb.0, &prefix).await.map_err(|e| AppError::VectorStore(e))?;
+            crate::vector::scanned::scanned_file_remove_prefix(&vdb.0, &prefix).await.map_err(|e| AppError::VectorStore(e))?;
         } else {
-            crate::vector::scanned_file_remove(&vdb.0, &path).await.map_err(|e| AppError::VectorStore(e))?;
+            crate::vector::scanned::scanned_file_remove(&vdb.0, &path).await.map_err(|e| AppError::VectorStore(e))?;
         }
     }
 
@@ -1311,14 +1312,14 @@ pub async fn search_scanned_files(
     }
 
     let model = config.read().unwrap().embedding_model.clone();
-    let embedding = crate::vector::embed(
+    let embedding = crate::vector::embedder::embed(
         &format!("search_query: {query}"),
         &model,
     )
     .await
     .map_err(|e| AppError::EmbeddingFailed(e))?;
 
-    let all_matches = crate::vector::scanned_file_search(&vdb.0, embedding, 60).await.map_err(|e| AppError::VectorStore(e))?;
+    let all_matches = crate::vector::scanned::scanned_file_search(&vdb.0, embedding, 60).await.map_err(|e| AppError::VectorStore(e))?;
 
     if all_matches.is_empty() {
         return Ok(vec![]);
