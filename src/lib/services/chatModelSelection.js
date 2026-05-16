@@ -25,12 +25,21 @@ export async function pullChatModel(model, onProgress) {
   if (pullInFlight) {
     throw new Error('Another model download is already in progress.');
   }
+  let unlisten = null;
+  try {
+    unlisten = await listen('ollama:pull_progress', (e) => onProgress?.(e.payload));
+  } catch (e) {
+    throw e;
+  }
   pullInFlight = true;
-  const unlisten = await listen('ollama:pull_progress', (e) => onProgress?.(e.payload));
   try {
     await invoke('pull_ollama_model', { model: String(model).trim() });
   } finally {
-    unlisten();
+    try {
+      unlisten?.();
+    } catch {
+      /* ignore */
+    }
     pullInFlight = false;
   }
 }

@@ -52,7 +52,7 @@ The binary runs the async harness on a **16 MiB** worker thread (same pattern as
 ## Adding or editing cases
 
 1. Edit [`src-tauri/search_quality_cases.json`](../src-tauri/search_quality_cases.json).
-2. Keep **`version": 1`** until the schema changes.
+2. Keep **`"version": 1`** until the schema changes.
 3. Keep exactly **20** cases (constants `SEARCH_QUALITY_ANCHOR_COUNT` / `SEMANTIC_TOP3_PASS_MIN` in [`src-tauri/src/search_quality.rs`](../src-tauri/src/search_quality.rs) must stay in sync if you change the count).
 4. Each **`fts_query`** should be a **single distinctive token** present verbatim in that case’s `body` (and not reused elsewhere).
 5. **`semantic_query`** should be natural language that matches the anchor’s topic **without** copying the FTS token, so the semantic test is independent of lexical grep.

@@ -63,6 +63,19 @@ def fmt(v: float) -> str:
     return f"{v:.2f}"
 
 
+def require_metric_float(snap: dict, key: str, label: str) -> float:
+    """Require a numeric metric; fail loudly instead of defaulting to 0.0."""
+    if key not in snap:
+        raise ValueError(f"{label} snapshot: missing required metric {key!r}")
+    raw = snap[key]
+    try:
+        return float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{label} snapshot: metric {key!r} must be numeric, got {raw!r}"
+        ) from exc
+
+
 def report_key_mismatch(baseline_snap: dict, current_snap: dict) -> None:
     b_keys = set(baseline_snap.keys())
     c_keys = set(current_snap.keys())
@@ -138,8 +151,8 @@ def main() -> int:
 
     failed = False
     for key, threshold_pct, mode in checks:
-        b = float(b_snap.get(key, 0.0))
-        c = float(c_snap.get(key, 0.0))
+        b = require_metric_float(b_snap, key, "baseline")
+        c = require_metric_float(c_snap, key, "current")
         delta = pct_change(c, b)
 
         if mode == "max":

@@ -23,11 +23,12 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
    *   folderId   — the folder whose notes and property defs to display
    *   onOpenNote — callback(noteId) to open a note in the editor
    */
-  import { tick } from 'svelte';
+  import { tick, getContext } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import ConfirmModal from './ConfirmModal.svelte';
 
-  let { folderId, onOpenNote = () => {} } = $props();
+  let { folderId, onOpenNote = () => {}, onDeleteNote = () => {} } = $props();
+
+  const ns = getContext('ns');
 
   // ── Data ───────────────────────────────────────────────────────────────────
 
@@ -49,13 +50,24 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
   // ── Load ───────────────────────────────────────────────────────────────────
 
+  /** Last folder we ran a full `loadData` for (vs. lightweight `refreshNotes`). */
+  let loadedFolderId = $state(/** @type {number | null} */ (null));
+
   $effect(() => {
-    if (folderId != null) {
-      loadData(folderId);
-    } else {
-      defs  = [];
+    if (folderId == null) {
+      loadedFolderId = null;
+      defs = [];
       notes = [];
+      return;
     }
+    if (loadedFolderId !== folderId) {
+      loadedFolderId = folderId;
+      loadData(folderId);
+      return;
+    }
+    // Same folder: sidebar note list changed (e.g. delete) — refresh board rows.
+    ns.notes;
+    void refreshNotes(folderId);
   });
 
   async function loadData(fid) {
@@ -102,11 +114,13 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     }
   }
 
-  async function refreshNotes() {
+  async function refreshNotes(fid) {
     try {
-      notes = await invoke('list_notes_with_properties', { folderId });
+      const n = await invoke('list_notes_with_properties', { folderId: fid });
+      if (fid !== folderId) return;
+      notes = n;
     } catch (e) {
-      errorMsg = e?.message ?? String(e);
+      if (fid === folderId) errorMsg = e?.message ?? String(e);
     }
   }
 
@@ -257,7 +271,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     const newValue = colKey === '__unset__' ? '' : colKey;
     try {
       await invoke('set_note_property', { noteId, defId: groupByDefId, value: newValue });
-      await refreshNotes();
+      await refreshNotes(folderId);
     } catch (e) {
       errorMsg = e?.message ?? String(e);
     }
@@ -296,7 +310,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         const newValue = newCol.key === '__unset__' ? '' : newCol.key;
         try {
           await invoke('set_note_property', { noteId: note.id, defId: groupByDefId, value: newValue });
-          await refreshNotes();
+          await refreshNotes(folderId);
           moveAnnouncement = `Moved to ${newCol.label}. Press left or right to continue, Enter to confirm, Escape to cancel.`;
           await tick();
           /** @type {HTMLElement | null} */ (document.querySelector(`[data-note-id="${note.id}"] .kanban-card-title`))?.focus();
@@ -317,26 +331,6 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       movingNoteId = note.id;
       moveAnnouncement = `Moving "${note.title}" from ${col.label}. Press left or right arrows to move between columns, Enter to confirm, Escape to cancel.`;
     }
-  }
-
-  // ── Delete note ──────────────────────────────────────────────────────────
-
-  let deletePending = $state(null); // { id, title }
-
-  async function confirmDeleteNote() {
-    const { id } = deletePending;
-    deletePending = null;
-    try {
-      await invoke('delete_note', { id });
-      invoke('remove_note_index', { noteId: id }).catch(() => {});
-      await refreshNotes();
-    } catch (e) {
-      errorMsg = e?.message ?? String(e);
-    }
-  }
-
-  function cancelDelete() {
-    deletePending = null;
   }
 
   // ── Create note in column (inline) ────────────────────────────────────────
@@ -366,7 +360,16 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       if (colKey !== '__unset__' && groupByDefId) {
         await invoke('set_note_property', { noteId: note.id, defId: groupByDefId, value: colKey });
       }
-      await refreshNotes();
+      try {
+        await invoke('index_note', {
+          noteId: note.id,
+          title: note.title,
+          content: note.content ?? '',
+        });
+      } catch {
+        /* non-fatal — note exists; user can re-index */
+      }
+      await refreshNotes(folderId);
     } catch (e) {
       errorMsg = e?.message ?? String(e);
     }
@@ -474,7 +477,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                   <button
                     class="kanban-card-delete-btn"
                     aria-label="Delete {note.title}"
-                    onclick={() => deletePending = { id: note.id, title: note.title }}
+                    onclick={() => onDeleteNote(note.id)}
                   >✕</button>
                 </div>
                 {#if visibleDefIds.size > 0}
@@ -517,12 +520,3 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
 </div>
 
-{#if deletePending}
-  <ConfirmModal
-    title="Delete note"
-    message={'Are you sure you want to delete "' + deletePending.title + '"? This cannot be undone.'}
-    confirmLabel="Delete"
-    onConfirm={confirmDeleteNote}
-    onCancel={cancelDelete}
-  />
-{/if}

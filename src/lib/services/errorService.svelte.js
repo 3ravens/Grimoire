@@ -4,9 +4,13 @@
  */
 export function createErrorService() {
   let errorMsg = $state("");
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let clearTimer = null;
 
   /** @param {unknown} e */
   function showError(e) {
+    if (clearTimer != null) clearTimeout(clearTimer);
+
     const kind = /** @type {any} */ (e)?.kind;
     const msg = /** @type {any} */ (e)?.message ?? String(e);
 
@@ -24,7 +28,10 @@ export function createErrorService() {
       errorMsg = String(e);
     }
 
-    setTimeout(() => (errorMsg = ""), 4000);
+    clearTimer = setTimeout(() => {
+      errorMsg = "";
+      clearTimer = null;
+    }, 4000);
   }
 
   return {

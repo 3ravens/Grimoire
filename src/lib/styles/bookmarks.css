@@ -55,6 +55,16 @@
   opacity: 1;
 }
 
+.bookmark-row:focus-within .bookmark-remove {
+  opacity: 1;
+}
+
+.bookmark-remove:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .bookmark-remove:hover {
   color: var(--danger) !important;
 }

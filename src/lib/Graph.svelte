@@ -535,10 +535,12 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
-  const resizeObserver = new ResizeObserver(resize);
+  /** @type {ResizeObserver | null} */
+  let resizeObserver = null;
 
   onMount(async () => {
     resize();
+    resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(canvas.parentElement);
 
     wheelHandler = /** @param {WheelEvent} e */ (e) => {
@@ -555,7 +557,8 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     wheelHandler = null;
     if (rafId) cancelAnimationFrame(rafId);
     if (simulation) simulation.stop();
-    resizeObserver.disconnect();
+    resizeObserver?.disconnect();
+    resizeObserver = null;
   });
 </script>
 

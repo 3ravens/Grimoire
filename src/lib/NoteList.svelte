@@ -132,7 +132,17 @@
       {:else}
         <span class="drag-handle" title="Drag to move" aria-hidden="true">⠇</span>
         <span class="row-btn note-title">{note.title}</span>
-        <button class="icon-btn danger" onclick={() => onDeleteNote?.(note.id)} title="Delete note" aria-label="Delete note {note.title}">✕</button>
+        <button
+          class="icon-btn danger"
+          type="button"
+          onclick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onDeleteNote?.(note.id);
+          }}
+          title="Delete note"
+          aria-label="Delete note {note.title}"
+        >✕</button>
       {/if}
     </li>
   {:else}

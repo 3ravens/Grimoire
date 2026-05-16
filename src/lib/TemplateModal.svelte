@@ -40,9 +40,15 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       (template?.properties ?? []).map(p => ({
         name: p.name,
         type: p.type,
-        options: p.options
-          ? JSON.parse(p.options).join(', ')
-          : '',
+        options: (() => {
+          if (!p.options) return '';
+          try {
+            const arr = JSON.parse(p.options);
+            return Array.isArray(arr) ? arr.join(', ') : String(arr);
+          } catch {
+            return '';
+          }
+        })(),
       }))
     )
   );

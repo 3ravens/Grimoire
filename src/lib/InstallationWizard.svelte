@@ -21,6 +21,8 @@
 
   /** @type {{ showError: (e: unknown) => void }} */
   const err = getContext('err');
+  /** @type {{ settingsPendingSection?: string | null } | undefined} */
+  const ui = getContext('ui');
 
   const MS_TOUR = 0;
   const MS_STARTER = 1;
@@ -297,7 +299,6 @@
       });
       const o = /** @type {{ openWikipediaSettings?: boolean }} */ (res);
       if (o?.openWikipediaSettings) {
-        const ui = /** @type {{ settingsPendingSection?: string | null }} */ (getContext('ui'));
         if (ui) ui.settingsPendingSection = 'wikipedia';
       }
       onCompleted();

@@ -1353,6 +1353,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                         <Kanban
                             folderId={ts.activeTab.folderId}
                             onOpenNote={(id) => openNoteById(id)}
+                            onDeleteNote={deleteNote}
                         />
                     </div>
                 {:else if ts.activeTab?.type === "wikipedia"}

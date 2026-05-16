@@ -40,6 +40,9 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
   let debounceTimer;
 
+  /** Monotonic id so stale `load()` responses cannot overwrite newer UI state. */
+  let loadGeneration = 0;
+
   const totalPages = $derived(Math.max(1, Math.ceil(totalCount / PAGE_SIZE)));
 
   // ---------------------------------------------------------------------------
@@ -47,6 +50,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   // ---------------------------------------------------------------------------
 
   async function load() {
+    const myGen = ++loadGeneration;
     loading = true;
     try {
       const [rows, count] = await Promise.all([
@@ -61,12 +65,14 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
           search: searchQuery || null,
         }),
       ]);
+      if (myGen !== loadGeneration) return;
       entries    = rows;
       totalCount = count;
     } catch (e) {
+      if (myGen !== loadGeneration) return;
       console.error('Failed to load audit log:', e);
     } finally {
-      loading = false;
+      if (myGen === loadGeneration) loading = false;
     }
   }
 

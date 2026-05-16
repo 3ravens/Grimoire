@@ -22,6 +22,8 @@ This file is part of Grimoire — licensed under GPL-3.0 or later. -->
   let selectedIndex  = $state(0);
   let inputEl        = $state(null);
   let debounce       = null;
+  /** Ignore stale `suggest_wikipedia_articles` responses. */
+  let suggestSeq     = 0;
 
   // Load installed bundles on mount.
   $effect(() => {
@@ -49,19 +51,23 @@ This file is part of Grimoire — licensed under GPL-3.0 or later. -->
     const q = query.trim();
     if (!q || !selectedBundle) { results = []; searching = false; return; }
     searching = true;
+    const mySeq = ++suggestSeq;
     debounce = setTimeout(async () => {
       try {
-        results = await invoke('suggest_wikipedia_articles', {
+        const next = await invoke('suggest_wikipedia_articles', {
           bundleId: selectedBundle.id,
           query: q,
         });
+        if (mySeq !== suggestSeq) return;
+        results = next;
         if (results.length === 0) errorMsg = 'No results found.';
       } catch (err) {
+        if (mySeq !== suggestSeq) return;
         console.error('Wikipedia search failed:', err);
         results = [];
         errorMsg = typeof err === 'string' ? err : 'Search failed.';
       } finally {
-        searching = false;
+        if (mySeq === suggestSeq) searching = false;
       }
     }, 250);
   }

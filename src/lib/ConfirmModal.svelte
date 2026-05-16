@@ -26,6 +26,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
    *   confirmLabel — label for the confirm button (default: "Delete")
    *   onConfirm    — called when the user confirms
    *   onCancel     — called when the user cancels or presses Escape
+   *   dangerousDefaultFocus — when true, focus confirm on open (Enter deletes). Default false (Cancel focused).
    */
   let {
     title = 'Are you sure?',
@@ -33,6 +34,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     confirmLabel = 'Delete',
     onConfirm,
     onCancel,
+    dangerousDefaultFocus = false,
   } = $props();
 
   function handleKeydown(e) {
@@ -40,10 +42,12 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     // Enter is handled natively by whichever button has focus — no backdrop handler needed.
   }
 
-  // Focus the confirm (destructive) button by default so Enter triggers deletion.
+  // Focus cancel by default so Enter does not confirm destructive actions.
   let confirmBtn = $state(null);
+  let cancelBtn = $state(null);
   $effect(() => {
-    if (confirmBtn) confirmBtn.focus();
+    if (dangerousDefaultFocus && confirmBtn) confirmBtn.focus();
+    else if (!dangerousDefaultFocus && cancelBtn) cancelBtn.focus();
   });
 </script>
 
@@ -62,7 +66,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
     <div class="modal-actions">
       <button class="btn-confirm" bind:this={confirmBtn} onclick={onConfirm}>{confirmLabel}</button>
-      <button class="btn-cancel" onclick={onCancel}>Cancel</button>
+      <button class="btn-cancel" bind:this={cancelBtn} onclick={onCancel}>Cancel</button>
     </div>
   </div>
 </div>

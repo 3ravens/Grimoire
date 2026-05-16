@@ -31,6 +31,15 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   import { invoke } from '@tauri-apps/api/core';
   import { computeDiff } from './utils/diff.js';
   import DiffView from './DiffView.svelte';
+
+  function parseSelectOptions(raw) {
+    try {
+      const arr = JSON.parse(raw || '[]');
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
+    }
+  }
   
   let {
     noteId,
@@ -249,7 +258,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                 onchange={(e) => setValue(prop.def_id, e.currentTarget.value)}
               >
                 <option value="">—</option>
-                {#each JSON.parse(prop.options || '[]') as opt}
+                {#each parseSelectOptions(prop.options) as opt}
                   <option value={opt}>{opt}</option>
                 {/each}
               </select>

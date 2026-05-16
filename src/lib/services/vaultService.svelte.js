@@ -22,8 +22,9 @@ export function createVaultService({ onError, ns, ts, fs }) {
       ]);
       vaultLocked = locked;
       vaultHasPassword = hasPw;
-    } catch {
-      /* treat as unlocked */
+    } catch (err) {
+      vaultLocked = true;
+      onError?.(err);
     }
     lockCheckDone = true;
   }
@@ -64,11 +65,12 @@ export function createVaultService({ onError, ns, ts, fs }) {
       await invoke("set_vault_password", { password });
       vaultHasPassword = true;
       vaultPwModal = null;
-      invoke("reindex_all").catch(() => {});
+      await invoke("reindex_all");
     } else if (vaultPwModal === "remove") {
       await invoke("remove_vault_password", { password });
       vaultHasPassword = false;
       vaultPwModal = null;
+      await invoke("reindex_all");
     }
     return true;
   }

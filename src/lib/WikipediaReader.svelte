@@ -52,6 +52,8 @@
   let searchInputEl     = $state(null);
   let searchDebounce    = null;
   let searchOpen        = $state(false);
+  /** Ignore stale `suggest_wikipedia_articles` responses when the query changes. */
+  let searchSuggestSeq  = 0;
 
   // ── Highlights ─────────────────────────────────────────────────────────────
   /** @type {{ id: number, highlighted_text: string, context_before: string|null, context_after: string|null, status: string }[]} */
@@ -391,11 +393,15 @@
     const q = searchQuery.trim();
     if (!q) { searchResults = []; searchOpen = false; return; }
     searchOpen = true; // keep dropdown open to show loading state
+    const localSeq = ++searchSuggestSeq;
     searchDebounce = setTimeout(async () => {
       try {
-        searchResults = await invoke('suggest_wikipedia_articles', { bundleId, query: q });
+        const next = await invoke('suggest_wikipedia_articles', { bundleId, query: q });
+        if (localSeq !== searchSuggestSeq) return;
+        searchResults = next;
         if (searchResults.length === 0) searchError = 'No results found.';
       } catch (err) {
+        if (localSeq !== searchSuggestSeq) return;
         console.error('Wikipedia suggest failed:', err);
         searchResults = [];
         searchError = typeof err === 'string' ? err : 'Search failed.';
@@ -408,6 +414,7 @@
   }
 
   async function selectSearchResult(result) {
+    _suppressNextPropEffect = true;
     searchQuery  = '';
     searchResults = [];
     searchOpen   = false;

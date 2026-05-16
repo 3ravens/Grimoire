@@ -174,7 +174,7 @@
                 onclick={onOpenTableView}>← Table</button
             >
         {/if}
-        {#if ns.activeNote.folder_id && ts.tabs.some((t) => t.type === "kanban" && t.folderId === ns.activeNote.folder_id)}
+        {#if ns.activeNote.folder_id != null && fs.folders.some((f) => f.id === ns.activeNote.folder_id)}
             <button
                 class="graph-toggle"
                 aria-label="Switch to board view"

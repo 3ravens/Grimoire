@@ -1,4 +1,5 @@
 <script>
+  import { useId } from 'svelte';
   /**
    * Reusable Table of Contents component.
    *
@@ -12,6 +13,8 @@
 
   let { headings = [], onHeadingClick } = $props();
 
+  const tocListId = useId();
+
   // Collapse state — open by default when headings exist
   let collapsed = $state(false);
 </script>
@@ -24,14 +27,14 @@
         class="toc-toggle"
         onclick={() => (collapsed = !collapsed)}
         aria-expanded={!collapsed}
-        aria-controls="toc-list"
+        aria-controls={tocListId}
         title={collapsed ? 'Expand contents' : 'Collapse contents'}
       >
         {collapsed ? '▸' : '▾'}
       </button>
     </div>
     {#if !collapsed}
-      <ol class="toc-list" id="toc-list" role="list">
+      <ol class="toc-list" id={tocListId} role="list">
         {#each headings as h}
           <li class="toc-item toc-level-{h.level}" role="listitem">
             <button

@@ -90,6 +90,7 @@ export function createNoteService({ onError }) {
     noteTags = [];
     noteLinks = [];
     noteBacklinks = [];
+    unlinkedMentions = [];
   }
 
   async function saveNote(onSaved) {
@@ -229,6 +230,7 @@ export function createNoteService({ onError }) {
   }
 
   async function confirmDeleteNote(closeTabFn, loadBookmarksFn) {
+    if (!noteDeletePending) return null;
     const id = noteDeletePending.id;
     noteDeletePending = null;
     try {
@@ -236,7 +238,11 @@ export function createNoteService({ onError }) {
       await closeTabFn?.(id);
       if (activeNote?.id === id) clearActiveNote();
       loadBookmarksFn?.();
-      invoke("remove_note_index", { noteId: id }).catch(() => {});
+      try {
+        await invoke("remove_note_index", { noteId: id });
+      } catch (e) {
+        onError?.(e);
+      }
       return "refresh_notes";
     } catch (e) {
       onError?.(e);

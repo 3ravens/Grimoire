@@ -58,11 +58,12 @@
     const folderTree = $derived(buildFolderTree(folders));
     const visibleTags = $derived(
         tagSearch.trim()
-            ? allTags.filter((t) =>
-                  t.name.includes(
-                      tagSearch.trim().toLowerCase().replace(/^#/, ""),
-                  ),
-              )
+            ? (() => {
+                  const q = tagSearch.trim().toLowerCase().replace(/^#/, "");
+                  return allTags.filter((t) =>
+                      t.name.trim().toLowerCase().replace(/^#/, "").includes(q),
+                  );
+              })()
             : allTags.slice(0, TAG_LIMIT),
     );
 

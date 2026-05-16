@@ -33,6 +33,9 @@ export function createTemplates() {
   /** @param {string} name @param {string} title @param {string} content @param {any[]} properties */
   async function updateTemplate(name, title, content, properties) {
     const savedId = editingTemplate?.id ?? -1;
+    if (savedId < 0 || editingTemplate == null) {
+      throw new Error("No template selected to update.");
+    }
     await invoke('update_template', { id: savedId, name, title, content, properties });
     await loadTemplates();
     editingTemplate = null;

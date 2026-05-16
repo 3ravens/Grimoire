@@ -481,8 +481,10 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
     // ── 1. Active note ───────────────────────────────────────────────────────
     if (activeNote) {
+      const openTitle = (ns.editorTitle ?? activeNote.title ?? '').trim() || activeNote.title;
+      const openBody = ns.editorContent ?? activeNote.content ?? '';
       systemParts.push(
-        `## Note the user currently has open\n### ${activeNote.title}\n${activeNote.content}`
+        `## Note the user currently has open\n### ${openTitle}\n${openBody}`
       );
     }
 
@@ -519,7 +521,12 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         let total = 0;
 
         if (activeView === 'kanban') {
-          const selectDef = defs.find(d => d.type === 'select');
+          const selectDefs = defs.filter(d => d.type === 'select');
+          const savedGb = localStorage.getItem(`grimoire:kanban:${activeViewFolderId}:groupBy`);
+          const savedMatch = savedGb
+            ? selectDefs.find(d => String(d.id) === savedGb)
+            : null;
+          const selectDef = savedMatch ?? selectDefs[0];
           if (selectDef) {
             let options = [];
             try { options = JSON.parse(selectDef.options ?? '[]'); } catch { options = []; }
