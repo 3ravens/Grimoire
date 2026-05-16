@@ -1,12 +1,14 @@
 <script>
+  import { useId } from 'svelte';
+
   let {
     theme = 'system', onThemeChange = () => {},
     accent = 'default', onAccentChange = () => {},
     dateFormat = 'DD-MM-YYYY', onDateFormatChange = () => {},
   } = $props();
 
-  const themeSelectId = `theme-select-${Math.random().toString(36).slice(2, 11)}`;
-  const dateFormatSelectId = `date-format-select-${Math.random().toString(36).slice(2, 11)}`;
+  const themeSelectId = useId();
+  const dateFormatSelectId = useId();
 
   const visibleTheme = $derived(theme === 'bag' ? 'dark' : theme);
 

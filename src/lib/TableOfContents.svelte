@@ -1,4 +1,5 @@
 <script>
+  import { useId } from 'svelte';
   /**
    * Reusable Table of Contents component.
    *
@@ -12,7 +13,7 @@
 
   let { headings = [], onHeadingClick } = $props();
 
-  const tocListId = `toc-list-${Math.random().toString(36).slice(2, 11)}`;
+  const tocListId = useId();
 
   // Collapse state — open by default when headings exist
   let collapsed = $state(false);
