@@ -119,6 +119,16 @@ pub async fn upsert(
     // Infer the embedding dimension from the first chunk so the table schema
     // is always consistent with whichever model produced the embeddings.
     let dims = chunks.first().map(|(_, _, e)| e.len() as i32).unwrap_or(super::embedder::DIMS);
+    if !chunks.is_empty() {
+        for (_, _, emb) in &chunks {
+            if emb.len() as i32 != dims {
+                return Err(format!(
+                    "Embedding length mismatch for note chunk: expected {dims}, got {}",
+                    emb.len()
+                ));
+            }
+        }
+    }
     let table = open_notes_table(conn, dims).await?;
 
     // Remove all existing chunks for this note.
@@ -192,9 +202,9 @@ pub async fn purge_all(conn: &Connection) -> Result<(), String> {
     if count == 0 {
         return Ok(());
     }
-    // LanceDB delete with a condition that matches every row.
+    // LanceDB: use an always-true predicate so every row is removed regardless of column values.
     table
-        .delete("note_id >= 0")
+        .delete("1 = 1")
         .await
         .map_err(|e| e.to_string())
 }

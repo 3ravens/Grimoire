@@ -123,33 +123,52 @@ fn extract_leading_year(s: &str) -> Option<i32> {
 }
 
 /// Best-effort natural-language date, e.g. "5th of may 2026" or "may 5 2026".
-fn parse_natural_language_date(text: &str) -> Option<NaiveDate> {
+/// Returns the chosen date and the byte offset of the month token (earliest valid match).
+fn parse_natural_language_date(text: &str) -> Option<(NaiveDate, usize)> {
     let lower = text.to_lowercase();
-    for &(month_name, month) in MONTH_NAMES {
-        let Some(mpos) = lower.find(month_name) else {
-            continue;
-        };
-        let before = &lower[..mpos];
-        let after = lower[mpos + month_name.len()..].trim_start();
+    let mut best: Option<(usize, NaiveDate)> = None;
 
-        if let Some(day) = extract_trailing_day(before) {
-            if let Some(year) = extract_leading_year(after) {
-                return NaiveDate::from_ymd_opt(year, month, day);
+    for &(month_name, month) in MONTH_NAMES {
+        for (mpos, _) in lower.match_indices(month_name) {
+            let before = &lower[..mpos];
+            let after = lower[mpos + month_name.len()..].trim_start();
+
+            let try_date = |day: u32, year: i32| {
+                NaiveDate::from_ymd_opt(year, month, day).map(|d| (mpos, d))
+            };
+
+            if let Some(day) = extract_trailing_day(before) {
+                if let Some(year) = extract_leading_year(after) {
+                    if let Some(pair) = try_date(day, year) {
+                        best = Some(match best {
+                            None => pair,
+                            Some((bp, _)) if pair.0 < bp => pair,
+                            Some(b) => b,
+                        });
+                    }
+                }
             }
-        }
-        if let Some(day) = extract_leading_day(after) {
-            let rest = after
-                .chars()
-                .skip_while(|c| c.is_ascii_digit())
-                .collect::<String>()
-                .trim_start()
-                .to_string();
-            if let Some(year) = extract_leading_year(&rest) {
-                return NaiveDate::from_ymd_opt(year, month, day);
+            if let Some(day) = extract_leading_day(after) {
+                let rest = after
+                    .chars()
+                    .skip_while(|c| c.is_ascii_digit())
+                    .collect::<String>()
+                    .trim_start()
+                    .to_string();
+                if let Some(year) = extract_leading_year(&rest) {
+                    if let Some(pair) = try_date(day, year) {
+                        best = Some(match best {
+                            None => pair,
+                            Some((bp, _)) if pair.0 < bp => pair,
+                            Some(b) => b,
+                        });
+                    }
+                }
             }
         }
     }
-    None
+
+    best.map(|(p, d)| (d, p))
 }
 
 struct DateMatch {
@@ -217,12 +236,7 @@ pub(crate) fn parse_dates_from_text(text: &str, date_format: &str) -> Vec<String
     let mut matches = scan_iso_dates(text);
     matches.extend(scan_display_dates(text, date_format));
     let lower = text.to_lowercase();
-    if let Some(date) = parse_natural_language_date(&lower) {
-        let start = MONTH_NAMES
-            .iter()
-            .filter_map(|(name, _)| lower.find(name))
-            .min()
-            .unwrap_or(0);
+    if let Some((date, start)) = parse_natural_language_date(&lower) {
         matches.push(DateMatch { date, start });
     }
     matches.sort_by_key(|m| m.start);
@@ -521,15 +535,34 @@ mod tests {
 
     #[test]
     fn parse_natural_fifth_of_may_2026() {
-        let d = parse_natural_language_date("what did i write on the 5th of may 2026")
+        let (d, _) = parse_natural_language_date("what did i write on the 5th of may 2026")
             .expect("date");
         assert_eq!(d.format("%Y-%m-%d").to_string(), "2026-05-05");
     }
 
     #[test]
     fn parse_natural_may_5_2026() {
-        let d = parse_natural_language_date("notes from may 5 2026").expect("date");
+        let (d, _) = parse_natural_language_date("notes from may 5 2026").expect("date");
         assert_eq!(d.format("%Y-%m-%d").to_string(), "2026-05-05");
+    }
+
+    /// When a month substring appears more than once, every occurrence is considered; the
+    /// first invalid "may …" must not block a later valid "may 5 2026".
+    #[test]
+    fn parse_natural_second_month_token_when_first_is_incomplete() {
+        let text = "noise may xxxxx may 5 2026";
+        let (d, mpos) = parse_natural_language_date(text).expect("date");
+        assert_eq!(d.format("%Y-%m-%d").to_string(), "2026-05-05");
+        assert_eq!(mpos, "noise may xxxxx ".len());
+    }
+
+    /// Among multiple valid parses for the same month name, the earliest byte offset wins.
+    #[test]
+    fn parse_natural_earliest_month_match_wins_when_both_valid() {
+        let (d, mpos) =
+            parse_natural_language_date("may 5 2026 and later may 10 2026").expect("date");
+        assert_eq!(d.format("%Y-%m-%d").to_string(), "2026-05-05");
+        assert_eq!(mpos, 0);
     }
 
     #[test]

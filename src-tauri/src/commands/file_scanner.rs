@@ -29,11 +29,27 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
-use crate::{AppError, AppResult};
+use crate::{AppError, AppResult, EncryptedNoteStore, SharedKeyStore};
 use crate::vector::VectorDb;
 use crate::vector::scanned::ScannedFileMatch;
 use crate::config::SharedConfig;
 use crate::chunking::{split_sentences, chunk_sentences};
+
+fn canonical_scan_path(path: &Path) -> std::path::PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// True when `candidate` is the same location as `existing`, nested under it, or contains it.
+fn scan_paths_overlap(
+    candidate: &Path,
+    _candidate_kind: &str,
+    existing_path: &Path,
+    _existing_kind: &str,
+) -> bool {
+    let c = canonical_scan_path(candidate);
+    let e = canonical_scan_path(existing_path);
+    c == e || c.starts_with(&e) || e.starts_with(&c)
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -883,6 +899,20 @@ pub async fn add_scanned_path(
         }
     }
 
+    let existing: Vec<(String, String)> = sqlx::query_as(
+        "SELECT path, kind FROM scanned_paths WHERE enabled = 1",
+    )
+    .fetch_all(pool.inner())
+    .await?;
+
+    for (epath, ekind) in existing {
+        if scan_paths_overlap(p, &kind, Path::new(&epath), &ekind) {
+            return Err(AppError::InvalidInput(format!(
+                "This path overlaps an existing scanned path ({epath}). Remove or disable that entry first."
+            )));
+        }
+    }
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -1102,8 +1132,41 @@ pub async fn clear_stale_scanned_files(
 pub async fn remove_scanned_path(
     pool: State<'_, SqlitePool>,
     vdb: State<'_, VectorDb>,
+    cancel_map: State<'_, super::FileScanCancelMap>,
     id: i64,
 ) -> AppResult<()> {
+    {
+        let map = cancel_map
+            .0
+            .lock()
+            .map_err(|e| AppError::InvalidInput(e.to_string()))?;
+        if let Some(flag) = map.get(&id) {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        loop {
+            let still_running = {
+                let map = cancel_map
+                    .0
+                    .lock()
+                    .map_err(|e| AppError::InvalidInput(e.to_string()))?;
+                map.contains_key(&id)
+            };
+            if !still_running {
+                return Ok::<(), AppError>(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .map_err(|_| {
+        AppError::InvalidInput(
+            "Timed out waiting for file scanner indexing to stop for this path".into(),
+        )
+    })??;
+
     // Fetch path details before deletion.
     let row: Option<(String, String)> = sqlx::query_as(
         "SELECT path, kind FROM scanned_paths WHERE id = ?",
@@ -1363,6 +1426,7 @@ pub async fn search_scanned_files(
 #[tauri::command]
 pub async fn import_file_as_note(
     pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
     file_path: String,
     folder_id: Option<i64>,
 ) -> AppResult<super::Note> {
@@ -1383,36 +1447,21 @@ pub async fn import_file_as_note(
         .unwrap_or("Imported note")
         .to_string();
 
-    let row = sqlx::query_as::<_, super::NoteRow>(
-        "INSERT INTO notes (title, content, folder_id) VALUES (?, ?, ?)
-         RETURNING id, title, content, folder_id, created_at, updated_at",
-    )
-    .bind(&title)
-    .bind(&content)
-    .bind(folder_id)
-    .fetch_one(pool.inner())
-    .await
-    ?;
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
+    let note = store
+        .create_note_with_content(&title, &content, folder_id)
+        .await?;
 
-    // Update FTS index so the note is immediately searchable.
-    super::search::fts_upsert(pool.inner(), row.id, &title, &content).await;
+    if !note.locked {
+        super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
+    }
 
     let _ = crate::audit::log_event(
         pool.inner(), "file_import", Some("file"),
-        Some(row.id), Some(&file_path), None,
+        Some(note.id), Some(&file_path), None,
     ).await;
 
-    // Return the full Note struct (locked = false — Unfiled and user-selected folders
-    // are never locked at import time; encrypted folders are intentionally unsupported).
-    Ok(super::Note {
-        id:         row.id,
-        title:      row.title,
-        content:    row.content,
-        folder_id:  row.folder_id,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-        locked:     false,
-    })
+    Ok(note)
 }
 
 #[cfg(test)]

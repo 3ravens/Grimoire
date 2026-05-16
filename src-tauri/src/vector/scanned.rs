@@ -93,6 +93,14 @@ pub async fn scanned_file_upsert_batch(
 ) -> Result<(), String> {
     if chunks.is_empty() { return Ok(()); }
     let dims = chunks.first().map(|(_, _, _, e)| e.len() as i32).unwrap_or(super::embedder::DIMS);
+    for (_, _, _, emb) in &chunks {
+        if emb.len() as i32 != dims {
+            return Err(format!(
+                "Embedding length mismatch for scanned chunk: expected {dims}, got {}",
+                emb.len()
+            ));
+        }
+    }
     let table = open_scanned_table(conn, dims).await?;
 
     // Delete all existing chunks for this file.
@@ -153,9 +161,9 @@ pub async fn scanned_file_remove(conn: &Connection, file_path: &str) -> Result<(
 /// Used when removing a scanned folder.
 pub async fn scanned_file_remove_prefix(conn: &Connection, prefix: &str) -> Result<(), String> {
     let table = open_scanned_table(conn, 0).await?;
-    let safe_prefix = super::escape_sql(prefix);
+    let like_pat = super::escape_like_pattern(prefix);
     table
-        .delete(&format!("file_path LIKE '{safe_prefix}%'"))
+        .delete(&format!("file_path LIKE '{like_pat}%' ESCAPE '\\'"))
         .await
         .map_err(|e| e.to_string())
 }

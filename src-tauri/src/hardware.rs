@@ -94,7 +94,13 @@ pub struct HardwareInfo {
 /// Run the full hardware detection and return a [`HardwareInfo`] snapshot.
 /// This is async because GPU detection spawns subprocesses.
 pub async fn detect() -> HardwareInfo {
-    let (cpu_name, cpu_cores, ram_total_mb, ram_used_mb, ram_grimoire_mb) = collect_cpu_ram();
+    let (cpu_name, cpu_cores, ram_total_mb, ram_used_mb, ram_grimoire_mb) =
+        tokio::task::spawn_blocking(collect_cpu_ram)
+            .await
+            .unwrap_or_else(|e| {
+                log::warn!("CPU/RAM detection task failed: {e}");
+                ("Unknown CPU".to_string(), 0usize, 0u64, 0u64, 0u64)
+            });
     let gpus = collect_gpus().await;
     let capability = classify(ram_total_mb, &gpus);
 
@@ -535,7 +541,6 @@ async fn try_windows_wmic() -> Option<Vec<GpuInfo>> {
 
 #[cfg(target_os = "linux")]
 async fn try_linux_drm() -> Option<Vec<GpuInfo>> {
-    use std::path::Path;
     use tokio::fs;
 
     // Discover cards by listing /sys/class/drm/card*/device/
@@ -551,6 +556,10 @@ async fn try_linux_drm() -> Option<Vec<GpuInfo>> {
         }
 
         let base = entry.path().join("device");
+
+        if fs::metadata(&base).await.is_err() {
+            continue;
+        }
 
         // GPU display name from the vendor/device uevent or modalias.
         let gpu_name = read_drm_name(&base).await.unwrap_or_else(|| card_name.to_string());
@@ -568,14 +577,12 @@ async fn try_linux_drm() -> Option<Vec<GpuInfo>> {
             .and_then(|s| s.trim().parse::<u64>().ok())
             .map(|b| b / (1024 * 1024));
 
-        if Path::new(&base).exists() {
-            gpus.push(GpuInfo {
-                name: gpu_name,
-                vram_total_mb,
-                vram_used_mb,
-                is_unified_memory: false,
-            });
-        }
+        gpus.push(GpuInfo {
+            name: gpu_name,
+            vram_total_mb,
+            vram_used_mb,
+            is_unified_memory: false,
+        });
     }
 
     Some(gpus)

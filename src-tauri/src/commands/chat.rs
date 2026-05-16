@@ -15,11 +15,22 @@
 // You should have received a copy of the GNU General Public License
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
-use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
 use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::State;
+
 use crate::{AppError, AppResult};
+
+fn ollama_http_client() -> AppResult<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(7200))
+        .build()
+        .map_err(|e| AppError::OllamaUnavailable(format!("HTTP client: {e}")))
+}
 
 // ---------------------------------------------------------------------------
 // Chat (Ollama)
@@ -115,7 +126,7 @@ pub async fn chat(
         .map(|m| crate::audit::truncate(&m.content, 500).to_string())
         .unwrap_or_default();
 
-    let client = reqwest::Client::new();
+    let client = ollama_http_client()?;
 
     let body = OllamaChatRequest {
         model,
@@ -231,7 +242,7 @@ pub async fn measure_rag_chat_ttft(
         )
     };
 
-    let client = reqwest::Client::new();
+    let client = ollama_http_client()?;
     let messages = vec![
         ChatMessage {
             role: "system".into(),
@@ -375,7 +386,7 @@ pub async fn suggest_note_improvement(
         ChatMessage { role: "user".to_string(), content: user_content },
     ];
 
-    let client = reqwest::Client::new();
+    let client = ollama_http_client()?;
 
     let body = OllamaChatRequest {
         model,
@@ -456,7 +467,7 @@ pub async fn suggest_hunk_refinement(
         ChatMessage { role: "user".to_string(), content: user_content },
     ];
 
-    let client = reqwest::Client::new();
+    let client = ollama_http_client()?;
 
     let body = OllamaChatRequest {
         model,

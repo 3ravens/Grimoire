@@ -157,9 +157,6 @@ pub async fn wizard_finish_impl(
 ) -> AppResult<WizardFinishResult> {
     maybe_backfill_wizard_completed(pool).await?;
 
-    let pack = parse_pack_id(&starter_pack_id)?;
-    let pack_key = pack.as_str();
-
     let mut tx = pool.begin().await?;
 
     let done = get_setting_tx(&mut tx, KEY_WIZARD_DONE).await?;
@@ -171,6 +168,9 @@ pub async fn wizard_finish_impl(
             open_wikipedia_settings: false,
         });
     }
+
+    let pack = parse_pack_id(&starter_pack_id)?;
+    let pack_key = pack.as_str();
 
     let store = EncryptedNoteStore::new(pool, keys);
 

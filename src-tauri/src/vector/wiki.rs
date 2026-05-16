@@ -98,6 +98,14 @@ pub async fn wikipedia_upsert_batch(
 ) -> Result<(), String> {
     if articles.is_empty() { return Ok(()); }
     let dims = articles.first().map(|(_, _, _, _, e)| e.len() as i32).unwrap_or(super::embedder::DIMS);
+    for (_, _, _, _, emb) in &articles {
+        if emb.len() as i32 != dims {
+            return Err(format!(
+                "Embedding length mismatch for Wikipedia chunk: expected {dims}, got {}",
+                emb.len()
+            ));
+        }
+    }
     let table = open_wiki_table(conn, dims).await?;
 
     // One bulk delete covering every article_id in this batch.
@@ -159,6 +167,14 @@ pub async fn wikipedia_append_batch(
 ) -> Result<(), String> {
     if articles.is_empty() { return Ok(()); }
     let dims = articles.first().map(|(_, _, _, _, e)| e.len() as i32).unwrap_or(super::embedder::DIMS);
+    for (_, _, _, _, emb) in &articles {
+        if emb.len() as i32 != dims {
+            return Err(format!(
+                "Embedding length mismatch for Wikipedia chunk: expected {dims}, got {}",
+                emb.len()
+            ));
+        }
+    }
     let table = open_wiki_table(conn, dims).await?;
 
     let mut ids = Vec::with_capacity(articles.len());

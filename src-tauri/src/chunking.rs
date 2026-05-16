@@ -68,6 +68,7 @@ pub fn chunk_sentences(
     per_chunk: usize,
     overlap: usize,
 ) -> Vec<String> {
+    let per_chunk = per_chunk.max(1);
     if sentences.is_empty() {
         return vec![String::new()];
     }

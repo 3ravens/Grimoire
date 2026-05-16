@@ -110,6 +110,10 @@ async fn run() -> Result<(), String> {
 
     let keys = bench_shared_keystore();
 
+    let skip_ollama = std::env::var("PERF_SKIP_OLLAMA")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
     let offline = std::env::var("PERF_OFFLINE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
@@ -124,7 +128,7 @@ async fn run() -> Result<(), String> {
             folder_count: 6,
             seed: Some(42),
             include_daily_notes: true,
-            embed: !offline,
+            embed: !(offline || skip_ollama),
         },
         None,
     )

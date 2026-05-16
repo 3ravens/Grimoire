@@ -17,9 +17,10 @@
 
 use serde::Serialize;
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use tauri::State;
 use crate::SharedKeyStore;
-use crate::{AppError, AppResult, EncryptedNoteStore};
+use crate::{AppResult, EncryptedNoteStore};
 use super::{Note, LinkedNote, GraphNode, GraphEdge};
 
 // ---------------------------------------------------------------------------
@@ -119,6 +120,7 @@ async fn sync_tags(pool: &SqlitePool, note_id: i64, tags: &[String]) -> AppResul
 /// skipped — they'll be picked up on the next save if the target is created.
 async fn sync_links(
     pool: &SqlitePool,
+    keys: &crate::KeyStore,
     note_id: i64,
     link_titles: &[String],
 ) -> AppResult<()> {
@@ -128,15 +130,16 @@ async fn sync_links(
         .await
         ?;
 
-    for title in link_titles {
-        let target: Option<i64> =
-            sqlx::query_scalar("SELECT id FROM notes WHERE title = ? LIMIT 1")
-                .bind(title)
-                .fetch_optional(pool)
-                .await
-                ?;
+    let store = EncryptedNoteStore::new(pool, keys);
+    let notes = store.list_notes(None, true).await?;
 
-        if let Some(target_id) = target {
+    for title in link_titles {
+        let target_id = notes
+            .iter()
+            .find(|n| !n.locked && n.title == *title)
+            .map(|n| n.id);
+
+        if let Some(target_id) = target_id {
             if target_id != note_id {
                 sqlx::query(
                     "INSERT OR IGNORE INTO note_links (source_id, target_id) VALUES (?, ?)",
@@ -164,23 +167,25 @@ pub struct TagCount {
 /// Used by the Tauri command and by internal bulk fixtures (e.g. test data generator).
 pub(crate) async fn sync_note_relations_pool(
     pool: &SqlitePool,
+    keys: &SharedKeyStore,
     note_id: i64,
     content: &str,
 ) -> AppResult<()> {
     let tags = parse_tags(content);
     let links = parse_wiki_links(content);
     sync_tags(pool, note_id, &tags).await?;
-    sync_links(pool, note_id, &links).await?;
+    sync_links(pool, keys.as_ref(), note_id, &links).await?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn sync_note_relations(
     pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
     note_id: i64,
     content: String,
 ) -> AppResult<()> {
-    sync_note_relations_pool(pool.inner(), note_id, &content).await
+    sync_note_relations_pool(pool.inner(), keys.inner(), note_id, &content).await
 }
 
 /// Return the tag names attached to a note, alphabetically sorted.
@@ -206,18 +211,28 @@ pub async fn get_note_tags(
 #[tauri::command]
 pub async fn get_note_links(
     pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
     note_id: i64,
 ) -> AppResult<Vec<LinkedNote>> {
-    let links = sqlx::query_as::<_, LinkedNote>(
-        "SELECT n.id, n.title FROM notes n
+    let ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT n.id FROM notes n
          JOIN note_links nl ON nl.target_id = n.id
-         WHERE nl.source_id = ?
-         ORDER BY n.title ASC",
+         WHERE nl.source_id = ?",
     )
     .bind(note_id)
     .fetch_all(pool.inner())
-    .await
-    ?;
+    .await?;
+
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
+    let mut links: Vec<LinkedNote> = Vec::with_capacity(ids.len());
+    for id in ids {
+        let n = store.get_note(id).await?;
+        if n.locked {
+            continue;
+        }
+        links.push(LinkedNote { id, title: n.title });
+    }
+    links.sort_by(|a, b| a.title.cmp(&b.title));
     Ok(links)
 }
 
@@ -225,18 +240,28 @@ pub async fn get_note_links(
 #[tauri::command]
 pub async fn get_backlinks(
     pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
     note_id: i64,
 ) -> AppResult<Vec<LinkedNote>> {
-    let links = sqlx::query_as::<_, LinkedNote>(
-        "SELECT n.id, n.title FROM notes n
+    let ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT n.id FROM notes n
          JOIN note_links nl ON nl.source_id = n.id
-         WHERE nl.target_id = ?
-         ORDER BY n.title ASC",
+         WHERE nl.target_id = ?",
     )
     .bind(note_id)
     .fetch_all(pool.inner())
-    .await
-    ?;
+    .await?;
+
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
+    let mut links: Vec<LinkedNote> = Vec::with_capacity(ids.len());
+    for id in ids {
+        let n = store.get_note(id).await?;
+        if n.locked {
+            continue;
+        }
+        links.push(LinkedNote { id, title: n.title });
+    }
+    links.sort_by(|a, b| a.title.cmp(&b.title));
     Ok(links)
 }
 
@@ -275,20 +300,28 @@ pub async fn list_all_tags(
 #[tauri::command]
 pub async fn get_graph_data(
     pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
 ) -> AppResult<(Vec<GraphNode>, Vec<GraphEdge>)> {
-    let nodes = sqlx::query_as::<_, GraphNode>(
-        "SELECT id, title, folder_id FROM notes ORDER BY id ASC",
-    )
-    .fetch_all(pool.inner())
-    .await
-    ?;
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
+    let notes = store.list_notes(None, true).await?;
+    let allowed: HashSet<i64> = notes.iter().filter(|n| !n.locked).map(|n| n.id).collect();
+    let nodes: Vec<GraphNode> = notes
+        .into_iter()
+        .filter(|n| !n.locked)
+        .map(|n| GraphNode {
+            id: n.id,
+            title: n.title,
+            folder_id: n.folder_id,
+        })
+        .collect();
 
-    let edges = sqlx::query_as::<_, GraphEdge>(
+    let mut edges = sqlx::query_as::<_, GraphEdge>(
         "SELECT source_id AS source, target_id AS target FROM note_links",
     )
     .fetch_all(pool.inner())
     .await
     ?;
+    edges.retain(|e| allowed.contains(&e.source) && allowed.contains(&e.target));
 
     Ok((nodes, edges))
 }
@@ -302,59 +335,44 @@ pub async fn get_graph_data(
 #[tauri::command]
 pub async fn get_unlinked_mentions(
     pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
     note_id: i64,
     title: String,
 ) -> AppResult<Vec<LinkedNote>> {
-    // Plain-text pattern: title appears in content but NOT as [[title]].
-    // We do a LIKE pre-filter in SQL (cheap) and post-filter in Rust for the
-    // wiki-link exclusion — this avoids complex SQL escaping of bracket chars.
-    let plain_pattern = format!("%{}%", title);
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
+    let notes = store.list_notes(None, true).await?;
 
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        id: i64,
-        title: String,
-        content: String,
-        folder_locked: i64,
-    }
-
-    let rows = sqlx::query_as::<_, Row>(
-        "SELECT n.id, n.title, n.content, COALESCE(f.locked, 0) AS folder_locked
-         FROM notes n
-         LEFT JOIN folders f ON f.id = n.folder_id
-         WHERE n.id != ?
-           AND n.content LIKE ?
-           AND n.id NOT IN (
-               SELECT source_id FROM note_links WHERE target_id = ?
-           )
-         ORDER BY n.title ASC",
+    let backs: std::collections::HashSet<i64> = sqlx::query_scalar(
+        "SELECT source_id FROM note_links WHERE target_id = ?",
     )
     .bind(note_id)
-    .bind(&plain_pattern)
-    .bind(note_id)
     .fetch_all(pool.inner())
-    .await
-    ?;
+    .await?
+    .into_iter()
+    .collect();
 
     let wiki_link = format!("[[{}]]", title);
 
-    let mentions: Vec<LinkedNote> = rows
-        .into_iter()
-        .filter(|r| {
-            // Skip locked folders — their content is ciphertext.
-            if r.folder_locked != 0 {
-                return false;
-            }
-            // The LIKE pre-filter confirmed the title appears somewhere in the
-            // content. Now check that not every occurrence is already a wiki-link.
-            // We accept the note as an unlinked mention if the raw title string
-            // appears at least once outside of [[...]].
-            let stripped = r.content.replace(&wiki_link, "");
-            stripped.contains(title.as_str())
-        })
-        .map(|r| LinkedNote { id: r.id, title: r.title })
-        .collect();
-
+    let mut mentions: Vec<LinkedNote> = Vec::new();
+    for n in notes {
+        if n.id == note_id || n.locked {
+            continue;
+        }
+        if backs.contains(&n.id) {
+            continue;
+        }
+        if !n.content.contains(title.as_str()) {
+            continue;
+        }
+        let stripped = n.content.replace(&wiki_link, "");
+        if stripped.contains(title.as_str()) {
+            mentions.push(LinkedNote {
+                id: n.id,
+                title: n.title.clone(),
+            });
+        }
+    }
+    mentions.sort_by(|a, b| a.title.cmp(&b.title));
     Ok(mentions)
 }
 
@@ -364,15 +382,14 @@ pub async fn get_unlinked_mentions(
 #[tauri::command]
 pub async fn convert_mention_to_link(
     pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
     note_id: i64,
     title: String,
 ) -> AppResult<String> {
-    let content: String = sqlx::query_scalar("SELECT content FROM notes WHERE id = ?")
-        .bind(note_id)
-        .fetch_optional(pool.inner())
-        .await
-        ?
-        .ok_or_else(|| AppError::NotFound(format!("Note {note_id} not found")))?;
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
+    let note = store.get_note(note_id).await?;
+    let content = note.content;
+    let note_title = note.title;
 
     let wiki_link = format!("[[{title}]]");
 
@@ -385,24 +402,14 @@ pub async fn convert_mention_to_link(
         return Ok(content);
     }
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
+    let saved = store
+        .update_note(note_id, &note_title, &updated)
+        .await?;
 
-    sqlx::query("UPDATE notes SET content = ?, updated_at = ? WHERE id = ?")
-        .bind(&updated)
-        .bind(now)
-        .bind(note_id)
-        .execute(pool.inner())
-        .await
-        ?;
+    let links = parse_wiki_links(&saved.content);
+    sync_links(pool.inner(), keys.inner(), note_id, &links).await?;
 
-    // Re-sync wiki-links so the new [[title]] link appears in note_links immediately.
-    let links = parse_wiki_links(&updated);
-    sync_links(pool.inner(), note_id, &links).await?;
-
-    Ok(updated)
+    Ok(saved.content)
 }
 
 /// Replace the first occurrence of `needle` in `haystack` that is NOT already
@@ -434,4 +441,23 @@ fn replace_first_plain_mention(haystack: &str, needle: &str, replacement: &str) 
         i += 1;
     }
     haystack.to_string()
+}
+
+#[cfg(test)]
+mod graph_filter_tests {
+    use std::collections::HashSet;
+
+    use super::GraphEdge;
+
+    #[test]
+    fn graph_edges_drop_endpoints_not_in_allowed_set() {
+        let allowed: HashSet<i64> = [1i64, 2].into_iter().collect();
+        let mut edges = vec![
+            GraphEdge { source: 1, target: 2 },
+            GraphEdge { source: 1, target: 99 },
+        ];
+        edges.retain(|e| allowed.contains(&e.source) && allowed.contains(&e.target));
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target, 2);
+    }
 }

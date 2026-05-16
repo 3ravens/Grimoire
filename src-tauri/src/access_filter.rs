@@ -33,7 +33,7 @@
 
 use std::collections::HashSet;
 use sqlx::SqlitePool;
-use crate::KeyStore;
+use crate::{AppError, AppResult, KeyStore};
 
 /// A snapshot of currently inaccessible folders for one request.
 ///
@@ -52,27 +52,26 @@ impl AccessFilter {
     /// `KeyStore`.  Only locked folders with no session key end up in the
     /// internal set, so `is_accessible` checks are O(1) lookups on a
     /// typically-empty `HashSet`.
-    pub async fn load(pool: &SqlitePool, keys: &KeyStore) -> Self {
+    pub async fn load(pool: &SqlitePool, keys: &KeyStore) -> AppResult<Self> {
         let all_locked: Vec<i64> =
             sqlx::query_scalar("SELECT id FROM folders WHERE locked = 1")
                 .fetch_all(pool)
-                .await
-                .unwrap_or_default();
+                .await?;
 
-        // Collect the session-unlocked IDs while holding the lock for as
-        // short a time as possible — no await points between lock and drop.
         let unlocked: HashSet<i64> = keys
             .folder_keys
             .lock()
-            .map(|fk| fk.keys().copied().collect())
-            .unwrap_or_default();
+            .map_err(|e| AppError::InvalidInput(e.to_string()))?
+            .keys()
+            .copied()
+            .collect();
 
         let locked = all_locked
             .into_iter()
             .filter(|id| !unlocked.contains(id))
             .collect();
 
-        Self { locked }
+        Ok(Self { locked })
     }
 
     /// Returns `true` when the given folder (or note with no folder) is

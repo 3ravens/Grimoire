@@ -143,6 +143,21 @@ fn escape_sql(s: &str) -> String {
     s.replace('\'', "''")
 }
 
+/// Escape a value embedded in a single-quoted `LIKE` pattern when using `ESCAPE '\\'`.
+pub(crate) fn escape_like_pattern(s: &str) -> String {
+    let mut out = String::with_capacity(s.len().saturating_add(8));
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '%' => out.push_str("\\%"),
+            '_' => out.push_str("\\_"),
+            '\'' => out.push_str("''"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Initialisation
 // ---------------------------------------------------------------------------
@@ -206,6 +221,11 @@ mod tests {
     #[test]
     fn escape_sql_doubles_single_quotes() {
         assert_eq!(escape_sql("a'b"), "a''b");
+    }
+
+    #[test]
+    fn escape_like_pattern_escapes_specials() {
+        assert_eq!(escape_like_pattern(r"a\b%c_d'e"), r"a\\b\%c\_d''e");
     }
 
     #[tokio::test]
