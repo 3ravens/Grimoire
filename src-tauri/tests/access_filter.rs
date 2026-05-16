@@ -9,13 +9,13 @@ async fn locked_folder_without_session_key_is_inaccessible() {
     let ks = empty_keystore();
 
     let folder_id: i64 = sqlx::query_scalar(
-        "INSERT INTO folders (name, locked) VALUES ('secret', 1) RETURNING id",
+        "INSERT INTO folders (name, locked, salt, sentinel) VALUES ('secret', 1, 'testsalt', 'testsentinel') RETURNING id",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
 
-    let filter = AccessFilter::load(&pool, &ks).await;
+    let filter = AccessFilter::load(&pool, &ks).await.unwrap();
     assert!(!filter.is_accessible(Some(folder_id)));
 }
 
@@ -25,7 +25,7 @@ async fn locked_folder_with_session_key_is_accessible() {
     let ks = empty_keystore();
 
     let folder_id: i64 = sqlx::query_scalar(
-        "INSERT INTO folders (name, locked) VALUES ('secret', 1) RETURNING id",
+        "INSERT INTO folders (name, locked, salt, sentinel) VALUES ('secret', 1, 'testsalt', 'testsentinel') RETURNING id",
     )
     .fetch_one(&pool)
     .await
@@ -36,7 +36,7 @@ async fn locked_folder_with_session_key_is_accessible() {
         .unwrap()
         .insert(folder_id, [7u8; 32]);
 
-    let filter = AccessFilter::load(&pool, &ks).await;
+    let filter = AccessFilter::load(&pool, &ks).await.unwrap();
     assert!(filter.is_accessible(Some(folder_id)));
 }
 
@@ -52,7 +52,7 @@ async fn unlocked_folder_always_accessible() {
     .await
     .unwrap();
 
-    let filter = AccessFilter::load(&pool, &ks).await;
+    let filter = AccessFilter::load(&pool, &ks).await.unwrap();
     assert!(filter.is_accessible(Some(folder_id)));
 }
 
@@ -60,7 +60,7 @@ async fn unlocked_folder_always_accessible() {
 async fn note_without_folder_always_accessible() {
     let pool = test_pool().await;
     let ks = empty_keystore();
-    let filter = AccessFilter::load(&pool, &ks).await;
+    let filter = AccessFilter::load(&pool, &ks).await.unwrap();
     assert!(filter.is_accessible(None));
 }
 
@@ -70,7 +70,7 @@ async fn list_notes_masks_locked_folder_without_key() {
     let ks = empty_keystore();
 
     let folder_id: i64 = sqlx::query_scalar(
-        "INSERT INTO folders (name, locked) VALUES ('L', 1) RETURNING id",
+        "INSERT INTO folders (name, locked, salt, sentinel) VALUES ('L', 1, 'testsalt', 'testsentinel') RETURNING id",
     )
     .fetch_one(&pool)
     .await

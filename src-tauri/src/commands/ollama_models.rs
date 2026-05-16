@@ -19,9 +19,11 @@
 
 use std::time::Duration;
 
-use futures_util::StreamExt;
+use futures_util::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio_util::io::StreamReader;
 
 use crate::{AppError, AppResult};
 
@@ -78,6 +80,7 @@ pub fn is_ollama_model_installed(requested: &str, installed: &[String]) -> bool 
 
 async fn fetch_installed_model_names() -> AppResult<Vec<String>> {
     let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| AppError::OllamaUnavailable(format!("HTTP client: {e}")))?;
@@ -144,6 +147,7 @@ pub async fn pull_ollama_model(app: tauri::AppHandle, model: String) -> AppResul
     }
 
     let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
         .timeout(Duration::from_secs(7200))
         .build()
         .map_err(|e| AppError::OllamaUnavailable(format!("HTTP client: {e}")))?;
@@ -172,37 +176,37 @@ pub async fn pull_ollama_model(app: tauri::AppHandle, model: String) -> AppResul
         )));
     }
 
-    let mut stream = response.bytes_stream();
-    let mut line_buf = String::new();
+    let bytes_stream = response
+        .bytes_stream()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+    let mut lines_reader = BufReader::new(StreamReader::new(bytes_stream));
+    let mut line = String::new();
 
-    while let Some(chunk) = stream.next().await {
-        let bytes = chunk.map_err(|e| AppError::OllamaUnavailable(format!("Pull stream error: {e}")))?;
-        let text = std::str::from_utf8(&bytes)
-            .map_err(|e| AppError::OllamaUnavailable(format!("UTF-8 error: {e}")))?;
-
-        for ch in text.chars() {
-            if ch == '\n' {
-                let line = line_buf.trim().to_string();
-                line_buf.clear();
-                if line.is_empty() {
-                    continue;
-                }
-
-                let v: serde_json::Value = serde_json::from_str(&line).map_err(|e| {
-                    AppError::OllamaUnavailable(format!("Unexpected pull chunk: {e}\nLine: {line}"))
-                })?;
-
-                if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
-                    return Err(AppError::OllamaUnavailable(err.to_string()));
-                }
-
-                app.emit("ollama:pull_progress", &v).map_err(|e| {
-                    AppError::OllamaUnavailable(format!("Event emit error: {e}"))
-                })?;
-            } else {
-                line_buf.push(ch);
-            }
+    loop {
+        line.clear();
+        let n = lines_reader
+            .read_line(&mut line)
+            .await
+            .map_err(|e| AppError::OllamaUnavailable(format!("Pull stream read: {e}")))?;
+        if n == 0 {
+            break;
         }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let v: serde_json::Value = serde_json::from_str(trimmed).map_err(|e| {
+            AppError::OllamaUnavailable(format!("Unexpected pull chunk: {e}\nLine: {trimmed}"))
+        })?;
+
+        if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+            return Err(AppError::OllamaUnavailable(err.to_string()));
+        }
+
+        app.emit("ollama:pull_progress", &v).map_err(|e| {
+            AppError::OllamaUnavailable(format!("Event emit error: {e}"))
+        })?;
     }
 
     Ok(())
@@ -225,15 +229,33 @@ pub async fn delete_ollama_model(model: String) -> AppResult<()> {
     }
 
     let installed = fetch_installed_model_names().await?;
-    let to_delete = installed
+    let matches: Vec<String> = installed
         .iter()
-        .find(|i| ollama_installed_matches_request(i, &requested))
+        .filter(|i| ollama_installed_matches_request(i, &requested))
         .cloned()
-        .ok_or_else(|| {
-            AppError::InvalidInput("That model is not installed locally.".to_string())
-        })?;
+        .collect();
+
+    let to_delete = match matches.len() {
+        0 => {
+            return Err(AppError::InvalidInput(
+                "That model is not installed locally.".to_string(),
+            ));
+        }
+        1 => matches[0].clone(),
+        _ => {
+            if matches.iter().any(|m| m == &requested) {
+                requested.clone()
+            } else {
+                return Err(AppError::InvalidInput(format!(
+                    "Multiple installed models match '{requested}': {}. Use the full name including tag (e.g. `model:tag`).",
+                    matches.join(", ")
+                )));
+            }
+        }
+    };
 
     let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
         .timeout(Duration::from_secs(120))
         .build()
         .map_err(|e| AppError::OllamaUnavailable(format!("HTTP client: {e}")))?;

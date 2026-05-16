@@ -51,15 +51,15 @@ pub fn generate_salt() -> [u8; 32] {
 ///
 /// This takes ~100ms on a modern machine — acceptable for a one-time unlock,
 /// slow enough to make brute-force attacks costly.
-pub fn derive_key(password: &str, salt: &[u8]) -> [u8; 32] {
-    let params = Params::new(65_536, 2, 1, Some(32)).expect("valid argon2 params");
+pub fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; 32], String> {
+    let params = Params::new(65_536, 2, 1, Some(32)).map_err(|e| format!("argon2 params: {e}"))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
     let mut key = [0u8; 32];
     argon2
         .hash_password_into(password.as_bytes(), salt, &mut key)
-        .expect("argon2 key derivation failed");
-    key
+        .map_err(|e| format!("argon2 key derivation: {e}"))?;
+    Ok(key)
 }
 
 /// Encrypt `plaintext` with `key` using AES-256-GCM.
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn encrypt_decrypt_round_trip() {
         let salt = [3u8; 32];
-        let key = derive_key("correct horse battery staple", &salt);
+        let key = derive_key("correct horse battery staple", &salt).expect("derive");
         let blob = encrypt(&key, b"secret payload");
         let plain = decrypt(&key, &blob).unwrap();
         assert_eq!(plain, b"secret payload");
@@ -140,8 +140,8 @@ mod tests {
     #[test]
     fn decrypt_wrong_key_fails() {
         let salt = [9u8; 32];
-        let k1 = derive_key("password-one", &salt);
-        let k2 = derive_key("password-two", &salt);
+        let k1 = derive_key("password-one", &salt).unwrap();
+        let k2 = derive_key("password-two", &salt).unwrap();
         let blob = encrypt(&k1, b"data");
         assert!(decrypt(&k2, &blob).is_err());
     }
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn tampered_blob_fails_decrypt() {
         let salt = [1u8; 32];
-        let key = derive_key("pw", &salt);
+        let key = derive_key("pw", &salt).unwrap();
         let mut blob = encrypt(&key, b"x");
         let bytes = base64::engine::general_purpose::STANDARD.decode(&blob).unwrap();
         let mut v = bytes.clone();
@@ -163,10 +163,10 @@ mod tests {
     #[test]
     fn sentinel_round_trip() {
         let salt = [5u8; 32];
-        let key = derive_key("vault-password", &salt);
+        let key = derive_key("vault-password", &salt).unwrap();
         let s = make_sentinel(&key);
         assert!(verify_sentinel(&key, &s));
-        let other = derive_key("other", &salt);
+        let other = derive_key("other", &salt).unwrap();
         assert!(!verify_sentinel(&other, &s));
     }
 }

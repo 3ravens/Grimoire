@@ -71,12 +71,28 @@ pub fn run_migration_from_legacy_to_new(legacy_root: &Path, new_root: &Path) -> 
     let db_dst_tmp = new_root.join("grimoire.db.partial");
     let db_dst_final = new_root.join("grimoire.db");
 
+    let existed_lancedb = new_root.join("lancedb").exists();
+    let existed_logs = new_root.join("logs").exists();
+    let existed_db_dst_tmp = db_dst_tmp.exists();
+    let existed_db_dst_final = db_dst_final.exists();
+    let existed_sentinel = new_root.join(MIGRATION_SENTINEL_FILE).exists();
+
     let cleanup_new_side = || {
-        let _ = fs::remove_file(&db_dst_tmp);
-        let _ = fs::remove_file(&db_dst_final);
-        let _ = fs::remove_dir_all(new_root.join("lancedb"));
-        let _ = fs::remove_dir_all(new_root.join("logs"));
-        let _ = fs::remove_file(new_root.join(MIGRATION_SENTINEL_FILE));
+        if !existed_db_dst_tmp {
+            let _ = fs::remove_file(&db_dst_tmp);
+        }
+        if !existed_db_dst_final {
+            let _ = fs::remove_file(&db_dst_final);
+        }
+        if !existed_lancedb {
+            let _ = fs::remove_dir_all(new_root.join("lancedb"));
+        }
+        if !existed_logs {
+            let _ = fs::remove_dir_all(new_root.join("logs"));
+        }
+        if !existed_sentinel {
+            let _ = fs::remove_file(new_root.join(MIGRATION_SENTINEL_FILE));
+        }
     };
 
     fs::copy(&db_src, &db_dst_tmp).map_err(|e| {

@@ -864,11 +864,9 @@ pub async fn abandon_vault_reindex(
     pool: State<'_, SqlitePool>,
     gate: State<'_, super::VaultReindexGate>,
 ) -> AppResult<()> {
-    if gate.0.try_lock().is_err() {
-        return Err(AppError::InvalidInput(
-            "Cannot abandon while a re-index is running".to_string(),
-        ));
-    }
+    let _guard = gate.0.try_lock().map_err(|_| {
+        AppError::InvalidInput("Cannot abandon while a re-index is running".to_string())
+    })?;
     clear_vault_reindex_checkpoint(pool.inner()).await
 }
 

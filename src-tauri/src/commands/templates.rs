@@ -256,6 +256,8 @@ pub async fn apply_template_to_note(
 
     let specs = row.map(|r| r.parse_properties()).unwrap_or_default();
 
+    let mut tx = pool.begin().await?;
+
     for spec in &specs {
         if !["text", "number", "date", "boolean", "select"].contains(&spec.r#type.as_str()) {
             continue; // skip malformed specs silently
@@ -266,7 +268,7 @@ pub async fn apply_template_to_note(
             "SELECT MAX(position) FROM property_defs WHERE folder_id = ?",
         )
         .bind(folder_id)
-        .fetch_one(pool.inner())
+        .fetch_one(&mut *tx)
         .await
         .unwrap_or(None);
 
@@ -284,7 +286,7 @@ pub async fn apply_template_to_note(
         .bind(&spec.options)
         .bind(position)
         .bind(template_id)
-        .execute(pool.inner())
+        .execute(&mut *tx)
         .await
         ?;
 
@@ -294,7 +296,7 @@ pub async fn apply_template_to_note(
         )
         .bind(folder_id)
         .bind(&spec.name)
-        .fetch_one(pool.inner())
+        .fetch_one(&mut *tx)
         .await
         ?;
 
@@ -305,7 +307,7 @@ pub async fn apply_template_to_note(
         )
         .bind(template_id)
         .bind(def_id)
-        .execute(pool.inner())
+        .execute(&mut *tx)
         .await
         ?;
 
@@ -315,7 +317,7 @@ pub async fn apply_template_to_note(
         )
         .bind(note_id)
         .bind(def_id)
-        .execute(pool.inner())
+        .execute(&mut *tx)
         .await
         ?;
     }
@@ -324,9 +326,11 @@ pub async fn apply_template_to_note(
     sqlx::query("UPDATE notes SET template_id = ? WHERE id = ?")
         .bind(template_id)
         .bind(note_id)
-        .execute(pool.inner())
+        .execute(&mut *tx)
         .await
         ?;
+
+    tx.commit().await?;
 
     get_property_defs(pool, folder_id).await
 }

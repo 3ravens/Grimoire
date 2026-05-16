@@ -89,7 +89,7 @@ pub(crate) async fn try_unlock_vault(
         .decode(&salt_b64)
         .map_err(|e| format!("corrupt salt: {e}"))?;
 
-    let mut key = crypto::derive_key(password, &salt);
+    let mut key = crypto::derive_key(password, &salt).map_err(|e| e.to_string())?;
 
     if !crypto::verify_sentinel(&key, &sentinel_b64) {
         key.zeroize();
@@ -167,16 +167,18 @@ pub async fn set_vault_password(
 
     // Derive new key.
     let salt = crypto::generate_salt();
-    let mut new_key = crypto::derive_key(&password, &salt);
+    let mut new_key = crypto::derive_key(&password, &salt).map_err(|e| e.to_string())?;
     let sentinel = crypto::make_sentinel(&new_key);
 
     use base64::Engine;
     let salt_b64 = base64::engine::general_purpose::STANDARD.encode(&salt);
 
-    // Re-encrypt all notes.
+    // Re-encrypt all notes, folders, and vault_lock in one transaction.
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+
     let note_rows: Vec<(i64, String, String)> =
         sqlx::query_as("SELECT id, title, content FROM notes")
-            .fetch_all(pool.inner())
+            .fetch_all(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -208,7 +210,7 @@ pub async fn set_vault_password(
             .bind(&new_enc_title)
             .bind(&new_enc_content)
             .bind(id)
-            .execute(pool.inner())
+            .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
     }
@@ -216,7 +218,7 @@ pub async fn set_vault_password(
     // Re-encrypt all folder names.
     let folder_rows: Vec<(i64, String)> =
         sqlx::query_as("SELECT id, name FROM folders WHERE locked = 0")
-            .fetch_all(pool.inner())
+            .fetch_all(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -234,7 +236,7 @@ pub async fn set_vault_password(
         sqlx::query("UPDATE folders SET name = ? WHERE id = ?")
             .bind(&new_enc_name)
             .bind(id)
-            .execute(pool.inner())
+            .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
     }
@@ -245,9 +247,11 @@ pub async fn set_vault_password(
     )
     .bind(&salt_b64)
     .bind(&sentinel)
-    .execute(pool.inner())
+    .execute(&mut *tx)
     .await
     .map_err(|e| e.to_string())?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
 
     // Store new key in memory — drop the guard before any await point.
     {
@@ -292,7 +296,7 @@ pub async fn remove_vault_password(
         .decode(&salt_b64)
         .map_err(|e| format!("corrupt salt: {e}"))?;
 
-    let mut verify_key = crypto::derive_key(&password, &salt);
+    let mut verify_key = crypto::derive_key(&password, &salt).map_err(|e| e.to_string())?;
     if !crypto::verify_sentinel(&verify_key, &sentinel_b64) {
         verify_key.zeroize();
         return Err("wrong_password".to_string());
@@ -308,10 +312,12 @@ pub async fn remove_vault_password(
         }
     };
 
-    // Decrypt all notes back to plaintext.
+    // Decrypt all notes and folders, then remove vault_lock, in one transaction.
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+
     let note_rows: Vec<(i64, String, String)> =
         sqlx::query_as("SELECT id, title, content FROM notes")
-            .fetch_all(pool.inner())
+            .fetch_all(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -328,7 +334,7 @@ pub async fn remove_vault_password(
             .bind(&plain_title)
             .bind(&plain_content)
             .bind(id)
-            .execute(pool.inner())
+            .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
     }
@@ -336,7 +342,7 @@ pub async fn remove_vault_password(
     // Decrypt all folder names.
     let folder_rows: Vec<(i64, String)> =
         sqlx::query_as("SELECT id, name FROM folders WHERE locked = 0")
-            .fetch_all(pool.inner())
+            .fetch_all(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
 
@@ -348,16 +354,18 @@ pub async fn remove_vault_password(
         sqlx::query("UPDATE folders SET name = ? WHERE id = ?")
             .bind(&plain_name)
             .bind(id)
-            .execute(pool.inner())
+            .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
     }
 
     // Delete vault_lock row.
     sqlx::query("DELETE FROM vault_lock WHERE id = 1")
-        .execute(pool.inner())
+        .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
+
+    tx.commit().await.map_err(|e| e.to_string())?;
 
     // Clear the in-memory key.
     let mut key_guard = keys.vault_key.lock().map_err(|e| e.to_string())?;
@@ -392,7 +400,7 @@ pub async fn set_folder_password(
     }
 
     let salt = crypto::generate_salt();
-    let mut new_key = crypto::derive_key(&password, &salt);
+    let mut new_key = crypto::derive_key(&password, &salt).map_err(|e| e.to_string())?;
     let sentinel = crypto::make_sentinel(&new_key);
 
     use base64::Engine;
@@ -403,23 +411,27 @@ pub async fn set_folder_password(
         .await
         .map_err(|e| e.to_string())?;
 
+    let mut all_note_ids: Vec<i64> = Vec::new();
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+
     // Encrypt notes in every folder in the subtree.
     for &fid in &subtree_ids {
         let note_rows: Vec<(i64, String, String)> =
             sqlx::query_as("SELECT id, title, content FROM notes WHERE folder_id = ?")
                 .bind(fid)
-                .fetch_all(pool.inner())
+                .fetch_all(&mut *tx)
                 .await
                 .map_err(|e| e.to_string())?;
 
         for (id, title, content) in &note_rows {
+            all_note_ids.push(*id);
             let enc_title = crypto::encrypt(&new_key, title.as_bytes());
             let enc_content = crypto::encrypt(&new_key, content.as_bytes());
             sqlx::query("UPDATE notes SET title = ?, content = ? WHERE id = ?")
                 .bind(&enc_title)
                 .bind(&enc_content)
                 .bind(id)
-                .execute(pool.inner())
+                .execute(&mut *tx)
                 .await
                 .map_err(|e| e.to_string())?;
         }
@@ -431,14 +443,16 @@ pub async fn set_folder_password(
         .bind(&salt_b64)
         .bind(&sentinel)
         .bind(fid)
-        .execute(pool.inner())
+        .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
+    }
 
-        // Remove notes from LanceDB.
-        for (id, _, _) in &note_rows {
-            crate::vector::notes::remove(&vdb.0, *id).await?;
-        }
+    tx.commit().await.map_err(|e| e.to_string())?;
+
+    // Remove notes from LanceDB after SQLite commit succeeds.
+    for id in all_note_ids {
+        crate::vector::notes::remove(&vdb.0, id).await?;
     }
 
     new_key.zeroize();
@@ -468,7 +482,7 @@ pub async fn remove_folder_password(
         .decode(&salt_b64)
         .map_err(|e| format!("corrupt salt: {e}"))?;
 
-    let mut key = crypto::derive_key(&password, &salt);
+    let mut key = crypto::derive_key(&password, &salt).map_err(|e| e.to_string())?;
     if !crypto::verify_sentinel(&key, &sentinel_b64) {
         key.zeroize();
         return Err("wrong_password".to_string());
@@ -479,11 +493,13 @@ pub async fn remove_folder_password(
         .await
         .map_err(|e| e.to_string())?;
 
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+
     for &fid in &subtree_ids {
         let note_rows: Vec<(i64, String, String)> =
             sqlx::query_as("SELECT id, title, content FROM notes WHERE folder_id = ?")
                 .bind(fid)
-                .fetch_all(pool.inner())
+                .fetch_all(&mut *tx)
                 .await
                 .map_err(|e| e.to_string())?;
 
@@ -500,7 +516,7 @@ pub async fn remove_folder_password(
                 .bind(&plain_title)
                 .bind(&plain_content)
                 .bind(id)
-                .execute(pool.inner())
+                .execute(&mut *tx)
                 .await
                 .map_err(|e| e.to_string())?;
         }
@@ -510,10 +526,12 @@ pub async fn remove_folder_password(
             "UPDATE folders SET locked = 0, salt = NULL, sentinel = NULL WHERE id = ?",
         )
         .bind(fid)
-        .execute(pool.inner())
+        .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
     }
+
+    tx.commit().await.map_err(|e| e.to_string())?;
 
     // All async work is done — now acquire the mutex to update session keys.
     {
@@ -556,7 +574,7 @@ pub async fn unlock_folder(
         .decode(&salt_b64)
         .map_err(|e| format!("corrupt salt: {e}"))?;
 
-    let mut key = crypto::derive_key(&password, &salt);
+    let mut key = crypto::derive_key(&password, &salt).map_err(|e| e.to_string())?;
     if !crypto::verify_sentinel(&key, &sentinel_b64) {
         key.zeroize();
         return Ok(false);
@@ -644,7 +662,7 @@ mod tests {
         let keys = empty_keys();
 
         let salt = crypto::generate_salt();
-        let key = crypto::derive_key("correct-password", &salt);
+        let key = crypto::derive_key("correct-password", &salt).unwrap();
         let sentinel = crypto::make_sentinel(&key);
         let salt_b64 = base64::engine::general_purpose::STANDARD.encode(salt);
 
@@ -667,7 +685,7 @@ mod tests {
         let keys = empty_keys();
 
         let salt = crypto::generate_salt();
-        let key = crypto::derive_key("my-vault-secret", &salt);
+        let key = crypto::derive_key("my-vault-secret", &salt).unwrap();
         let sentinel = crypto::make_sentinel(&key);
         let salt_b64 = base64::engine::general_purpose::STANDARD.encode(salt);
 

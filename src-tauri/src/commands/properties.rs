@@ -168,35 +168,44 @@ pub async fn reorder_property_def(
     id: i64,
     new_position: i64,
 ) -> AppResult<()> {
-    // Get the def's folder_id so we can reorder within that folder.
-    let folder_id: i64 = sqlx::query_scalar(
-        "SELECT folder_id FROM property_defs WHERE id = ?",
+    let mut tx = pool.begin().await?;
+
+    let (folder_id, current_position): (i64, i64) = sqlx::query_as(
+        "SELECT folder_id, position FROM property_defs WHERE id = ?",
     )
     .bind(id)
-    .fetch_one(pool.inner())
-    .await
-    ?;
+    .fetch_one(&mut *tx)
+    .await?;
 
-    // Shift everything at or after the target position up by 1.
-    sqlx::query(
-        "UPDATE property_defs
-         SET position = position + 1
-         WHERE folder_id = ? AND position >= ?",
-    )
-    .bind(folder_id)
-    .bind(new_position)
-    .execute(pool.inner())
-    .await
-    ?;
+    if new_position > current_position {
+        sqlx::query(
+            "UPDATE property_defs SET position = position - 1
+             WHERE folder_id = ?1 AND position > ?2 AND position <= ?3",
+        )
+        .bind(folder_id)
+        .bind(current_position)
+        .bind(new_position)
+        .execute(&mut *tx)
+        .await?;
+    } else if new_position < current_position {
+        sqlx::query(
+            "UPDATE property_defs SET position = position + 1
+             WHERE folder_id = ?1 AND position >= ?2 AND position < ?3",
+        )
+        .bind(folder_id)
+        .bind(new_position)
+        .bind(current_position)
+        .execute(&mut *tx)
+        .await?;
+    }
 
-    // Place our def at the target position.
     sqlx::query("UPDATE property_defs SET position = ? WHERE id = ?")
         .bind(new_position)
         .bind(id)
-        .execute(pool.inner())
-        .await
-        ?;
+        .execute(&mut *tx)
+        .await?;
 
+    tx.commit().await?;
     Ok(())
 }
 
@@ -206,8 +215,15 @@ pub async fn reorder_property_def(
 #[tauri::command]
 pub async fn get_note_properties(
     pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
     note_id: i64,
 ) -> AppResult<Vec<NoteProperty>> {
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
+    let note = store.get_note(note_id).await?;
+    if note.locked {
+        return Ok(vec![]);
+    }
+
     let props = sqlx::query_as::<_, NoteProperty>(
         "SELECT pd.id AS def_id, pd.name, pd.type, pd.options, np.value
          FROM note_properties np
@@ -226,10 +242,33 @@ pub async fn get_note_properties(
 #[tauri::command]
 pub async fn set_note_property(
     pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
     note_id: i64,
     def_id: i64,
     value: String,
 ) -> AppResult<()> {
+    let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
+    let note = store.get_note(note_id).await?;
+    if note.locked {
+        return Err(AppError::Auth("folder_locked".to_string()));
+    }
+
+    let ok: Option<(i64,)> = sqlx::query_as(
+        "SELECT 1 FROM notes n
+         INNER JOIN property_defs pd ON pd.id = ?1 AND pd.folder_id = n.folder_id
+         WHERE n.id = ?2",
+    )
+    .bind(def_id)
+    .bind(note_id)
+    .fetch_optional(pool.inner())
+    .await?;
+
+    if ok.is_none() {
+        return Err(AppError::InvalidInput(
+            "Property definition does not belong to this note's folder.".into(),
+        ));
+    }
+
     sqlx::query(
         "INSERT INTO note_properties (note_id, def_id, value) VALUES (?, ?, ?)
          ON CONFLICT(note_id, def_id) DO UPDATE SET value = excluded.value",

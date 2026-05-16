@@ -63,6 +63,59 @@ fn audit_like_pattern(search: &Option<String>) -> Option<String> {
         .map(|s| format!("%{s}%"))
 }
 
+/// Folder IDs that are password-locked and have no session key this request.
+/// Audit rows referencing notes in these folders are withheld (same rule as export).
+async fn audit_locked_folder_blocklist(
+    pool: &SqlitePool,
+    keys: &SharedKeyStore,
+) -> AppResult<Vec<i64>> {
+    let locked: Vec<i64> = sqlx::query_scalar("SELECT id FROM folders WHERE locked = 1")
+        .fetch_all(pool)
+        .await?;
+
+    let unlocked = keys
+        .folder_keys
+        .lock()
+        .map_err(|e| AppError::InvalidInput(e.to_string()))?;
+
+    Ok(locked
+        .into_iter()
+        .filter(|id| !unlocked.contains_key(&id))
+        .collect())
+}
+
+/// Map note_id → (folder_id, folder_has_password) for export batching.
+async fn note_folder_locked_map(
+    pool: &SqlitePool,
+    note_ids: &HashSet<i64>,
+) -> AppResult<HashMap<i64, (Option<i64>, bool)>> {
+    const CHUNK: usize = 400;
+    let mut note_folder_locked: HashMap<i64, (Option<i64>, bool)> = HashMap::new();
+    if note_ids.is_empty() {
+        return Ok(note_folder_locked);
+    }
+    let ids: Vec<i64> = note_ids.iter().copied().collect();
+    for chunk in ids.chunks(CHUNK) {
+        let mut qb = QueryBuilder::new(
+            "SELECT n.id, n.folder_id, COALESCE(f.locked, 0) AS folder_locked \
+             FROM notes n LEFT JOIN folders f ON n.folder_id = f.id WHERE n.id IN (",
+        );
+        {
+            let mut sep = qb.separated(", ");
+            for id in chunk {
+                sep.push_bind(id);
+            }
+        }
+        qb.push(")");
+        let pairs: Vec<(i64, Option<i64>, i64)> =
+            qb.build_query_as().fetch_all(pool).await?;
+        for (nid, folder_id, locked_flag) in pairs {
+            note_folder_locked.insert(nid, (folder_id, locked_flag != 0));
+        }
+    }
+    Ok(note_folder_locked)
+}
+
 fn created_at_iso_utc(secs: i64) -> String {
     chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0)
         .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
@@ -92,6 +145,7 @@ pub struct AuditExportResult {
 #[tauri::command]
 pub async fn get_audit_log(
     pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
     page: Option<i64>,
     page_size: Option<i64>,
     action_filter: Option<String>,
@@ -101,28 +155,39 @@ pub async fn get_audit_log(
     let page_size = page_size.unwrap_or(25).clamp(1, 100);
     let offset    = (page - 1) * page_size;
 
+    let blocklist = audit_locked_folder_blocklist(pool.inner(), keys.inner()).await?;
+
     let action_in = action_group_to_in(action_filter.as_deref());
     let like_pat = audit_like_pattern(&search);
 
-    // `? IS NULL` short-circuits when like_pat is None, skipping the LIKE checks.
-    let sql = format!(
-        "SELECT id, action, resource_type, resource_id, resource_name, detail, created_at
-         FROM audit_log
-         WHERE action IN ({action_in})
-           AND (? IS NULL OR resource_name LIKE ? OR detail LIKE ?)
-         ORDER BY created_at DESC
-         LIMIT ? OFFSET ?"
+    let mut sql = format!(
+        "SELECT al.id, al.action, al.resource_type, al.resource_id, al.resource_name, al.detail, al.created_at
+         FROM audit_log al
+         WHERE al.action IN ({action_in})
+           AND (? IS NULL OR al.resource_name LIKE ? OR al.detail LIKE ?)",
     );
+    if !blocklist.is_empty() {
+        sql.push_str(
+            " AND NOT (LOWER(COALESCE(al.resource_type, '')) = 'note' \
+               AND al.resource_id IS NOT NULL \
+               AND EXISTS (SELECT 1 FROM notes n WHERE n.id = al.resource_id AND n.folder_id IN (",
+        );
+        sql.push_str(&vec!["?"; blocklist.len()].join(", "));
+        sql.push_str(")))");
+    }
+    sql.push_str(" ORDER BY al.created_at DESC, al.id DESC LIMIT ? OFFSET ?");
 
-    sqlx::query_as::<_, AuditEntry>(&sql)
+    let mut q = sqlx::query_as::<_, AuditEntry>(&sql);
+    q = q
         .bind(like_pat.as_deref())
         .bind(like_pat.as_deref())
-        .bind(like_pat.as_deref())
-        .bind(page_size)
-        .bind(offset)
-        .fetch_all(pool.inner())
-        .await
-        .map_err(Into::into)
+        .bind(like_pat.as_deref());
+    for id in &blocklist {
+        q = q.bind(id);
+    }
+    q = q.bind(page_size).bind(offset);
+
+    q.fetch_all(pool.inner()).await.map_err(Into::into)
 }
 
 /// Count the total number of entries matching the same filters as `get_audit_log`.
@@ -130,26 +195,41 @@ pub async fn get_audit_log(
 #[tauri::command]
 pub async fn get_audit_log_count(
     pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
     action_filter: Option<String>,
     search: Option<String>,
 ) -> AppResult<i64> {
+    let blocklist = audit_locked_folder_blocklist(pool.inner(), keys.inner()).await?;
+
     let action_in = action_group_to_in(action_filter.as_deref());
 
     let like_pat = audit_like_pattern(&search);
 
-    let sql = format!(
-        "SELECT COUNT(*) FROM audit_log
-         WHERE action IN ({action_in})
-           AND (? IS NULL OR resource_name LIKE ? OR detail LIKE ?)"
+    let mut sql = format!(
+        "SELECT COUNT(*) FROM audit_log al
+         WHERE al.action IN ({action_in})
+           AND (? IS NULL OR al.resource_name LIKE ? OR al.detail LIKE ?)",
     );
+    if !blocklist.is_empty() {
+        sql.push_str(
+            " AND NOT (LOWER(COALESCE(al.resource_type, '')) = 'note' \
+               AND al.resource_id IS NOT NULL \
+               AND EXISTS (SELECT 1 FROM notes n WHERE n.id = al.resource_id AND n.folder_id IN (",
+        );
+        sql.push_str(&vec!["?"; blocklist.len()].join(", "));
+        sql.push_str(")))");
+    }
 
-    sqlx::query_scalar::<_, i64>(&sql)
+    let mut q = sqlx::query_scalar::<_, i64>(&sql);
+    q = q
         .bind(like_pat.as_deref())
         .bind(like_pat.as_deref())
-        .bind(like_pat.as_deref())
-        .fetch_one(pool.inner())
-        .await
-        .map_err(Into::into)
+        .bind(like_pat.as_deref());
+    for id in &blocklist {
+        q = q.bind(id);
+    }
+
+    q.fetch_one(pool.inner()).await.map_err(Into::into)
 }
 
 /// Permanently delete all audit log entries.
@@ -189,7 +269,7 @@ pub async fn export_audit_log(
          FROM audit_log
          WHERE action IN ({action_in})
            AND (? IS NULL OR resource_name LIKE ? OR detail LIKE ?)
-         ORDER BY created_at DESC"
+         ORDER BY created_at DESC, id DESC"
     );
 
     let rows: Vec<AuditEntry> = sqlx::query_as::<_, AuditEntry>(&sql)
@@ -210,24 +290,8 @@ pub async fn export_audit_log(
         .filter_map(|r| r.resource_id)
         .collect();
 
-    let mut note_folder_locked: HashMap<i64, (Option<i64>, bool)> = HashMap::new();
-    if !note_ids.is_empty() {
-        let mut qb = QueryBuilder::new(
-            "SELECT n.id, n.folder_id, COALESCE(f.locked, 0) AS folder_locked \
-             FROM notes n LEFT JOIN folders f ON n.folder_id = f.id WHERE n.id IN (",
-        );
-        {
-            let mut sep = qb.separated(", ");
-            for id in &note_ids {
-                sep.push_bind(id);
-            }
-        }
-        qb.push(")");
-        let pairs: Vec<(i64, Option<i64>, i64)> = qb.build_query_as().fetch_all(pool.inner()).await?;
-        for (nid, folder_id, locked_flag) in pairs {
-            note_folder_locked.insert(nid, (folder_id, locked_flag != 0));
-        }
-    }
+    let note_folder_locked: HashMap<i64, (Option<i64>, bool)> =
+        note_folder_locked_map(pool.inner(), &note_ids).await?;
 
     let folder_keys = keys.folder_keys.lock().map_err(|e| AppError::InvalidInput(e.to_string()))?;
 

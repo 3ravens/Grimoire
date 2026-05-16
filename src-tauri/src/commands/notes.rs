@@ -20,8 +20,10 @@ use std::collections::HashMap;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use tauri::State;
+use crate::AccessFilter;
 use crate::SharedKeyStore;
 use crate::{AppError, AppResult, EncryptedNoteStore};
+use crate::vector::VectorDb;
 use super::{Note, Folder};
 
 #[derive(Debug, Serialize)]
@@ -254,14 +256,39 @@ pub async fn rename_note(
 
 /// Delete a note. Returns nothing on success.
 #[tauri::command]
-pub async fn delete_note(pool: State<'_, SqlitePool>, id: i64) -> AppResult<()> {
+pub async fn delete_note(
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
+    vdb: State<'_, VectorDb>,
+    id: i64,
+) -> AppResult<()> {
+    let row: Option<(Option<i64>,)> =
+        sqlx::query_as("SELECT folder_id FROM notes WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool.inner())
+            .await?;
+
+    let (folder_id,) = row.ok_or_else(|| AppError::NotFound(format!("Note {id} not found")))?;
+
+    let filter = AccessFilter::load(pool.inner(), keys.inner().as_ref()).await?;
+    if !filter.is_accessible(folder_id) {
+        return Err(AppError::Auth("folder_locked".to_string()));
+    }
+
     sqlx::query("DELETE FROM notes WHERE id = ?")
         .bind(id)
         .execute(pool.inner())
         .await
         ?;
 
-    super::search::fts_delete(pool.inner(), id).await;
+    super::search::fts_delete(pool.inner(), id)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+    crate::vector::notes::remove(&vdb.0, id)
+        .await
+        .map_err(AppError::VectorStore)?;
+
     let _ = crate::audit::log_event(
         pool.inner(), "note_delete", Some("note"),
         Some(id), None, None,
@@ -478,10 +505,14 @@ pub async fn export_notes(
 ) -> AppResult<u32> {
     let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
 
-    // Build a map from folder ID to its display name (already decrypted).
-    let folder_names: HashMap<i64, String> = store.list_folders().await?
-        .into_iter()
-        .map(|f| (f.id, if f.locked { String::new() } else { f.name }))
+    let folders = store.list_folders().await?;
+    let parent_by_id: HashMap<i64, Option<i64>> =
+        folders.iter().map(|f| (f.id, f.parent_id)).collect();
+
+    // Decrypted names for unlocked folders; locked folders use empty (fallback when building paths).
+    let display_names: HashMap<i64, String> = folders
+        .iter()
+        .map(|f| (f.id, if f.locked { String::new() } else { f.name.clone() }))
         .collect();
 
     // Fetch all notes; locked ones surface with note.locked = true.
@@ -490,18 +521,7 @@ pub async fn export_notes(
     let dest = PathBuf::from(&dest_dir);
 
     // Wrap everything in a timestamped subfolder so repeated exports don't collide.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = now.as_secs();
-    // Format as YYYY-MM-DD using seconds since epoch.
-    let days  = secs / 86400;
-    let y = (days / 365 + 1970) as u32;
-    // Rough but good enough for a folder name; no external crate needed.
-    let month_day = days % 365;
-    let m = (month_day / 30 + 1).min(12) as u32;
-    let d = (month_day % 30 + 1).min(31) as u32;
-    let date_str = format!("{d:02}-{m:02}-{y:04}");
+    let date_str = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let export_root = dest.join(format!("Grimoire - export {date_str}"));
     let dest = export_root;
     let mut exported: u32 = 0;
@@ -511,16 +531,9 @@ pub async fn export_notes(
             continue; // skip — no key available
         }
 
-        // Resolve the output directory for this note.
+        // Resolve the output directory for this note (full ancestor chain).
         let out_dir = if let Some(fid) = note.folder_id {
-            let folder_name = folder_names
-                .get(&fid)
-                .cloned()
-                .filter(|n| !n.is_empty())
-                .unwrap_or_else(|| format!("folder_{fid}"));
-            // Sanitise the folder name for use as a directory name.
-            let safe = sanitise_path_component(&folder_name);
-            dest.join(safe)
+            dest.join(folder_export_relpath(fid, &parent_by_id, &display_names))
         } else {
             dest.clone()
         };
@@ -665,6 +678,29 @@ pub async fn log_note_export_pdf_print(
     )
     .await;
     Ok(())
+}
+
+/// Build `ancestor/.../leaf` under the export root from folder parent links.
+fn folder_export_relpath(
+    mut folder_id: i64,
+    parent_by_id: &HashMap<i64, Option<i64>>,
+    display_names: &HashMap<i64, String>,
+) -> PathBuf {
+    let mut comps: Vec<String> = Vec::new();
+    for _ in 0..512 {
+        let raw = display_names
+            .get(&folder_id)
+            .cloned()
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| format!("folder_{folder_id}"));
+        comps.push(sanitise_path_component(&raw));
+        match parent_by_id.get(&folder_id).copied() {
+            Some(Some(pid)) => folder_id = pid,
+            _ => break,
+        }
+    }
+    comps.reverse();
+    comps.into_iter().fold(PathBuf::new(), |acc, c| acc.join(c))
 }
 
 /// Strip characters that are illegal in directory or file names on Windows,

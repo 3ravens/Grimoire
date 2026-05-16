@@ -385,6 +385,31 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         /** @type {(() => void)[]} */
         let unsubs = [];
 
+        // Tab persistence must register `$effect` synchronously (same component
+        // context). Calling `setupPersistence()` after `await show()` can strand
+        // startup before `checkLockState()` — UI stuck on "Checking vault…".
+        ts.setupPersistence();
+
+        // Startup path first — do not block on event listener registration.
+        (async () => {
+            await getCurrentWindow().show();
+            await vault.checkLockState();
+
+            if (!vault.vaultLocked) {
+                await refreshInstallationWizardFromBackend();
+                if (!installationWizardOpen) {
+                    await loadMainShellAfterUnlock();
+                }
+            } else {
+                wizardCheckDone = true;
+            }
+
+            await tick();
+            if (wizardCheckDone && !installationWizardOpen) {
+                window.__GRIMOIRE_PERF_READY__ = true;
+            }
+        })();
+
         (async () => {
             try {
                 unsubs.push(
@@ -447,26 +472,6 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
             }
         };
         window.addEventListener("grimoire:navigate-note", onNavigateNote);
-
-        (async () => {
-            ts.setupPersistence();
-            await vault.checkLockState();
-
-            if (!vault.vaultLocked) {
-                await refreshInstallationWizardFromBackend();
-                if (!installationWizardOpen) {
-                    await loadMainShellAfterUnlock();
-                }
-            } else {
-                wizardCheckDone = true;
-            }
-
-            await tick();
-            await getCurrentWindow().show();
-            if (wizardCheckDone && !installationWizardOpen) {
-                window.__GRIMOIRE_PERF_READY__ = true;
-            }
-        })();
 
         return () => {
             cancelled = true;
@@ -868,12 +873,19 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 <svelte:window onkeydown={(e) => kbd.handle(e)} />
 <svelte:document onmousemove={layout.onDragMove} onmouseup={layout.onDragEnd} />
 
-{#if !vault.lockCheckDone}
-    <!-- Blank while we check vault lock state to avoid a flash of content -->
+{#if !vault.lockCheckDone || (!vault.vaultLocked && !wizardCheckDone)}
+    <div class="startup-loading" role="status" aria-live="polite">
+        <p class="startup-loading-title">Grimoire</p>
+        <p class="startup-loading-detail">
+            {#if !vault.lockCheckDone}
+                Checking vault…
+            {:else}
+                Preparing workspace…
+            {/if}
+        </p>
+    </div>
 {:else if vault.vaultLocked}
     <LockScreen onUnlocked={onVaultUnlocked} />
-{:else if !wizardCheckDone}
-    <!-- Blank until `wizard_status` returns (unlocked startup) -->
 {:else if installationWizardOpen}
     <InstallationWizard onCompleted={onInstallationWizardDone} />
 {:else}

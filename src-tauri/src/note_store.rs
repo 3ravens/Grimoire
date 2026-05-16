@@ -311,7 +311,7 @@ impl<'a> EncryptedNoteStore<'a> {
             .await?
         };
 
-        let filter = AccessFilter::load(self.pool, self.keys).await;
+        let filter = AccessFilter::load(self.pool, self.keys).await?;
 
         Ok(rows.into_iter().map(|row| {
             let fl = !filter.is_accessible(row.folder_id);
@@ -332,7 +332,7 @@ impl<'a> EncryptedNoteStore<'a> {
         .fetch_all(self.pool)
         .await?;
 
-        let filter = AccessFilter::load(self.pool, self.keys).await;
+        let filter = AccessFilter::load(self.pool, self.keys).await?;
 
         Ok(rows.into_iter().map(|row| {
             let fl = !filter.is_accessible(row.folder_id);
@@ -356,7 +356,7 @@ impl<'a> EncryptedNoteStore<'a> {
         .fetch_all(self.pool)
         .await?;
 
-        let filter = AccessFilter::load(self.pool, self.keys).await;
+        let filter = AccessFilter::load(self.pool, self.keys).await?;
 
         Ok(rows.into_iter().map(|row| {
             let fl = !filter.is_accessible(row.folder_id);
@@ -366,6 +366,17 @@ impl<'a> EncryptedNoteStore<'a> {
 
 
     pub async fn create_note(&self, title: &str, folder_id: Option<i64>) -> AppResult<Note> {
+        let folder_locked_col = if let Some(fid) = folder_id {
+            sqlx::query_scalar::<_, i64>("SELECT locked FROM folders WHERE id = ?")
+                .bind(fid)
+                .fetch_optional(self.pool)
+                .await?
+                .unwrap_or(0) != 0
+        } else {
+            false
+        };
+        self.check_writable(folder_id, folder_locked_col)?;
+
         let stored_title = self.encrypt_str(folder_id, title);
 
         let row = sqlx::query_as::<_, NoteRow>(
@@ -505,14 +516,10 @@ impl<'a> EncryptedNoteStore<'a> {
 
     /// Rename a note (title only).
     pub async fn rename_note(&self, id: i64, name: &str) -> AppResult<Note> {
-        let current: Option<(Option<i64>,)> =
-            sqlx::query_as("SELECT folder_id FROM notes WHERE id = ?")
-                .bind(id)
-                .fetch_optional(self.pool)
-                .await?;
+        let (row, folder_locked_col) = self.get_note_row_with_lock(id).await?;
+        self.check_writable(row.folder_id, folder_locked_col)?;
 
-        let folder_id = current.and_then(|(fid,)| fid);
-        let stored_title = self.encrypt_str(folder_id, name);
+        let stored_title = self.encrypt_str(row.folder_id, name);
 
         let row = sqlx::query_as::<_, NoteRow>(
             "UPDATE notes SET title = ?, updated_at = unixepoch() WHERE id = ?
@@ -523,7 +530,7 @@ impl<'a> EncryptedNoteStore<'a> {
         .fetch_one(self.pool)
         .await?;
 
-        Ok(self.to_note(row, false))
+        Ok(self.to_note(row, folder_locked_col))
     }
 
     /// Duplicate a note into the same folder, appending " (copy)" to the title.
@@ -572,18 +579,42 @@ impl<'a> EncryptedNoteStore<'a> {
 
     /// Move a note to a different folder (or to no folder when `folder_id` is None).
     pub async fn move_note(&self, id: i64, folder_id: Option<i64>) -> AppResult<Note> {
+        let (row, src_locked_col) = self.get_note_row_with_lock(id).await?;
+        self.check_writable(row.folder_id, src_locked_col)?;
+
+        let dest_locked_col = if let Some(fid) = folder_id {
+            sqlx::query_scalar::<_, i64>("SELECT locked FROM folders WHERE id = ?")
+                .bind(fid)
+                .fetch_optional(self.pool)
+                .await?
+                .unwrap_or(0) != 0
+        } else {
+            false
+        };
+        self.check_writable(folder_id, dest_locked_col)?;
+
+        let plain = self.to_note(row, src_locked_col);
+        if plain.locked {
+            return Err(AppError::Auth("folder_locked".to_string()));
+        }
+
+        let stored_title = self.encrypt_str(folder_id, &plain.title);
+        let stored_content = self.encrypt_str(folder_id, &plain.content);
+
         let row = sqlx::query_as::<_, NoteRow>(
             "UPDATE notes
-             SET folder_id = ?, updated_at = unixepoch()
+             SET title = ?, content = ?, folder_id = ?, updated_at = unixepoch()
              WHERE id = ?
              RETURNING id, title, content, folder_id, created_at, updated_at",
         )
+        .bind(&stored_title)
+        .bind(&stored_content)
         .bind(folder_id)
         .bind(id)
         .fetch_one(self.pool)
         .await?;
 
-        Ok(self.to_note(row, false))
+        Ok(self.to_note(row, dest_locked_col))
     }
 
     /// Delete a note by id.
@@ -731,7 +762,7 @@ impl<'a> EncryptedNoteStore<'a> {
         }
         let rows = q.fetch_all(self.pool).await?;
 
-        let filter = AccessFilter::load(self.pool, self.keys).await;
+        let filter = AccessFilter::load(self.pool, self.keys).await?;
         let mut map = HashMap::new();
         for (id, raw_title, folder_id) in rows {
             if !filter.is_accessible(folder_id) {

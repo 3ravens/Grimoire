@@ -284,18 +284,24 @@ pub async fn seed_test_vault_inner(
             picked.insert(dp.tags[rng.gen_range(0..dp.tags.len())]);
         }
         for tag_name in picked {
+            if let Err(e) = sqlx::query("INSERT OR IGNORE INTO tags (name) VALUES (?)")
+                .bind(tag_name)
+                .execute(pool)
+                .await
+            {
+                errors.push(format!("tag insert '{tag_name}' nid={note_id}: {e}"));
+                continue;
+            }
             if let Err(e) = sqlx::query(
-                "INSERT OR IGNORE INTO tags (name) VALUES (?); \
-                 INSERT OR IGNORE INTO note_tags (note_id, tag_id) \
+                "INSERT OR IGNORE INTO note_tags (note_id, tag_id) \
                  SELECT ?, id FROM tags WHERE name = ?",
             )
-            .bind(tag_name)
             .bind(note_id)
             .bind(tag_name)
             .execute(pool)
             .await
             {
-                errors.push(format!("tag '{tag_name}' nid={note_id}: {e}"));
+                errors.push(format!("note_tags '{tag_name}' nid={note_id}: {e}"));
             } else {
                 tag_count += 1;
             }
@@ -852,7 +858,13 @@ Threads carried from [[Weekly review — 5 May]], [[Weekly review — 28 April]]
     };
 
     if let Err(e) =
-        crate::commands::tags::sync_note_relations_pool(pool, flagship_id, FLAGSHIP_CONTENT).await
+        crate::commands::tags::sync_note_relations_pool(
+            pool,
+            &crate::bench_shared_keystore(),
+            flagship_id,
+            FLAGSHIP_CONTENT,
+        )
+        .await
     {
         errors.push(format!("weekly recap flagship relations: {e}"));
     }
@@ -867,8 +879,13 @@ Threads carried from [[Weekly review — 5 May]], [[Weekly review — 28 April]]
             errors.push(format!("weekly recap stub body id={pid}: {e}"));
             continue;
         }
-        if let Err(e) =
-            crate::commands::tags::sync_note_relations_pool(pool, pid, STUB_BACKLINK).await
+        if let Err(e) = crate::commands::tags::sync_note_relations_pool(
+            pool,
+            &crate::bench_shared_keystore(),
+            pid,
+            STUB_BACKLINK,
+        )
+        .await
         {
             errors.push(format!("weekly recap stub relations id={pid}: {e}"));
         }

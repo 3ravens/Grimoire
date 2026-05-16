@@ -47,11 +47,12 @@ pub(crate) async fn fts_upsert(pool: &SqlitePool, id: i64, title: &str, content:
 }
 
 /// Remove a note from the FTS index. Called on note deletion.
-pub(crate) async fn fts_delete(pool: &SqlitePool, id: i64) {
-    let _ = sqlx::query("DELETE FROM notes_fts WHERE rowid = ?")
+pub(crate) async fn fts_delete(pool: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM notes_fts WHERE rowid = ?")
         .bind(id)
         .execute(pool)
-        .await;
+        .await?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +137,7 @@ pub async fn fts_search_inner(
     // Secondary filter: exclude notes in folders that are currently locked.
     // FTS should not contain these (fts_upsert skips locked notes), but we
     // guard here in case of a race or stale entry.
-    let filter = AccessFilter::load(pool, keys).await;
+    let filter = AccessFilter::load(pool, keys).await?;
 
     let results = raw
         .into_iter()
@@ -228,7 +229,7 @@ pub async fn combined_search(
     };
 
     let (fts_rows, semantic_matches) = tokio::join!(fts_fut, semantic_fut);
-    let fts_rows = fts_rows.unwrap_or_default();
+    let fts_rows = fts_rows?;
     let semantic_matches = semantic_matches.unwrap_or_default();
 
     use std::collections::HashMap;
@@ -470,7 +471,7 @@ mod tests {
         .unwrap();
 
         fts_upsert(&pool, note_id, "T", "body").await;
-        fts_delete(&pool, note_id).await;
+        fts_delete(&pool, note_id).await.unwrap();
 
         let cnt: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notes_fts WHERE rowid = ?")
             .bind(note_id)
@@ -489,8 +490,9 @@ mod tests {
             .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
 
+        // locked=1 requires non-null salt/sentinel (folders_lock_chk_* in migration 0020).
         let folder_id: i64 = sqlx::query_scalar(
-            "INSERT INTO folders (name, locked) VALUES ('secret', 1) RETURNING id",
+            "INSERT INTO folders (name, locked, salt, sentinel) VALUES ('secret', 1, 'testsalt', 'testsentinel') RETURNING id",
         )
         .fetch_one(&pool)
         .await
@@ -528,7 +530,7 @@ mod tests {
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
 
         let folder_id: i64 = sqlx::query_scalar(
-            "INSERT INTO folders (name, locked) VALUES ('secret', 1) RETURNING id",
+            "INSERT INTO folders (name, locked, salt, sentinel) VALUES ('secret', 1, 'testsalt', 'testsentinel') RETURNING id",
         )
         .fetch_one(&pool)
         .await
@@ -588,7 +590,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        fts_delete(&pool, note_id).await;
+        fts_delete(&pool, note_id).await.unwrap();
 
         let cnt: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notes_fts WHERE rowid = ?")
             .bind(note_id)

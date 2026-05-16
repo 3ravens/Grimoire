@@ -9,20 +9,24 @@ async fn update_note_rejects_locked_folder_without_key() {
     let ks = empty_keystore();
 
     let folder_id: i64 = sqlx::query_scalar(
-        "INSERT INTO folders (name, locked) VALUES ('L', 1) RETURNING id",
+        "INSERT INTO folders (name, locked, salt, sentinel) VALUES ('L', 1, 'testsalt', 'testsentinel') RETURNING id",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
 
     let store = EncryptedNoteStore::new(&pool, &ks);
-    let note = store
-        .create_note("T", Some(folder_id))
-        .await
-        .unwrap();
+    // create_note also checks writability — seed a row directly to exercise update_note.
+    let note_id: i64 = sqlx::query_scalar(
+        "INSERT INTO notes (title, content, folder_id) VALUES ('T', 'body', ?) RETURNING id",
+    )
+    .bind(folder_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
 
     let err = store
-        .update_note(note.id, "T2", "body2")
+        .update_note(note_id, "T2", "body2")
         .await
         .expect_err("write must fail");
     match err {
@@ -37,7 +41,7 @@ async fn create_get_round_trip_with_folder_encryption_key() {
     let ks = empty_keystore();
 
     let folder_id: i64 = sqlx::query_scalar(
-        "INSERT INTO folders (name, locked) VALUES ('secret', 1) RETURNING id",
+        "INSERT INTO folders (name, locked, salt, sentinel) VALUES ('secret', 1, 'testsalt', 'testsentinel') RETURNING id",
     )
     .fetch_one(&pool)
     .await

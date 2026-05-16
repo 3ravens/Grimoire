@@ -114,7 +114,9 @@ fn pdf_to_scan_extract(path: &Path) -> AppResult<ScanExtract> {
 fn extract_csv(path: &Path) -> AppResult<ScanExtract> {
     let bytes = std::fs::read(path)?;
     let decoded = decode_bytes_auto_detect(&bytes);
-    let mut rdr = csv::Reader::from_reader(decoded.as_bytes());
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .from_reader(decoded.as_bytes());
     let mut rows: Vec<String> = Vec::new();
     for result in rdr.records() {
         let record = result.map_err(|e| AppError::Io(e.to_string()))?;

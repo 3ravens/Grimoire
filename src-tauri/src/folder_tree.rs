@@ -27,7 +27,7 @@ pub async fn folder_subtree_ids(pool: &SqlitePool, folder_id: i64) -> AppResult<
     let rows: Vec<(i64,)> = sqlx::query_as(
         "WITH RECURSIVE sub(id) AS (
              SELECT id FROM folders WHERE id = ?
-             UNION ALL
+             UNION
              SELECT f.id FROM folders f JOIN sub ON f.parent_id = sub.id
          )
          SELECT id FROM sub",

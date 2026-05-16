@@ -46,3 +46,27 @@
 @import './lib/styles/themes/theme-defaults.css';
 @import './lib/styles/themes/theme-spellbook.css';
 @import './lib/styles/themes/theme-matrix.css';
+
+.startup-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  gap: 0.5rem;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.startup-loading-title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.startup-loading-detail {
+  margin: 0;
+  font-size: 0.875rem;
+  opacity: 0.85;
+}

@@ -133,9 +133,46 @@ see the app documentation for old folder names."
                     },
                 );
 
-                let pool = db::init_db(&app_handle)
-                    .await
-                    .expect("failed to initialise database");
+                let grimoire_db = app_handle
+                    .path()
+                    .app_data_dir()
+                    .ok()
+                    .map(|dir| dir.join("grimoire.db"));
+
+                let pool = db::init_db(&app_handle).await.unwrap_or_else(|e| {
+                    let msg = e.to_string();
+                    let hint = if msg.contains("has been modified") {
+                        let path_ps = grimoire_db
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| "%APPDATA%\\com.grimoire.app\\grimoire.db".to_string());
+                        let wal_ps = grimoire_db
+                            .as_ref()
+                            .map(|p| format!("{}-wal", p.display()))
+                            .unwrap_or_default();
+                        let shm_ps = grimoire_db
+                            .as_ref()
+                            .map(|p| format!("{}-shm", p.display()))
+                            .unwrap_or_default();
+                        format!(
+                            "\n\nThat means this database was migrated with an older copy of a migration file than \
+what is in your source tree now (SQLx stores a checksum per version).\n\
+Dev fix: quit Grimoire, delete the SQLite files below, then start again (migrations re-run).\n\
+  Main DB: {path_ps}\n\
+  WAL:     {wal_ps}\n\
+  SHM:     {shm_ps}\n\
+PowerShell (copy/paste):\n\
+  Remove-Item -LiteralPath \"{path_ps}\" -Force -ErrorAction SilentlyContinue; \
+Remove-Item -LiteralPath \"{wal_ps}\" -Force -ErrorAction SilentlyContinue; \
+Remove-Item -LiteralPath \"{shm_ps}\" -Force -ErrorAction SilentlyContinue\n\
+To keep this database: repair `_sqlx_migrations.checksum` for the listed migration version, or restore the migration \
+SQL file to the exact bytes that were applied originally."
+                        )
+                    } else {
+                        String::new()
+                    };
+                    panic!("failed to initialise database: {msg}{hint}");
+                });
                 // Audit retention (best-effort; never blocks startup on failure).
                 crate::audit::prune_if_configured(&pool).await;
                 let pool_for_fts = pool.clone();
@@ -160,17 +197,6 @@ see the app documentation for old folder names."
                     commands::search::fts_initial_sync(&pool_for_fts).await;
                 });
 
-                let vdb = vector::init(&app_handle)
-                    .await
-                    .expect("failed to initialise vector database");
-                let vdb_for_wiki_fts = vdb.clone();
-                app_handle.manage(vector::VectorDb(vdb));
-
-                tauri::async_runtime::spawn(async move {
-                    commands::wikipedia_fts_initial_sync(&pool_for_wiki_fts, &vdb_for_wiki_fts)
-                        .await;
-                });
-
                 app_handle.manage(SharedKeyStore::new(KeyStore {
                     vault_key: Mutex::new(None),
                     folder_keys: Mutex::new(HashMap::new()),
@@ -181,7 +207,32 @@ see the app documentation for old folder names."
                 app_handle.manage(commands::CancelMap::new());
                 app_handle.manage(commands::FileScanCancelMap::new());
                 app_handle.manage(commands::VaultReindexGate::new());
+
+                // LanceDB open can be slow on large or legacy stores; do not block the window.
+                let app_handle_vdb = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    match vector::init(&app_handle_vdb).await {
+                        Ok(vdb) => {
+                            let vdb_for_wiki_fts = vdb.clone();
+                            app_handle_vdb.manage(vector::VectorDb(vdb));
+                            commands::wikipedia_fts_initial_sync(
+                                &pool_for_wiki_fts,
+                                &vdb_for_wiki_fts,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "vector database init failed (semantic search unavailable until restart): {e}"
+                            );
+                        }
+                    }
+                });
             });
+
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+            }
 
             Ok(())
         });

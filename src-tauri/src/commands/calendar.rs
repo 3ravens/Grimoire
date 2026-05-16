@@ -125,6 +125,8 @@ fn extract_leading_year(s: &str) -> Option<i32> {
 /// Best-effort natural-language date, e.g. "5th of may 2026" or "may 5 2026".
 fn parse_natural_language_date(text: &str) -> Option<NaiveDate> {
     let lower = text.to_lowercase();
+    let mut best: Option<(usize, NaiveDate)> = None;
+
     for &(month_name, month) in MONTH_NAMES {
         let Some(mpos) = lower.find(month_name) else {
             continue;
@@ -132,9 +134,19 @@ fn parse_natural_language_date(text: &str) -> Option<NaiveDate> {
         let before = &lower[..mpos];
         let after = lower[mpos + month_name.len()..].trim_start();
 
+        let try_date = |day: u32, year: i32| {
+            NaiveDate::from_ymd_opt(year, month, day).map(|d| (mpos, d))
+        };
+
         if let Some(day) = extract_trailing_day(before) {
             if let Some(year) = extract_leading_year(after) {
-                return NaiveDate::from_ymd_opt(year, month, day);
+                if let Some(pair) = try_date(day, year) {
+                    best = Some(match best {
+                        None => pair,
+                        Some((bp, _)) if pair.0 < bp => pair,
+                        Some(b) => b,
+                    });
+                }
             }
         }
         if let Some(day) = extract_leading_day(after) {
@@ -145,11 +157,18 @@ fn parse_natural_language_date(text: &str) -> Option<NaiveDate> {
                 .trim_start()
                 .to_string();
             if let Some(year) = extract_leading_year(&rest) {
-                return NaiveDate::from_ymd_opt(year, month, day);
+                if let Some(pair) = try_date(day, year) {
+                    best = Some(match best {
+                        None => pair,
+                        Some((bp, _)) if pair.0 < bp => pair,
+                        Some(b) => b,
+                    });
+                }
             }
         }
     }
-    None
+
+    best.map(|(_, d)| d)
 }
 
 struct DateMatch {

@@ -18,15 +18,69 @@
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use tauri::{AppHandle, Manager};
 
-pub async fn init_db(app: &AppHandle) -> Result<SqlitePool, sqlx::Error> {
+/// Errors resolving paths, creating directories, or opening/migrating SQLite.
+#[derive(Debug)]
+pub enum DbInitError {
+    AppDataDir(tauri::Error),
+    Io(std::io::Error),
+    Sqlx(sqlx::Error),
+    Migration(sqlx::migrate::MigrateError),
+}
+
+impl std::fmt::Display for DbInitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DbInitError::AppDataDir(e) => {
+                write!(f, "could not resolve app data directory: {e}")
+            }
+            DbInitError::Io(e) => write!(f, "could not create app data directory: {e}"),
+            DbInitError::Sqlx(e) => write!(f, "database: {e}"),
+            DbInitError::Migration(e) => write!(f, "database migration: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for DbInitError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            DbInitError::AppDataDir(e) => Some(e),
+            DbInitError::Io(e) => Some(e),
+            DbInitError::Sqlx(e) => Some(e),
+            DbInitError::Migration(e) => Some(e),
+        }
+    }
+}
+
+impl From<tauri::Error> for DbInitError {
+    fn from(value: tauri::Error) -> Self {
+        DbInitError::AppDataDir(value)
+    }
+}
+
+impl From<std::io::Error> for DbInitError {
+    fn from(value: std::io::Error) -> Self {
+        DbInitError::Io(value)
+    }
+}
+
+impl From<sqlx::Error> for DbInitError {
+    fn from(value: sqlx::Error) -> Self {
+        DbInitError::Sqlx(value)
+    }
+}
+
+impl From<sqlx::migrate::MigrateError> for DbInitError {
+    fn from(value: sqlx::migrate::MigrateError) -> Self {
+        DbInitError::Migration(value)
+    }
+}
+
+pub async fn init_db(app: &AppHandle) -> Result<SqlitePool, DbInitError> {
     // Resolve a path inside the app's data directory, e.g.:
     // Windows: C:\Users\<user>\AppData\Roaming\com.grimoire.app\grimoire.db
-    let app_dir = app
-        .path()
-        .app_data_dir()
-        .expect("could not resolve app data directory");
+    let app_dir = app.path().app_data_dir()?;
 
-    std::fs::create_dir_all(&app_dir).expect("could not create app data directory");
+    std::fs::create_dir_all(&app_dir)?;
 
     let db_path = app_dir.join("grimoire.db");
     let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
@@ -39,6 +93,12 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool, sqlx::Error> {
     // Enable WAL journal mode. This allows reads and writes to proceed concurrently
     // instead of serialising — eliminates the 5s write-queue delays under load.
     sqlx::query("PRAGMA journal_mode=WAL")
+        .execute(&pool)
+        .await?;
+
+    // Wait up to 10s on SQLITE_BUSY instead of failing immediately when another
+    // connection (e.g. startup FTS sync) holds the write lock briefly.
+    sqlx::query("PRAGMA busy_timeout=10000")
         .execute(&pool)
         .await?;
 
@@ -83,7 +143,9 @@ async fn forget_removed_migration_16_if_present(pool: &SqlitePool) -> Result<(),
 #[cfg(debug_assertions)]
 pub async fn open_sqlite_file(db_path: &std::path::Path) -> Result<SqlitePool, sqlx::Error> {
     if let Some(parent) = db_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent).map_err(|e| {
+            sqlx::Error::Configuration(format!("create_dir_all({}): {e}", parent.display()).into())
+        })?;
     }
     let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
     let pool = SqlitePoolOptions::new()
