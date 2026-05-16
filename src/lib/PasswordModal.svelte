@@ -69,8 +69,14 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   }
 
   function handleKeydown(e) {
-    if (e.key === 'Enter') submit();
-    if (e.key === 'Escape') onCancel();
+    if (e.key === 'Enter') {
+      e.stopPropagation();
+      e.preventDefault();
+      submit();
+    } else if (e.key === 'Escape') {
+      e.stopPropagation();
+      onCancel();
+    }
   }
 </script>
 
@@ -82,12 +88,12 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
     {#if warning}
       <p class="modal-warning">{warning}</p>
-      {#if requireAck}
-        <label class="modal-ack" for="pw-modal-ack">
-          <input id="pw-modal-ack" type="checkbox" bind:checked={acked} />
-          I understand
-        </label>
-      {/if}
+    {/if}
+    {#if requireAck}
+      <label class="modal-ack" for="pw-modal-ack">
+        <input id="pw-modal-ack" type="checkbox" bind:checked={acked} />
+        I understand
+      </label>
     {/if}
 
     <input

@@ -27,14 +27,25 @@ export function createTabService({ onError }) {
 
   function persistTabs() {
     localStorage.setItem('grimoire_tabs', JSON.stringify({
-      tabs: tabs.map(t => ({
-        id: t.id, type: t.type, noteId: t.noteId,
-        label: t.label, customLabel: t.customLabel,
-        // wikipedia tab fields
-        ...(t.type === 'wikipedia' ? {
-          bundleId: t.bundleId, articlePath: t.articlePath,
-        } : {}),
-      })),
+      tabs: tabs.map(t => {
+        const base = {
+          id: t.id, type: t.type, noteId: t.noteId ?? null,
+          label: t.label, customLabel: t.customLabel ?? null,
+        };
+        if (t.type === 'note') {
+          return { ...base, readMode: !!t.readMode };
+        }
+        if (t.type === 'wikipedia') {
+          return {
+            ...base,
+            bundleId: t.bundleId, articlePath: t.articlePath,
+          };
+        }
+        if (t.type === 'kanban') {
+          return { ...base, folderId: t.folderId };
+        }
+        return base;
+      }),
       activeTabId,
     }));
   }
@@ -256,9 +267,15 @@ export function createTabService({ onError }) {
           if (t.type === 'note' && t.noteId != null) {
             try {
               const note = await invoke('get_note', { id: t.noteId });
-              return { tab: { ...t, label: note.title }, note };
+              return { tab: { ...t, label: note.title, readMode: t.readMode ?? false }, note };
             } catch { return null; }
           } else if (t.type === 'graph') {
+            return { tab: t, note: null };
+          } else if (t.type === 'calendar') {
+            return { tab: t, note: null };
+          } else if (t.type === 'chat') {
+            return { tab: t, note: null };
+          } else if (t.type === 'kanban' && t.folderId != null) {
             return { tab: t, note: null };
           } else if (t.type === 'wikipedia' && t.bundleId && t.articlePath) {
             return { tab: { ...t, readMode: false }, note: null };

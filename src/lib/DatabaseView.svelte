@@ -41,6 +41,19 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   // Rows after applying active filters.
   let filteredRows = $derived(applyFilters(rows, filters, defs));
 
+  /** Parse select `def.options` JSON safely for templates. */
+  function parseSelectOptions(raw) {
+    try {
+      const arr = JSON.parse(raw || '[]');
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Incremented per `loadData` call; stale responses are ignored. */
+  let loadSeq = 0;
+
   // ── Load ───────────────────────────────────────────────────────────────────
   $effect(() => {
     if (folderId) {
@@ -54,12 +67,14 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   });
 
   async function loadData(fid) {
+    const mySeq = ++loadSeq;
     loading = true;
     try {
       const [d, r] = await Promise.all([
         invoke('get_property_defs', { folderId: fid }),
         invoke('list_notes_with_properties', { folderId: fid }),
       ]);
+      if (mySeq !== loadSeq || folderId !== fid) return;
       defs = d;
       rows = r;
       // Restore persisted filters for this folder.
@@ -78,11 +93,12 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       }
       onFiltersChange(filters);
     } catch {
+      if (mySeq !== loadSeq || folderId !== fid) return;
       defs = [];
       rows = [];
       onFiltersChange({});
     } finally {
-      loading = false;
+      if (mySeq === loadSeq && folderId === fid) loading = false;
     }
   }
 
@@ -341,7 +357,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                   <!-- No value input needed -->
                 {:else if def.type === 'select'}
                   <div class="db-filter-select-opts">
-                    {#each JSON.parse(def.options || '[]') as opt}
+                    {#each parseSelectOptions(def.options) as opt}
                       {@const checked = Array.isArray(f.value) && f.value.includes(opt)}
                       <label class="db-filter-select-opt">
                         <input
@@ -489,7 +505,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                         onchange={(e) => handleSelectChange(note.id, def.id, e)}
                       >
                         <option value="">—</option>
-                        {#each JSON.parse(def.options || '[]') as opt}
+                        {#each parseSelectOptions(def.options) as opt}
                           <option value={opt}>{opt}</option>
                         {/each}
                       </select>

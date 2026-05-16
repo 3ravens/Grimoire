@@ -18,7 +18,7 @@ This file is part of Grimoire — licensed under GPL-3.0 or later. -->
   // Indices (in items[]) of non-divider items, for up/down navigation.
   const navIndices = $derived(
     items.reduce((/** @type {number[]} */ acc, item, i) => {
-      if (!item.divider) acc.push(i);
+      if (!item.divider && !item.disabled) acc.push(i);
       return acc;
     }, [])
   );
@@ -36,7 +36,7 @@ This file is part of Grimoire — licensed under GPL-3.0 or later. -->
   const subNavIndices = $derived(
     submenuOpenIdx >= 0 && items[submenuOpenIdx]?.submenu
       ? items[submenuOpenIdx].submenu.reduce((/** @type {number[]} */ acc, sub, i) => {
-          if (!sub.divider) acc.push(i);
+          if (!sub.divider && !sub.disabled) acc.push(i);
           return acc;
         }, [])
       : []
@@ -83,7 +83,10 @@ This file is part of Grimoire — licensed under GPL-3.0 or later. -->
         submenuOpenIdx = navIndices[focusPos];
         subFocusPos = 0;
         await tick();
-        menuEl?.querySelector('[data-sub-idx="0"]')?.focus();
+        const firstSi = subNavIndices[0];
+        if (firstSi !== undefined) {
+          menuEl?.querySelector(`[data-sub-idx="${firstSi}"]`)?.focus();
+        }
       } else if ((e.key === 'Enter' || e.key === ' ') && item?.action && !item.disabled) {
         e.preventDefault();
         item.action();
@@ -165,7 +168,13 @@ This file is part of Grimoire — licensed under GPL-3.0 or later. -->
                   role="menuitem"
                   tabindex={submenuOpenIdx === idx && subNavIndices[subFocusPos] === si ? 0 : -1}
                   data-sub-idx={si}
-                  onmousedown={(e) => { e.stopPropagation(); sub.action(); onClose(); }}
+                  onmousedown={(e) => {
+                    e.stopPropagation();
+                    if (!sub.disabled && sub.action) {
+                      sub.action();
+                      onClose();
+                    }
+                  }}
                 >{sub.label}</button>
               </li>
             {/if}

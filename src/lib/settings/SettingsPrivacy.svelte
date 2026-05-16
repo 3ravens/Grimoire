@@ -1,6 +1,6 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import AuditLog from '../AuditLog.svelte';
   import ConfirmModal from '../ConfirmModal.svelte';
 
@@ -55,6 +55,10 @@
       showPruneConfirm = false;
     }
   }
+
+  onDestroy(() => {
+    clearTimeout(retentionDebounce);
+  });
 
   onMount(async () => {
     const [a, l, r] = await Promise.all([
@@ -181,7 +185,7 @@
 {#if showPruneConfirm}
   <ConfirmModal
     title="Prune audit log"
-    message="Permanently delete {previewCount} entr{previewCount === 1 ? 'y' : 'ies'} older than {retentionDays} day{retentionDays === 1 ? '' : 's'}. This cannot be undone."
+    message={`Permanently delete ${previewCount} entr${previewCount === 1 ? 'y' : 'ies'} older than ${retentionDays} day${retentionDays === 1 ? '' : 's'}. This cannot be undone.`}
     confirmLabel="Delete"
     onConfirm={confirmPrune}
     onCancel={() => (showPruneConfirm = false)}

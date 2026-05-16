@@ -50,6 +50,8 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   );
 
   // ── Search logic ─────────────────────────────────────────────────────────
+  // Locked-folder exclusion is enforced in Rust (`fts_search` / `search_notes` access_filter).
+  // Keep UI logic aligned with that backend contract; do not reimplement vault session checks here.
 
   let debounceTimer = null;
 

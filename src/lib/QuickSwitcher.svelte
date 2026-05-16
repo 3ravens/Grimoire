@@ -35,7 +35,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
   const filtered = $derived.by(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return allNotes.slice(0, 20);
+    if (!q) return allNotes.filter(n => !n.locked).slice(0, 20);
     return allNotes
       .filter(n => !n.locked && n.title.toLowerCase().includes(q))
       .slice(0, 20);

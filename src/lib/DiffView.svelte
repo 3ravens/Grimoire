@@ -50,8 +50,8 @@
     {/if}
     {#if !readonly}
       <div class="diff-actions">
-        <button class="accept-all" onclick={onAcceptAll}>Accept All</button>
-        <button class="reject-all" onclick={onRejectAll}>Reject All</button>
+        <button class="accept-all" onclick={() => onAcceptAll?.()}>Accept All</button>
+        <button class="reject-all" onclick={() => onRejectAll?.()}>Reject All</button>
       </div>
     {/if}
   </div>

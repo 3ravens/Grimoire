@@ -33,7 +33,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="improve-backdrop" onmousedown={onCancel}></div>
 
-<div class="improve-popover" style="left: {Math.min(x, window.innerWidth - 440)}px; top: {Math.min(y, window.innerHeight - 200)}px;">
+<div class="improve-popover" style="left: {Math.max(0, Math.min(x, window.innerWidth - 440))}px; top: {Math.max(0, Math.min(y, window.innerHeight - 200))}px;">
   <span class="improve-popover-label">{label}</span>
   <textarea
     bind:this={textareaEl}

@@ -499,7 +499,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
             class="heat-tooltip-float"
             style="left: {tooltipX}px; top: {tooltipY}px;"
             aria-hidden="true"
-          >{@html tooltipText.replace('\n', '<br>')}</div>
+          >{tooltipText}</div>
         {/if}
 
         <!-- Detail panel below the heatmap -->

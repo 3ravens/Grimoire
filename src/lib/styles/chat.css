@@ -337,7 +337,7 @@
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .chat-message.user {
@@ -357,7 +357,7 @@
   margin: 0;
   font-size: 13px;
   line-height: 1.6;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .chat-message.assistant .msg-body pre {
@@ -512,7 +512,7 @@
   vertical-align: top;
   border-bottom: 1px solid var(--border);
   color: var(--text);
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .debug-table tr.debug-pass td:first-child { color: var(--accent); }

@@ -4,7 +4,7 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
-  import { getContext, onMount } from 'svelte';
+  import { getContext, onMount, useId } from 'svelte';
   import { focusTrap } from './utils/focusTrap.js';
   import { wizardCuratedChatModels } from './utils/wizardChatModels.js';
   import { CURATED_EMBEDDING_MODELS } from './constants/chatModels.js';
@@ -21,6 +21,8 @@
 
   /** @type {{ showError: (e: unknown) => void }} */
   const err = getContext('err');
+  /** @type {{ settingsPendingSection?: string | null } | undefined} */
+  const ui = getContext('ui');
 
   const MS_TOUR = 0;
   const MS_STARTER = 1;
@@ -297,7 +299,6 @@
       });
       const o = /** @type {{ openWikipediaSettings?: boolean }} */ (res);
       if (o?.openWikipediaSettings) {
-        const ui = /** @type {{ settingsPendingSection?: string | null }} */ (getContext('ui'));
         if (ui) ui.settingsPendingSection = 'wikipedia';
       }
       onCompleted();

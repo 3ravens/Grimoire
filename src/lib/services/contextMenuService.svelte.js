@@ -135,8 +135,12 @@ export function createContextMenuService(deps) {
         {
           label: "Duplicate",
           action: async () => {
-            await invoke("duplicate_note", { id: noteId });
-            loadNotes();
+            try {
+              await invoke("duplicate_note", { id: noteId });
+              loadNotes();
+            } catch (err) {
+              onError?.(err);
+            }
           },
         },
         ...(note && payload
