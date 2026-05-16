@@ -1,0 +1,18 @@
+[package]
+name = "zim-rs"
+version = "0.1.1"
+edition = "2021"
+# crate information
+license = "GPL-2.0-or-later"
+description = "Safe bindings for libzim"
+keywords = ["zim", "libzim"]
+categories = ["api-bindings"]
+repository = "https://gitlab.com/alexanderacker/zim-rs"
+readme = "README.md"
+
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cxx = "1.0.78"
+zim-sys = "0.1.0"

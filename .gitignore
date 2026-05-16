@@ -1,0 +1,38 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Rust sources live under src-tauri/ — ignore stray root-level stubs
+/*.rs
+
+# Editor directories and files
+.vscode/*
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# GitHub-specific config and prompts
+.github
+
+# Vendored runtime DLLs (copied from vcpkg at dev setup time)
+src-tauri/vendor-dlls/
+
+# Populated by src-tauri/build.rs for Tauri NSIS (WiX already globs target/*.dll)
+src-tauri/nsis-dll-staging/
+
+# Cursor files
+.cursor/*

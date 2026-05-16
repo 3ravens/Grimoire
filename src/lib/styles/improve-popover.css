@@ -1,0 +1,83 @@
+.improve-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.improve-popover {
+  position: fixed;
+  z-index: 101;
+  width: 420px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.improve-popover-label {
+  font-size: 13px;
+  font-family: var(--sans);
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.improve-popover textarea {
+  width: 100%;
+  min-height: 60px;
+  max-height: 160px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg2);
+  color: var(--text-h);
+  font: 14px/1.55 var(--sans);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.improve-popover textarea:focus {
+  border-color: var(--accent);
+}
+
+.improve-popover textarea::placeholder {
+  color: var(--text);
+  opacity: 0.5;
+}
+
+.improve-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.improve-popover-actions button {
+  padding: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg2);
+  color: var(--text-h);
+  font-size: 13px;
+  cursor: pointer;
+  font-family: var(--sans);
+}
+
+.improve-popover-actions button:hover {
+  background: var(--bg3);
+}
+
+.improve-popover-actions button.primary {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.improve-popover-actions button.primary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

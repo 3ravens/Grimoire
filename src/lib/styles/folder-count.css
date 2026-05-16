@@ -1,0 +1,10 @@
+.folder-count {
+  font-size: 11px;
+  color: var(--text);
+  opacity: 0.45;
+  flex-shrink: 0;
+}
+
+li:hover .folder-count {
+  display: none;
+}

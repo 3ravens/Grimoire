@@ -1,0 +1,64 @@
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.panel-header h2 {
+  margin: 0;
+}
+
+.panel-header-actions {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.panel-header-actions .icon-btn {
+  opacity: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+}
+
+.panel-view-btn {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  font: 11px var(--sans);
+  cursor: pointer;
+  opacity: 0.6;
+  flex-shrink: 0;
+  transition: background 0.1s, opacity 0.1s, color 0.1s;
+}
+
+.panel-view-btn:hover,
+.panel-view-btn.active {
+  background: var(--bg3);
+  color: var(--accent);
+  opacity: 1;
+  border-color: var(--accent);
+}
+
+.collapse-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.collapse-btn:hover {
+  background: var(--bg3);
+  color: var(--text-h);
+}

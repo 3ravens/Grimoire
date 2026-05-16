@@ -1,0 +1,427 @@
+/* Wikipedia reader layout and article body styling */
+
+.wiki-reader {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+}
+
+/* ── Top bar ──────────────────────────────────────────────────────────────── */
+
+.wiki-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  flex-shrink: 0;
+}
+
+.wiki-nav-btns {
+  display: flex;
+  gap: 2px;
+}
+
+.wiki-nav-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--text);
+  line-height: 1;
+}
+
+.wiki-nav-btn:hover:not(:disabled) {
+  background: var(--bg3);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.wiki-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.wiki-search-area {
+  position: relative;
+  flex: 1;
+  max-width: 420px;
+}
+
+.wiki-search-input {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+}
+
+.wiki-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.wiki-search-bundle-label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 2px 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wiki-search-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  max-height: 260px;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.wiki-search-result {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 6px 12px;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.wiki-search-result:hover {
+  background: var(--bg-hover, var(--bg3));
+  color: var(--accent);
+}
+
+.wiki-search-message {
+  padding: 8px 12px;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--text-muted);
+  list-style: none;
+}
+
+.wiki-article-title-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.wiki-close-btn {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 9px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-muted);
+  line-height: 1;
+  transition: color 0.1s, border-color 0.1s;
+}
+
+.wiki-close-btn:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* ── Banners ──────────────────────────────────────────────────────────────── */
+
+.wiki-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.wiki-banner-info {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+
+.wiki-banner-dismiss {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.wiki-banner-dismiss:hover {
+  background: var(--bg3);
+  color: var(--text);
+}
+
+/* ── Content area ─────────────────────────────────────────────────────────── */
+
+.wiki-content-area {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.wiki-article-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+}
+
+.wiki-loading,
+.wiki-error {
+  padding: 24px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.wiki-error {
+  color: var(--danger);
+}
+
+/* ── Article body ─────────────────────────────────────────────────────────── */
+
+.wiki-article-body {
+  max-width: 860px;
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+/* Headings — plain descendants (this file is global CSS; :global() is Svelte-only). */
+.wiki-article-body h1,
+.wiki-article-body h2,
+.wiki-article-body h3,
+.wiki-article-body h4,
+.wiki-article-body h5,
+.wiki-article-body h6 {
+  color: var(--text-h, var(--text));
+  font-family: var(--sans);
+  margin: 1.4em 0 0.5em;
+  line-height: 1.3;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
+.wiki-article-body h1 { font-size: 1.8em; }
+.wiki-article-body h2 { font-size: 1.4em; }
+.wiki-article-body h3 { font-size: 1.15em; border-bottom: none; }
+.wiki-article-body h4,
+.wiki-article-body h5,
+.wiki-article-body h6 { font-size: 1em; border-bottom: none; }
+
+/* Paragraphs */
+.wiki-article-body p {
+  margin: 0.8em 0;
+}
+
+/* Links */
+.wiki-article-body a {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.wiki-article-body a:hover {
+  text-decoration: underline;
+}
+
+.wiki-article-body a[data-external] {
+  color: var(--text-muted);
+  cursor: not-allowed;
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+/* Lists */
+.wiki-article-body ul,
+.wiki-article-body ol {
+  margin: 0.6em 0;
+  padding-left: 2em;
+}
+
+.wiki-article-body li {
+  margin: 0.25em 0;
+}
+
+/* Tables */
+.wiki-article-body table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: 13px;
+  max-width: 100%;
+  overflow-x: auto;
+  display: block;
+}
+
+.wiki-article-body th,
+.wiki-article-body td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.wiki-article-body th {
+  background: var(--bg2);
+  font-weight: 600;
+  color: var(--text-h, var(--text));
+}
+
+/* Force our theme colours over Wikipedia inline styles on table cells.
+   Wikipedia ZIM articles carry inline background-color / color attributes
+   (e.g. white infobox headers) that clash badly in dark mode. */
+.wiki-article-body table th,
+.wiki-article-body table td,
+.wiki-article-body table caption {
+  background-color: var(--bg2) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+/* Images */
+.wiki-article-body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 3px;
+  display: block;
+  margin: 0.5em 0;
+}
+
+/* Blockquotes */
+.wiki-article-body blockquote {
+  border-left: 3px solid var(--accent);
+  margin: 1em 0;
+  padding: 0.5em 1em;
+  color: var(--text-muted);
+  background: var(--bg2);
+  border-radius: 0 4px 4px 0;
+}
+
+/* Code */
+.wiki-article-body code,
+.wiki-article-body pre {
+  font-family: var(--mono);
+  font-size: 13px;
+  background: var(--bg2);
+  border-radius: 3px;
+}
+
+.wiki-article-body code {
+  padding: 1px 5px;
+}
+
+.wiki-article-body pre {
+  padding: 12px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+}
+
+/* Wikipedia-specific: hide edit section links, language links, hatnotes nav */
+.wiki-article-body .mw-editsection,
+.wiki-article-body .noprint,
+.wiki-article-body .mw-jump-link,
+.wiki-article-body #toc,
+.wiki-article-body .toc,
+.wiki-article-body .navbox,
+.wiki-article-body .reflist,
+.wiki-article-body #catlinks,
+.wiki-article-body .catlinks,
+.wiki-article-body .sistersitebox {
+  display: none !important;
+}
+
+/* Wikipedia infoboxes / thumbs */
+.wiki-article-body .infobox,
+.wiki-article-body .thumb {
+  float: right;
+  clear: right;
+  margin: 0 0 1em 1.5em;
+  max-width: 260px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px;
+  background: var(--bg2);
+}
+
+/* ── Highlights ───────────────────────────────────────────────────────────── */
+
+.wiki-article-body mark.wiki-highlight {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text);
+  border-radius: 2px;
+  padding: 0 1px;
+  cursor: pointer;
+}
+
+.wiki-article-body mark.wiki-highlight:hover {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+.wiki-article-body mark.wiki-highlight-orphaned {
+  background: rgba(128, 128, 128, 0.2);
+  color: var(--text-muted);
+  text-decoration: underline dotted;
+}
+
+/* ── Floating highlight toolbar ───────────────────────────────────────────── */
+
+.wiki-highlight-toolbar {
+  position: fixed;
+  z-index: 500;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.wiki-highlight-toolbar button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 3px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--sans);
+}
+
+.wiki-highlight-toolbar button:hover {
+  opacity: 0.9;
+}

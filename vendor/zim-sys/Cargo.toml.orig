@@ -1,0 +1,21 @@
+[package]
+name = "zim-sys"
+version = "0.1.0"
+edition = "2021"
+links = "zim"
+# crate information
+license = "GPL-2.0-or-later"
+description = "Low-level FFI bindings for libzim"
+keywords = ["zim", "libzim"]
+categories = ["external-ffi-bindings"]
+repository = "https://gitlab.com/alexanderacker/zim-sys"
+readme = "README.md"
+
+[dependencies]
+cxx = "1.0.78"
+
+[build-dependencies]
+cxx-build = "1.0.109"
+
+[target.'cfg(target_family = "unix")'.build-dependencies]
+pkg-config = "0.3.25"

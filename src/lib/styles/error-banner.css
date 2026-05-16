@@ -1,0 +1,54 @@
+.error-banner {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--danger);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  z-index: 100;
+}
+
+.vault-reindex-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(560px, calc(100vw - 32px));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  z-index: 99;
+  background: var(--bg2);
+  color: var(--text-h);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.vault-reindex-banner .banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+
+.vault-reindex-banner button {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg3);
+  color: var(--text-h);
+}
+
+.vault-reindex-banner button.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}

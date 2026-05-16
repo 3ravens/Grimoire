@@ -1,0 +1,401 @@
+/* ── Overlay ─────────────────────────────────────────────────────────────── */
+
+.calendar-overlay {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--sans);
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── Header ─────────────────────────────────────────────────────────────── */
+
+.cal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.cal-tabs {
+  display: flex;
+  gap: 0;
+}
+
+.cal-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 6px 14px;
+  font: 13px var(--sans);
+  color: var(--text);
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+
+.cal-tab:hover {
+  color: var(--text-h);
+}
+
+.cal-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── Body ───────────────────────────────────────────────────────────────── */
+
+.cal-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  align-items: stretch;
+}
+
+/* ── Calendar sub-view ──────────────────────────────────────────────────── */
+
+.cal-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+  max-width: 420px;
+  margin: 40px auto;
+  padding: 0 24px;
+}
+
+.cal-month-nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.cal-nav-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 10px;
+  color: var(--text-h);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.cal-today-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 10px;
+  color: var(--text);
+  font: 12px var(--sans);
+  cursor: pointer;
+  margin-left: 6px;
+}
+
+.cal-today-btn:hover {
+  background: var(--bg3);
+  color: var(--text-h);
+}
+
+.cal-month-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-h);
+  min-width: 160px;
+  text-align: center;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  width: 100%;
+}
+
+.cal-dow {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 0;
+}
+
+.cal-cell {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: none;
+  cursor: pointer;
+  gap: 2px;
+  position: relative;
+}
+
+.cal-empty {
+  cursor: default;
+  pointer-events: none;
+}
+
+.cal-day:hover {
+  background: var(--bg3);
+}
+
+.cal-day.today {
+  border-color: var(--accent);
+}
+
+.cal-day.today .cal-day-num {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.cal-day.future {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+.cal-day-num {
+  font-size: 13px;
+  color: var(--text-h);
+  line-height: 1;
+}
+
+.cal-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+.cal-hint {
+  font-size: 11px;
+  color: var(--text);
+  margin: 0;
+  opacity: 0.7;
+}
+
+/* ── Heatmap sub-view ───────────────────────────────────────────────────── */
+
+.heat-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow-y: auto;
+  align-items: center;
+}
+
+.heat-left {
+  flex: 0 0 auto;
+  overflow: visible;
+  padding: 40px 40px 20px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.heat-layout {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.heat-dow-axis {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.heat-dow-month-spacer {
+  height: 18px;
+  margin-bottom: 4px;
+}
+
+.heat-dow-label {
+  width: 22px;
+  height: 16px;
+  font-size: 10px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+}
+
+.heat-right {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.heat-months {
+  display: flex;
+  gap: 3px;
+  height: 18px;
+}
+
+.heat-col-label {
+  width: 16px;
+  font-size: 10px;
+  color: var(--text);
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.heat-grid {
+  display: flex;
+  gap: 3px;
+}
+
+.heat-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.heat-cell {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: none;
+  padding: 0;
+  cursor: default;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.heat-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.heat-empty {
+  visibility: hidden;
+}
+
+.heat-clickable {
+  cursor: pointer;
+}
+
+.heat-0 { background: var(--bg3); }
+.heat-1 { background: color-mix(in srgb, var(--accent) 20%, var(--bg3)); }
+.heat-2 { background: color-mix(in srgb, var(--accent) 40%, var(--bg3)); }
+.heat-3 { background: color-mix(in srgb, var(--accent) 65%, var(--bg3)); }
+.heat-4 { background: var(--accent); }
+
+.heat-tooltip-float {
+  position: fixed;
+  transform: translate(-50%, calc(-100% - 10px));
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-h);
+  white-space: nowrap;
+  z-index: 200;
+  pointer-events: none;
+}
+
+.heat-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 8px;
+  font-size: 10px;
+  color: var(--text);
+  justify-content: flex-end;
+}
+
+.heat-legend .heat-cell {
+  cursor: default;
+}
+
+.heat-sidebar {
+  width: 100%;
+  max-width: 900px;
+  border-left: none;
+  border-top: 1px solid var(--border);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.heat-sidebar-empty {
+  padding: 40px 20px;
+  font-size: 12px;
+  color: var(--text);
+  margin: 0;
+  text-align: center;
+  opacity: 0.6;
+}
+
+.heat-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.heat-detail-date {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.heat-detail-close {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.heat-detail-close:hover {
+  background: var(--bg3);
+  color: var(--text-h);
+}
+
+.heat-detail-empty {
+  padding: 16px 14px;
+  font-size: 12px;
+  color: var(--text);
+  margin: 0;
+}
+
+.heat-detail-list {
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.heat-note-pill {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 10px;
+  text-align: left;
+  font: 13px var(--sans);
+  color: var(--text-h);
+  cursor: pointer;
+  width: 100%;
+}
+
+.heat-note-pill:hover {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: var(--accent);
+}

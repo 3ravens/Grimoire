@@ -1,0 +1,27 @@
+.note-tags-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.tag-pill {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--sans);
+  line-height: 1.5;
+}
+
+.tag-pill:hover {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}

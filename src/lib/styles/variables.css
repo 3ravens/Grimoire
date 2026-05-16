@@ -1,0 +1,43 @@
+:root {
+  --text: #6b5f5f;
+  --text-h: #1a0f0f;
+  --bg: #fdfaf9;
+  --bg2: #f6f0ef;
+  --bg3: #ede5e4;
+  --border: #ddd4d3;
+  --accent: #9b2020;
+  --accent-bg: rgba(155, 32, 32, 0.08);
+  --danger: #c0392b;
+
+  --diff-add-bg: rgba(40, 167, 69, 0.12);
+  --diff-add-border: rgba(40, 167, 69, 0.28);
+  --diff-remove-bg: rgba(220, 53, 69, 0.12);
+  --diff-remove-border: rgba(220, 53, 69, 0.28);
+  --diff-unchanged-bg: transparent;
+
+  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+
+  font: 14px/1.5 var(--sans);
+  color: var(--text);
+  background: var(--bg);
+  color-scheme: light dark;
+  -webkit-font-smoothing: antialiased;
+
+  @media (prefers-color-scheme: dark) {
+    --text: #9e8f8f;
+    --text-h: #f0e8e8;
+    --bg: #171412;
+    --bg2: #201a1a;
+    --bg3: #2b2222;
+    --border: #352828;
+    --accent: #c0443a;
+    --accent-bg: rgba(192, 68, 58, 0.15);
+    --danger: #e06060;
+    --diff-add-bg: rgba(40, 167, 69, 0.15);
+    --diff-add-border: rgba(40, 167, 69, 0.3);
+    --diff-remove-bg: rgba(220, 53, 69, 0.15);
+    --diff-remove-border: rgba(220, 53, 69, 0.3);
+    --diff-unchanged-bg: transparent;
+  }
+}

@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "lacto_fermentation",
+      "title": "SQBench: Lacto-fermentation diary",
+      "fts_query": "tok_sqbench_e4f9201",
+      "semantic_query": "How do I keep mold from growing when lacto-fermenting cabbage at home in a jar?",
+      "body": "# Diary\n\ntok_sqbench_e4f9201\n\nA two to three percent salt brine by weight keeps lacto-fermentation anaerobic enough that spoilage bacteria stay suppressed. Keep vegetables fully submerged under a weight and burp the jar daily for the first week. Room temperature around eighteen to twenty-two Celsius works well for sauerkraut.\n"
+    },
+    {
+      "id": "bst_rotations",
+      "title": "SQBench: Tree rotations",
+      "fts_query": "tok_sqbench_e4f9202",
+      "semantic_query": "When does a binary search tree need a left-right double rotation after an insert?",
+      "body": "# Notes\n\ntok_sqbench_e4f9202\n\nA double rotation fixes the AVL imbalance pattern where the child subtree grows heavy on the outside opposite side. After inserting into the left subtree of a right-heavy node’s right child, you rotate the child first then the parent. This restores the height balance invariant while keeping the BST ordering property.\n"
+    },
+    {
+      "id": "iceland_althing",
+      "title": "SQBench: Icelandic assembly",
+      "fts_query": "tok_sqbench_e4f9203",
+      "semantic_query": "Where did early medieval Icelanders hold their open-air law assembly?",
+      "body": "## History\n\ntok_sqbench_e4f9203\n\nThe Althing met at Thingvellir, a rift valley where lawspeakers recited the law code each summer. Free farmers gathered to hear judgments and settle feuds before the Norwegian crown tightened control. The site symbolised communal governance long before a national parliament building existed.\n"
+    },
+    {
+      "id": "sourdough_hydration",
+      "title": "SQBench: Sourdough basics",
+      "fts_query": "tok_sqbench_e4f9204",
+      "semantic_query": "Why do bakers rest flour and water before adding salt to sourdough?",
+      "body": "# Baking\n\ntok_sqbench_e4f9204\n\nAutolyse lets flour fully hydrate and gluten begin developing without salt tightening the dough. After thirty to sixty minutes the dough feels smoother and extensible. Salt is folded in afterward so fermentation timing stays predictable.\n"
+    },
+    {
+      "id": "tcp_slow_start",
+      "title": "SQBench: TCP congestion",
+      "fts_query": "tok_sqbench_e4f9205",
+      "semantic_query": "What happens to the congestion window at the start of a new TCP connection?",
+      "body": "# Networking\n\ntok_sqbench_e4f9205\n\nSlow start grows the congestion window exponentially while acknowledgements arrive on time. Packet loss triggers multiplicative decrease and often switches the sender into congestion avoidance. The goal is to probe available bandwidth without collapsing router queues.\n"
+    },
+    {
+      "id": "b12_plants",
+      "title": "SQBench: Nutrition note",
+      "fts_query": "tok_sqbench_e4f9206",
+      "semantic_query": "Can someone eating only plants get enough vitamin B12 without supplements?",
+      "body": "## Diet\n\ntok_sqbench_e4f9206\n\nVitamin B12 is synthesised by bacteria, not by plants, so strict vegans rely on fortified foods or supplements. Nutritional yeast and plant milks are common fortified sources. Blood tests help catch deficiency before nerve damage appears.\n"
+    },
+    {
+      "id": "docker_multistage",
+      "title": "SQBench: Go Dockerfile multi-stage image shrink",
+      "fts_query": "tok_sqbench_e4f9207",
+      "semantic_query": "How does a multi-stage Dockerfile reduce final image size for a Go service?",
+      "body": "# DevOps\n\ntok_sqbench_e4f9207\n\nFor a **Go service**, a **multi-stage Dockerfile** first uses a fat `golang` image to `go build -ldflags=\"-w -s\"` a static Linux binary, then copies only that binary into a tiny runtime such as `scratch` or `distroless/static`. The **final image** drops compilers, module caches, and source trees, so **image size** shrinks from gigabytes to tens of megabytes. Each `FROM` begins a new stage; only `COPY --from=builder` artifacts cross the boundary.\n"
+    },
+    {
+      "id": "roman_concrete",
+      "title": "SQBench: Materials history",
+      "fts_query": "tok_sqbench_e4f9208",
+      "semantic_query": "Why has Roman harbour concrete lasted longer than modern Portland mixes in seawater?",
+      "body": "## Materials\n\ntok_sqbench_e4f9208\n\nRoman concrete used pozzolanic ash that continues reacting and healing microcracks in brine. Aluminosilicate phases interlock over centuries instead of washing out. Modern studies sample drill cores from ancient Mediterranean breakwaters.\n"
+    },
+    {
+      "id": "oauth_pkce",
+      "title": "SQBench: OAuth2 PKCE for mobile authorization code",
+      "fts_query": "tok_sqbench_e4f9209",
+      "semantic_query": "Why is PKCE recommended for OAuth2 authorization code flows in public mobile apps?",
+      "body": "# Security\n\ntok_sqbench_e4f9209\n\n**PKCE** (RFC 7636) extends the **OAuth2 authorization code** grant for **public mobile apps** that cannot hide a client secret. The app sends a `code_challenge` with the authorize URL and later proves it holds the matching `code_verifier` at the **token endpoint**, so a stolen redirect **authorization code** alone is useless. Native iOS and Android OAuth guides therefore mandate **PKCE** for any **public** client using the code flow.\n"
+    },
+    {
+      "id": "photosynthesis",
+      "title": "SQBench: Plant biochemistry",
+      "fts_query": "tok_sqbench_e4f9210",
+      "semantic_query": "Where in the chloroplast does the Calvin cycle fix carbon dioxide into sugar?",
+      "body": "## Biology\n\ntok_sqbench_e4f9210\n\nThe Calvin cycle runs in the stroma using ATP and NADPH from the light reactions. Rubisco attaches carbon dioxide to ribulose bisphosphate. The products feed starch synthesis and export to the cytosol.\n"
+    },
+    {
+      "id": "postgres_partial_index",
+      "title": "SQBench: PostgreSQL partial index vs full table index",
+      "fts_query": "tok_sqbench_e4f9211",
+      "semantic_query": "When is a partial PostgreSQL index better than indexing the whole table?",
+      "body": "# SQL\n\ntok_sqbench_e4f9211\n\nIn **PostgreSQL**, a **partial index** is declared with `CREATE INDEX ... WHERE <predicate>` so only rows satisfying that predicate enter the btree. That beats **indexing the whole table** when the hot queries always filter the same way—for example `WHERE archived = false` on a mostly-historical ledger. The planner can pick the partial index only when the query `WHERE` clause implies the same condition, keeping writes and vacuum work smaller than a monolithic index on every row.\n"
+    },
+    {
+      "id": "knitting_gauge",
+      "title": "SQBench: Textiles",
+      "fts_query": "tok_sqbench_e4f9212",
+      "semantic_query": "Why knit a gauge swatch before starting a fitted sweater pattern?",
+      "body": "## Craft\n\ntok_sqbench_e4f9212\n\nStitch count per ten centimetres determines whether the finished garment matches the designer’s measurements. Yarn labels are averages; individual tension varies. Washing the swatch reveals how the fibre relaxes.\n"
+    },
+    {
+      "id": "beethoven_ninth",
+      "title": "SQBench: Concert repertoire",
+      "fts_query": "tok_sqbench_e4f9213",
+      "semantic_query": "Which movement of Beethoven’s ninth symphony introduces the choral ode to joy?",
+      "body": "# Music\n\ntok_sqbench_e4f9213\n\nThe finale begins with a turbulent orchestral introduction before the baritone recitative. The choir enters on Schiller’s ode after instrumental previews of the main theme. Earlier movements never use voices.\n"
+    },
+    {
+      "id": "rsa_padding",
+      "title": "SQBench: Crypto engineering",
+      "fts_query": "tok_sqbench_e4f9214",
+      "semantic_query": "Why choose OAEP padding instead of PKCS1 v1.5 for RSA encryption of a session key?",
+      "body": "## Crypto\n\ntok_sqbench_e4f9214\n\nOAEP adds a randomised Feistel mask so ciphertexts are semantically secure under chosen plaintext models. PKCS1 v1.5 padding has been fragile in implementations against bleichenbacher-style attacks. Modern protocols default to OAEP for small payloads.\n"
+    },
+    {
+      "id": "florence_medici",
+      "title": "SQBench: Renaissance finance",
+      "fts_query": "tok_sqbench_e4f9215",
+      "semantic_query": "How did the Medici family profit from bills of exchange across fifteenth-century Europe?",
+      "body": "# History\n\ntok_sqbench_e4f9215\n\nMedici branches arbitraged exchange rates between Florence, London, and Bruges. Letters of credit reduced the need to ship bullion on risky roads. Papal banking contracts cemented their liquidity.\n"
+    },
+    {
+      "id": "game_of_life",
+      "title": "SQBench: Cellular automata",
+      "fts_query": "tok_sqbench_e4f9216",
+      "semantic_query": "What is the smallest pattern that moves diagonally across the grid in Conway’s Game of Life?",
+      "body": "## CA\n\ntok_sqbench_e4f9216\n\nThe glider is a five-cell pattern that translates one cell diagonally every four generations. It is often used as a signal in larger engineered circuits. Oscillators like the blinker stay in place instead.\n"
+    },
+    {
+      "id": "helioseismology",
+      "title": "SQBench: Solar physics",
+      "fts_query": "tok_sqbench_e4f9217",
+      "semantic_query": "What do solar pressure waves tell us about the interior of the Sun?",
+      "body": "# Astrophysics\n\ntok_sqbench_e4f9217\n\nHelioseismology inverts frequencies of p-modes to map sound speed versus radius. A thin tachocline separates radiative and convective zones. Neutrino fluxes cross-check the core temperature inferred from modes.\n"
+    },
+    {
+      "id": "miso_koji",
+      "title": "SQBench: Fermented soy",
+      "fts_query": "tok_sqbench_e4f9218",
+      "semantic_query": "What role does koji mold play when making miso paste from soybeans?",
+      "body": "## Food\n\ntok_sqbench_e4f9218\n\nAspergillus oryzae breaks starch into sugars that feed halotolerant yeasts and bacteria during months-long aging. Salt concentration selects which community dominates after the initial koji stage. Colour and aroma deepen over seasons.\n"
+    },
+    {
+      "id": "crdt_lww",
+      "title": "SQBench: CRDT map last-writer-wins concurrent keys",
+      "fts_query": "tok_sqbench_e4f9219",
+      "semantic_query": "How does last-writer-wins resolve concurrent edits in a CRDT map?",
+      "body": "# Systems\n\ntok_sqbench_e4f9219\n\nA replicated **CRDT map** stores per-key registers. Under **last-writer-wins**, each **concurrent edit** to the same key ships a `(timestamp, replica_id)` tuple; replicas merge by keeping the value whose tuple sorts highest, discarding the loser. This gives deterministic convergence without locking, at the cost of dropping causally concurrent updates users might have wanted to merge manually.\n"
+    },
+    {
+      "id": "antarctic_krill",
+      "title": "SQBench: Marine ecology",
+      "fts_query": "tok_sqbench_e4f9220",
+      "semantic_query": "Why are Antarctic krill considered a keystone species for baleen whales?",
+      "body": "## Ecology\n\ntok_sqbench_e4f9220\n\nKrill aggregate in dense swarms that convert phytoplankton into lipid-rich biomass. Blue and humpback whales time migrations to intersect blooms. Climate shifts that shrink ice edge productivity ripple up the food web.\n"
+    }
+  ]
+}

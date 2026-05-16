@@ -1,0 +1,107 @@
+.db-view {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 24px;
+}
+
+.db-loading,
+.db-empty {
+  color: var(--text);
+  font-style: italic;
+  font-size: 13px;
+}
+
+.db-table-wrap {
+  overflow-x: auto;
+}
+
+.db-table {
+  width: 100%;
+  border-collapse: collapse;
+  font: 13px var(--sans);
+}
+
+.db-table th {
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+}
+
+.db-th-title {
+  min-width: 180px;
+}
+
+.db-table td {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.db-table tr:hover td {
+  background: var(--bg2);
+}
+
+.db-td-title {
+  font-weight: 500;
+  color: var(--text-h);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+.db-note-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.db-note-link:hover {
+  text-decoration: underline;
+}
+
+.db-cell-input {
+  width: 100%;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-h);
+  font: 12px var(--sans);
+  outline: none;
+}
+
+.db-cell-input:focus {
+  border-color: var(--accent);
+  background: var(--bg);
+}
+
+.db-td-value input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.db-cell-empty {
+  color: var(--text);
+  opacity: 0.3;
+  font-size: 13px;
+  padding: 0 4px;
+  user-select: none;
+}
