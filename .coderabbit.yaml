@@ -5,17 +5,21 @@
 
 reviews:
   profile: assertive
+  # Surface skip reasons, ignored paths, and suppressed comments in the walkthrough.
+  review_status: true
+  review_details: true
 
   auto_review:
     enabled: true
     drafts: true
-    # Include the synthetic baseline branch used for full-repo reviews.
+    # Synthetic full-repo PRs: base coderabbit-baseline, compare coderabbit-snapshot (single commit).
     base_branches:
       - "coderabbit-baseline"
       - ".*"
+    # Use explicit CodeRabbit-only keywords — not "do not merge" (blocks baseline audit PR titles).
     ignore_title_keywords:
-      - "do not merge"
-      - "[skip review]"
+      - "[skip coderabbit]"
+      - "coderabbit:skip"
     auto_incremental_review: false
 
   path_filters:
