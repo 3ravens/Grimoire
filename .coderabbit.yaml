@@ -1,0 +1,127 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# Grimoire — CodeRabbit review instructions.
+# See also .cursor/rules/ for agent guidelines CodeRabbit may pick up via Code Guidelines.
+
+reviews:
+  profile: assertive
+
+  auto_review:
+    enabled: true
+    drafts: true
+    # Include the synthetic baseline branch used for full-repo reviews.
+    base_branches:
+      - "coderabbit-baseline"
+      - ".*"
+    ignore_title_keywords:
+      - "do not merge"
+      - "[skip review]"
+    auto_incremental_review: false
+
+  path_filters:
+    - "!vendor/**"
+    - "!**/.svelte-kit/**"
+    - "!benchmarks/wikipedia_index_baseline.json"
+
+  path_instructions:
+    - path: "**"
+      instructions: |
+        Grimoire is a local-first desktop note app (Tauri + Svelte + Rust). Chat and RAG over the user's notes are the primary product.
+
+        Treat these as non-negotiable invariants (flag violations as high severity):
+        - Privacy: no silent network calls, telemetry, or cloud sync. User-visible network use must be explicit and opt-in (e.g. Wikipedia/Kiwix download in settings).
+        - User data safety: uninstall/updates must not delete the user's note vault directory (vault is separate from app data).
+        - Locked content: notes in locked folders must never appear in FTS, LanceDB, RAG context, or search results until unlocked and re-indexed. Defense in depth (skip on index + filter on read) is intentional — do not suggest removing layers without replacing them.
+        - Storage boundaries: SQLite = metadata, settings, FTS only; LanceDB = semantic vectors only; Ollama = local inference (localhost:11434); Tauri IPC = Rust ↔ Svelte boundary. Do not store note bodies or embeddings in the wrong store.
+        - Index consistency: any change that mutates note content, encryption, or folder lock state must keep SQLite FTS and LanceDB aligned (including bulk reindex paths).
+        - Prefer minimal, behavior-preserving diffs. If docs disagree with code, follow code and note migration intent.
+
+        Do not nitpick: license headers, GPL boilerplate, or stylistic churn unrelated to correctness.
+
+    - path: "src-tauri/**"
+      instructions: |
+        Rust/Tauri backend. Commands live under src-tauri/src/commands/.
+
+        Flag as issues:
+        - `.unwrap()` / `.expect()` on production paths (tests and `#[cfg(test)]` are fine).
+        - Raw SQL string interpolation instead of parameterized queries (sqlx `QueryBuilder` or binds).
+        - Schema changes without a new numbered migration in src-tauri/migrations/.
+        - Breaking `AppError` / `AppResult` patterns or leaking internal errors to the frontend without actionable context.
+        - Async commands that block the runtime or hold locks across await points unnecessarily.
+
+        Preserve unless there is a clear bug:
+        - `#[tauri::command] async fn` style for IPC handlers.
+        - Argon2id, AES-256-GCM, SQLCipher, and `zeroize` usage for crypto paths.
+        - `access_filter` / `KeyStore` session semantics for folder lock checks.
+
+    - path: "src-tauri/src/commands/rag.rs"
+      instructions: |
+        Search and RAG pipeline — highest scrutiny.
+
+        Must preserve:
+        - Query embeddings prefixed with `search_query: `; document/chunk embeddings with `search_document: ` (nomic-embed-text asymmetric retrieval).
+        - Locked-folder notes excluded from `fts_upsert` and vector indexing; secondary filters on search/read paths.
+        - FTS as a secondary index: failures on upsert must not fail note saves.
+        - Hybrid search: FTS fast path vs combined FTS + LanceDB; semantic half may degrade gracefully if Ollama is down.
+        - Top-chunk retrieval and best-chunk-per-note ranking; embedding normalization and degenerate-vector guards.
+
+        Must not remove or weaken without equivalent replacement:
+        - Ollama model eviction before embed (`evict_other_models`) and batch split / single-item fallback telemetry — RDNA4/Vulkan stability.
+        - `with_retries` / cancellation-aware retry paths for transient embed failures.
+        - `reindex_all` cancellation via `CancelMap` and SQLite/LanceDB cleanup on bulk mutations.
+
+    - path: "src-tauri/src/commands/search.rs"
+      instructions: |
+        Same invariants as rag.rs: locked-folder exclusion, FTS secondary index, hybrid FTS+LanceDB, embed prefixes, and Ollama eviction/retry safeguards. Search read paths must filter stale FTS rows in locked folders.
+
+    - path: "src-tauri/src/vector/**"
+      instructions: |
+        LanceDB and embedding layer only — no note metadata or FTS here.
+
+        Check: vector schema migrations, delete-on-note-remove, reindex consistency with SQLite note IDs, and that scanned/external file indexing does not bypass lock or encryption rules.
+
+    - path: "src-tauri/migrations/**"
+      instructions: |
+        SQLite migrations are forward-only and run at startup.
+
+        Flag: destructive changes without backfill, missing indexes for new query paths, FTS triggers that could expose encrypted/locked content, and any migration that writes plaintext into FTS for locked or encrypted notes.
+
+    - path: "src-tauri/src/commands/notes.rs"
+      instructions: |
+        Vault paths, encryption at rest, version history, and index hooks must stay consistent with search/RAG and lock state.
+
+    - path: "src-tauri/src/commands/ollama_models.rs"
+      instructions: |
+        HTTP to `http://localhost:11434` only. Flag any new remote LLM endpoints unless explicitly user-configured local host.
+
+    - path: "src-tauri/src/commands/chat.rs"
+      instructions: |
+        Chat uses local Ollama only. Flag streaming/context assembly that could include locked-note content or bypass access filters.
+
+    - path: "src-tauri/src/commands/wikipedia.rs"
+      instructions: |
+        Network access is expected for ZIM catalog/download. Ensure errors are user-visible and downloads are user-initiated, not silent background network use.
+
+    - path: "src/**"
+      instructions: |
+        Svelte 5 frontend. Business logic belongs in Rust commands, not duplicated in the UI.
+
+        Flag:
+        - Calling Tauri commands with secrets or crypto in JS beyond what IPC already exposes.
+        - Rendering note content from search/RAG without respecting lock UI state.
+        - New `fetch()` / WebSocket usage to non-local hosts without a clear user-facing feature and settings entry.
+        - Regressions in chat, editor, or vault flows that would break the primary "write note → ask LLM with local context" path.
+
+        Prefer existing patterns: `*.svelte.js` services/stores, shared CSS under src/lib/styles/, Vitest tests alongside utils.
+
+    - path: "src-tauri/tests/**"
+      instructions: |
+        Integration tests for Rust commands and data flows.
+
+        Ensure new features add or extend tests for lock/search/RAG edge cases. Do not suggest deleting tests that guard locked-folder leakage or index consistency unless behavior intentionally changed.
+
+    - path: "**/*.test.js"
+      instructions: |
+        Vitest unit tests for frontend utilities.
+
+        Prefer behavior-focused tests; flag missing coverage when PR changes parsing, transclusion, folder tree, or chat model matching logic.
