@@ -393,15 +393,15 @@
     const q = searchQuery.trim();
     if (!q) { searchResults = []; searchOpen = false; return; }
     searchOpen = true; // keep dropdown open to show loading state
+    const localSeq = ++searchSuggestSeq;
     searchDebounce = setTimeout(async () => {
-      const seq = ++searchSuggestSeq;
       try {
         const next = await invoke('suggest_wikipedia_articles', { bundleId, query: q });
-        if (seq !== searchSuggestSeq) return;
+        if (localSeq !== searchSuggestSeq) return;
         searchResults = next;
         if (searchResults.length === 0) searchError = 'No results found.';
       } catch (err) {
-        if (seq !== searchSuggestSeq) return;
+        if (localSeq !== searchSuggestSeq) return;
         console.error('Wikipedia suggest failed:', err);
         searchResults = [];
         searchError = typeof err === 'string' ? err : 'Search failed.';

@@ -51,23 +51,23 @@ This file is part of Grimoire — licensed under GPL-3.0 or later. -->
     const q = query.trim();
     if (!q || !selectedBundle) { results = []; searching = false; return; }
     searching = true;
+    const mySeq = ++suggestSeq;
     debounce = setTimeout(async () => {
-      const seq = ++suggestSeq;
       try {
         const next = await invoke('suggest_wikipedia_articles', {
           bundleId: selectedBundle.id,
           query: q,
         });
-        if (seq !== suggestSeq) return;
+        if (mySeq !== suggestSeq) return;
         results = next;
         if (results.length === 0) errorMsg = 'No results found.';
       } catch (err) {
-        if (seq !== suggestSeq) return;
+        if (mySeq !== suggestSeq) return;
         console.error('Wikipedia search failed:', err);
         results = [];
         errorMsg = typeof err === 'string' ? err : 'Search failed.';
       } finally {
-        if (seq === suggestSeq) searching = false;
+        if (mySeq === suggestSeq) searching = false;
       }
     }, 250);
   }

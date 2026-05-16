@@ -4,7 +4,7 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
-  import { getContext, onMount, useId } from 'svelte';
+  import { getContext, onMount } from 'svelte';
   import { focusTrap } from './utils/focusTrap.js';
   import { wizardCuratedChatModels } from './utils/wizardChatModels.js';
   import { CURATED_EMBEDDING_MODELS } from './constants/chatModels.js';

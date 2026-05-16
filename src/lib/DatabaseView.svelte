@@ -63,6 +63,8 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
       rows = [];
       filters = {};
       pending = {};
+      loading = false;
+      ++loadSeq;
     }
   });
 
