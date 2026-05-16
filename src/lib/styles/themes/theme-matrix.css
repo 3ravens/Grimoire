@@ -1,0 +1,200 @@
+/* ══════════════════════════════════════════════════════════════════════════ */
+/* ██  MATRIX THEME — Hacker Terminal                                      ██ */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+@font-face {
+  font-family: 'VT323';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/VT323-Regular.ttf') format('truetype');
+}
+
+[data-theme="matrix"] {
+  --text:       #00b330;
+  --text-h:     #00ff41;
+  --bg:         #000000;
+  --bg2:        #010e01;
+  --bg3:        #001a00;
+  --border:     #003300;
+  --accent:     #00ff41;
+  --accent-bg:  rgba(0, 255, 65, 0.1);
+  --danger:     #ff4444;
+  --diff-add-bg: rgba(0, 255, 65, 0.1);
+  --diff-add-border: rgba(0, 255, 65, 0.22);
+  --diff-remove-bg: rgba(255, 68, 68, 0.1);
+  --diff-remove-border: rgba(255, 68, 68, 0.22);
+  --diff-unchanged-bg: transparent;
+  color-scheme: dark;
+
+  --sans: 'VT323', ui-monospace, 'Courier New', monospace;
+  --mono: 'VT323', ui-monospace, 'Courier New', monospace;
+}
+
+[data-theme="matrix"] body {
+  background: #000000;
+  font-size: 15px;
+  line-height: 1.5;
+  letter-spacing: 0.03em;
+}
+
+[data-theme="matrix"] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0px,
+    transparent 2px,
+    rgba(0, 0, 0, 0.08) 2px,
+    rgba(0, 0, 0, 0.08) 4px
+  );
+}
+
+[data-theme="matrix"] .folder-list li.active {
+  background: transparent;
+  border-left: 2px solid var(--accent);
+  border-radius: 0;
+  color: var(--accent);
+}
+
+[data-theme="matrix"] .folder-list li:hover {
+  background: rgba(0, 255, 65, 0.06);
+}
+
+[data-theme="matrix"] .note-list li.active {
+  background: rgba(0, 255, 65, 0.08);
+  border-left: 3px solid var(--accent);
+  border-radius: 0;
+  color: var(--accent);
+}
+
+[data-theme="matrix"] .note-list li:hover {
+  background: rgba(0, 255, 65, 0.04);
+}
+
+[data-theme="matrix"] .tag-pill {
+  border-color: rgba(0, 255, 65, 0.35);
+  background: transparent;
+  color: var(--text);
+}
+
+[data-theme="matrix"] .title-input {
+  font-size: 20px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+[data-theme="matrix"] ::-webkit-scrollbar {
+  width: 4px;
+}
+
+[data-theme="matrix"] ::-webkit-scrollbar-thumb {
+  background: #003300;
+}
+
+[data-theme="matrix"] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes matrix-rain-1 { from { background-position: 0 0;     } to { background-position: 0 200px; } }
+@keyframes matrix-rain-2 { from { background-position: 0 -80px; } to { background-position: 0 120px; } }
+
+[data-theme="matrix"] .empty-editor {
+  font-style: normal;
+  color: #00ff41;
+  letter-spacing: 0.1em;
+  position: relative;
+  overflow: hidden;
+}
+
+[data-theme="matrix"] .empty-editor::before,
+[data-theme="matrix"] .empty-editor::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    180deg,
+    transparent 0px,
+    transparent 14px,
+    rgba(0, 255, 65, 0.07) 14px,
+    rgba(0, 255, 65, 0.07) 16px,
+    transparent 16px,
+    transparent 28px,
+    rgba(0, 255, 65, 0.03) 28px,
+    rgba(0, 255, 65, 0.03) 29px
+  );
+  background-size: 100% 200px;
+}
+
+[data-theme="matrix"] .empty-editor::before {
+  animation: matrix-rain-1 4s linear infinite;
+  opacity: 0.7;
+}
+
+[data-theme="matrix"] .empty-editor::after {
+  animation: matrix-rain-2 6s linear infinite;
+  opacity: 0.5;
+}
+
+[data-theme="matrix"] .lock-screen {
+  background: #000000;
+}
+
+[data-theme="matrix"] .lock-screen .lock-box {
+  background: #000000;
+  border: 1px solid #003300;
+  border-radius: 0;
+  box-shadow: 0 0 20px rgba(0, 255, 65, 0.15), inset 0 0 30px rgba(0, 0, 0, 0.8);
+}
+
+[data-theme="matrix"] .lock-screen .lock-title {
+  color: #00ff41;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  text-shadow: 0 0 8px rgba(0, 255, 65, 0.6);
+}
+
+[data-theme="matrix"] .lock-screen .lock-subtitle {
+  color: #00b330;
+}
+
+[data-theme="matrix"] .lock-screen .lock-field input {
+  background: #000000;
+  border-color: #003300;
+  color: #00ff41;
+  border-radius: 0;
+  caret-color: #00ff41;
+}
+
+[data-theme="matrix"] .lock-screen .lock-field input:focus {
+  border-color: #00ff41;
+  box-shadow: 0 0 0 1px rgba(0, 255, 65, 0.3);
+}
+
+[data-theme="matrix"] .lock-screen .lock-field input::placeholder {
+  color: #003300;
+  opacity: 1;
+}
+
+[data-theme="matrix"] .lock-screen .lock-btn {
+  background: #000000;
+  border-color: #00b330;
+  color: #00ff41;
+  border-radius: 0;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+[data-theme="matrix"] .lock-screen .lock-btn:not(:disabled):hover {
+  background: rgba(0, 255, 65, 0.1);
+  border-color: #00ff41;
+  box-shadow: 0 0 8px rgba(0, 255, 65, 0.3);
+}
+
+[data-theme="matrix"] .lock-screen .lock-btn:disabled {
+  opacity: 0.3;
+}

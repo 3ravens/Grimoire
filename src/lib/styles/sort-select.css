@@ -1,0 +1,13 @@
+.sort-select {
+  background: none;
+  border: none;
+  font: 11px var(--sans);
+  color: var(--text);
+  opacity: 0.6;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.sort-select:hover {
+  opacity: 1;
+}

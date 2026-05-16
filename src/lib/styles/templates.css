@@ -1,0 +1,251 @@
+.template-select {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font: 11px var(--sans);
+  outline: none;
+  cursor: pointer;
+  max-width: 90px;
+}
+
+.template-select:focus {
+  border-color: var(--accent);
+}
+
+.template-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.template-list li {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  height: 28px;
+}
+
+.template-list li:hover {
+  background: var(--bg3);
+}
+
+.template-list li:hover .icon-btn {
+  opacity: 1;
+}
+
+.template-name {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── TemplateModal.svelte ──────────────────────────────────────────── */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+}
+
+.modal {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-title {
+  font: 600 14px/1 var(--sans);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-h);
+  margin: 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field span {
+  font: 12px var(--sans);
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.optional {
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.6;
+}
+
+input[type="text"],
+textarea {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  color: var(--text-h);
+  font: 13px var(--sans);
+  border-radius: 4px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+input[type="text"]:focus,
+textarea:focus {
+  border-color: var(--accent);
+}
+
+textarea {
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.modal-error {
+  font-size: 12px;
+  color: var(--danger);
+  margin: 0;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.modal-cancel {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font: 13px var(--sans);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.modal-cancel:not(:disabled):hover {
+  background: var(--bg3);
+}
+
+.modal-confirm {
+  padding: 6px 14px;
+  border: 1px solid var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font: 13px var(--sans);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.modal-confirm:not(:disabled):hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.modal-confirm:disabled,
+.modal-cancel:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.props-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.props-section-label {
+  font: 12px var(--sans);
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.props-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.prop-spec-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.prop-spec-input {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  color: var(--text-h);
+  font: 12px var(--sans);
+  border-radius: 4px;
+  outline: none;
+  box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
+}
+
+.prop-spec-input:focus {
+  border-color: var(--accent);
+}
+
+.prop-spec-type {
+  flex: 0 0 auto;
+  width: 100px;
+}
+
+.prop-spec-options {
+  flex: 1.5;
+}
+
+.prop-spec-delete {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.prop-spec-delete:hover {
+  color: var(--danger);
+  background: rgba(229, 62, 62, 0.1);
+}
+
+.prop-spec-add {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 2px 0;
+  font: 12px var(--sans);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.prop-spec-add:hover {
+  color: var(--accent);
+}

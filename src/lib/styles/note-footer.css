@@ -1,0 +1,84 @@
+.note-footer {
+  border-top: 1px solid var(--border);
+  padding: 10px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+  background: var(--bg);
+}
+
+.note-footer-section {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.note-footer-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  flex-shrink: 0;
+  min-width: 64px;
+}
+
+.link-pill {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg2);
+  color: var(--text-h);
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--sans);
+  line-height: 1.5;
+}
+
+.link-pill:hover {
+  background: var(--bg3);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.link-pill-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.link-pill-action {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg2);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  font-family: var(--sans);
+  line-height: 1.5;
+}
+
+.link-pill-action:hover {
+  background: var(--bg3);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.clear-filter-btn {
+  background: none;
+  border: none;
+  padding: 2px 5px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 11px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.clear-filter-btn:hover {
+  color: var(--danger);
+  background: rgba(229, 62, 62, 0.1);
+}

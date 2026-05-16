@@ -1,0 +1,32 @@
+.icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  opacity: 0;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.icon-btn svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+li:hover > .icon-btn {
+  opacity: 1;
+}
+
+li:hover:not(:has(li:hover)) > .folder-row .icon-btn {
+  opacity: 1;
+}
+
+.icon-btn.danger:hover {
+  color: var(--danger);
+  background: rgba(229, 62, 62, 0.1);
+}

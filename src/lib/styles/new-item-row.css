@@ -1,0 +1,30 @@
+.new-item-row {
+  display: flex;
+  gap: 4px;
+  margin-top: 12px;
+}
+
+.new-item-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-h);
+  font-size: 13px;
+}
+
+.new-item-row button {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--accent);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.new-item-row button:hover {
+  background: var(--accent-bg);
+}

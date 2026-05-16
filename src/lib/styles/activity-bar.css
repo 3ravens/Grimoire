@@ -1,0 +1,77 @@
+.activity-bar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 36px;
+  z-index: 20;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 0;
+  overflow: hidden;
+}
+
+.activity-bar-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.activity-bar-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  margin-top: auto;
+}
+
+.activity-bar-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: color 0.1s, background 0.1s;
+}
+
+.activity-bar-btn:hover {
+  color: var(--text-h);
+  background: var(--bg3);
+}
+
+.activity-bar-btn.active {
+  color: var(--accent);
+}
+
+.activity-bar-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.activity-bar-separator {
+  width: 20px;
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 6px 0;
+  flex-shrink: 0;
+}
+
+.activity-bar-section-label {
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  opacity: 0.4;
+  user-select: none;
+  margin-bottom: 4px;
+}

@@ -1,0 +1,77 @@
+.qs-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 120px;
+}
+
+.qs-panel {
+  width: 520px;
+  max-width: calc(100vw - 40px);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.qs-input {
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--bg);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-h);
+  font: 14px var(--sans);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.qs-input::placeholder {
+  color: var(--text-muted, var(--text));
+  opacity: 0.5;
+}
+
+.qs-results {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.qs-item {
+  display: flex;
+}
+
+.qs-item-btn {
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 8px 16px;
+  text-align: left;
+  color: var(--text);
+  font: 13px var(--sans);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qs-item.selected .qs-item-btn,
+.qs-item-btn:hover {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.qs-empty {
+  padding: 10px 16px;
+  color: var(--text);
+  font: 13px var(--sans);
+  opacity: 0.5;
+}

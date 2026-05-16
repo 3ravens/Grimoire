@@ -1,0 +1,41 @@
+.layout {
+  display: grid;
+  height: calc(100vh - 36px);
+  margin-left: 36px;
+}
+
+body.focus-mode .activity-bar {
+  display: none;
+}
+
+body.focus-mode .layout {
+  margin-left: 0;
+}
+
+body.focus-mode .titlebar {
+  margin-left: 0;
+}
+
+body.focus-mode .titlebar-left {
+  display: none;
+}
+
+body.focus-mode .sidebar,
+body.focus-mode .note-list,
+body.focus-mode .panel-divider:not(.chat-divider) {
+  display: none;
+}
+
+.panel-divider {
+  padding: 0;
+  background: var(--bg2);
+  border: none;
+  border-left: 1px solid var(--border);
+  cursor: col-resize;
+  transition: border-color 0.1s;
+}
+
+.panel-divider:hover,
+.panel-divider.dragging {
+  border-left-color: var(--accent);
+}

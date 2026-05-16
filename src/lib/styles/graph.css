@@ -1,0 +1,32 @@
+.graph-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--bg);
+  display: flex;
+}
+
+.graph-close {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 51;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg2);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.graph-close:hover {
+  background: var(--bg3);
+  color: var(--text-h);
+}
+
+.graph-overlay canvas {
+  flex: 1;
+  display: block;
+  touch-action: none;
+}
