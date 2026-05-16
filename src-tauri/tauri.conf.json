@@ -1,0 +1,62 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Grimoire",
+  "version": "0.1.0",
+  "identifier": "com.grimoire.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Grimoire",
+        "width": 1800,
+        "height": 1080,
+        "minWidth": 800,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": false,
+        "center": true,
+        "dragDropEnabled": false,
+        "backgroundColor": "#fdfaf9",
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "copyright": "Copyright (C) 2026 Wim Palland",
+    "homepage": "https://grimoireapp.dev",
+    "shortDescription": "Local-first Markdown notes with private LLM chat and RAG.",
+    "longDescription": "Grimoire stores notes on your machine, indexes them in SQLite and LanceDB, and uses a local Ollama runtime for AI chat and retrieval — no cloud accounts or API keys required.",
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "nsis-dll-staging/zim-9.dll": "zim-9.dll",
+      "nsis-dll-staging/zstd.dll": "zstd.dll",
+      "nsis-dll-staging/liblzma.dll": "liblzma.dll",
+      "nsis-dll-staging/icudt78.dll": "icudt78.dll",
+      "nsis-dll-staging/icuin78.dll": "icuin78.dll",
+      "nsis-dll-staging/icuio78.dll": "icuio78.dll",
+      "nsis-dll-staging/icutu78.dll": "icutu78.dll",
+      "nsis-dll-staging/icuuc78.dll": "icuuc78.dll"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "skip"
+      }
+    }
+  }
+}

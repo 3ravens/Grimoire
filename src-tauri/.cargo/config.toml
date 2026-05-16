@@ -1,0 +1,17 @@
+# Windows-only build configuration for zim-sys.
+#
+# zim-sys compiles a C++ bridge file (zim-bind.cc) that includes zim/ headers.
+# On Windows, zim-sys's build.rs does not pass any include directories to
+# cxx_build (its Windows support is marked "not tested"). We set CXXFLAGS here
+# so the cc crate appends the vcpkg include path to the MSVC compilation
+# command when building zim-bind.cc.
+#
+# The `force = false` flag means this env var will only be set if it is not
+# already present in the shell environment, so a CI machine with a different
+# layout can override it by setting CXXFLAGS before invoking cargo.
+
+[env]
+CXXFLAGS = { value = "/IC:\\vcpkg\\installed\\x64-windows\\include", force = false }
+# Suppress LanceDB/Arrow/DataFusion internal span noise in dev builds.
+# Set RUST_LOG in your shell to override (force = false).
+RUST_LOG = { value = "warn,app=info", force = false }
