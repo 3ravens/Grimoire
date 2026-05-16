@@ -224,11 +224,22 @@ pub async fn restore_note_version(
 pub async fn move_note(
     pool: State<'_, SqlitePool>,
     keys: State<'_, SharedKeyStore>,
+    vdb: State<'_, VectorDb>,
     id: i64,
     folder_id: Option<i64>,
 ) -> AppResult<Note> {
     let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let note = store.move_note(id, folder_id).await?;
+    if note.locked {
+        super::search::fts_delete(pool.inner(), note.id)
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+    } else {
+        super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
+    }
+    crate::vector::notes::remove(&vdb.0, note.id)
+        .await
+        .map_err(AppError::VectorStore)?;
     let _ = crate::audit::log_event(
         pool.inner(), "note_update", Some("note"),
         Some(note.id), Some(&note.title), Some("moved"),
@@ -275,19 +286,17 @@ pub async fn delete_note(
         return Err(AppError::Auth("folder_locked".to_string()));
     }
 
-    sqlx::query("DELETE FROM notes WHERE id = ?")
-        .bind(id)
-        .execute(pool.inner())
-        .await
-        ?;
-
-    super::search::fts_delete(pool.inner(), id)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
     crate::vector::notes::remove(&vdb.0, id)
         .await
         .map_err(AppError::VectorStore)?;
+
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM notes WHERE id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    super::search::fts_delete_tx(&mut tx, id).await?;
+    tx.commit().await?;
 
     let _ = crate::audit::log_event(
         pool.inner(), "note_delete", Some("note"),

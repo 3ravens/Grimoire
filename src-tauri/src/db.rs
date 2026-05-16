@@ -15,8 +15,23 @@
 // You should have received a copy of the GNU General Public License
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use std::str::FromStr;
+use std::time::Duration;
+
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+use sqlx::SqlitePool;
 use tauri::{AppHandle, Manager};
+
+fn app_sqlite_options(db_path: &std::path::Path) -> Result<SqliteConnectOptions, sqlx::Error> {
+    let url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+    Ok(
+        SqliteConnectOptions::from_str(&url)
+            .map_err(|e| sqlx::Error::Configuration(e.into()))?
+            .create_if_missing(true)
+            .journal_mode(SqliteJournalMode::Wal)
+            .busy_timeout(Duration::from_millis(10_000)),
+    )
+}
 
 /// Errors resolving paths, creating directories, or opening/migrating SQLite.
 #[derive(Debug)]
@@ -83,23 +98,11 @@ pub async fn init_db(app: &AppHandle) -> Result<SqlitePool, DbInitError> {
     std::fs::create_dir_all(&app_dir)?;
 
     let db_path = app_dir.join("grimoire.db");
-    let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+    let options = app_sqlite_options(&db_path)?;
 
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect(&db_url)
-        .await?;
-
-    // Enable WAL journal mode. This allows reads and writes to proceed concurrently
-    // instead of serialising — eliminates the 5s write-queue delays under load.
-    sqlx::query("PRAGMA journal_mode=WAL")
-        .execute(&pool)
-        .await?;
-
-    // Wait up to 10s on SQLITE_BUSY instead of failing immediately when another
-    // connection (e.g. startup FTS sync) holds the write lock briefly.
-    sqlx::query("PRAGMA busy_timeout=10000")
-        .execute(&pool)
+        .connect_with(options)
         .await?;
 
     // Compatibility guard after removing migration v16 from the codebase.
@@ -147,13 +150,10 @@ pub async fn open_sqlite_file(db_path: &std::path::Path) -> Result<SqlitePool, s
             sqlx::Error::Configuration(format!("create_dir_all({}): {e}", parent.display()).into())
         })?;
     }
-    let db_url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
+    let options = app_sqlite_options(db_path)?;
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect(&db_url)
-        .await?;
-    sqlx::query("PRAGMA journal_mode=WAL")
-        .execute(&pool)
+        .connect_with(options)
         .await?;
     forget_removed_migration_16_if_present(&pool).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;

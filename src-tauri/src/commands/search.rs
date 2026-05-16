@@ -16,7 +16,7 @@
 // along with Grimoire. If not, see <https://www.gnu.org/licenses/>.
 
 use serde::Serialize;
-use sqlx::SqlitePool;
+use sqlx::{Sqlite, SqlitePool, Transaction};
 use tauri::State;
 use crate::AppResult;
 use crate::{KeyStore, SharedKeyStore};
@@ -51,6 +51,28 @@ pub(crate) async fn fts_delete(pool: &SqlitePool, id: i64) -> Result<(), sqlx::E
     sqlx::query("DELETE FROM notes_fts WHERE rowid = ?")
         .bind(id)
         .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Remove every row from the note FTS index (vault lock / re-encrypt paths).
+pub(crate) async fn fts_purge_all(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM notes_fts").execute(pool).await?;
+    Ok(())
+}
+
+pub(crate) async fn fts_purge_tx(tx: &mut Transaction<'_, Sqlite>) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM notes_fts").execute(&mut **tx).await?;
+    Ok(())
+}
+
+pub(crate) async fn fts_delete_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    id: i64,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM notes_fts WHERE rowid = ?")
+        .bind(id)
+        .execute(&mut **tx)
         .await?;
     Ok(())
 }

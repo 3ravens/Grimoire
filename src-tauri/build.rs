@@ -155,6 +155,17 @@ fn copy_zim_dlls_to_out() -> std::io::Result<()> {
                 println!("cargo:rerun-if-changed={}", src.display());
             }
         } else {
+            if std::env::var("PROFILE").unwrap_or_default() == "release" {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!(
+                        "release build: missing DLL `{dll}` (checked {} and {}). \
+Place real DLLs in vendor-dlls or vcpkg installed/x64-windows/bin before bundling.",
+                        src_dir.display(),
+                        vcpkg_bin.display(),
+                    ),
+                ));
+            }
             println!(
                 "cargo:warning=No `{dll}` in {} or {} — writing zero-byte file only under {} so Tauri resource paths resolve. `cargo test` / runtime need a real DLL in {} or PATH.",
                 src_dir.display(),

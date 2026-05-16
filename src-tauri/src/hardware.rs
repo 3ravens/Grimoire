@@ -557,6 +557,10 @@ async fn try_linux_drm() -> Option<Vec<GpuInfo>> {
 
         let base = entry.path().join("device");
 
+        if fs::metadata(&base).await.is_err() {
+            continue;
+        }
+
         // GPU display name from the vendor/device uevent or modalias.
         let gpu_name = read_drm_name(&base).await.unwrap_or_else(|| card_name.to_string());
 

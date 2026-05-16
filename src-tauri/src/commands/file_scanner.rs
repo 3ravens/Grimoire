@@ -1448,8 +1448,9 @@ pub async fn import_file_as_note(
         .to_string();
 
     let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
-    let mut note = store.create_note(&title, folder_id).await?;
-    note = store.update_note(note.id, &title, &content).await?;
+    let note = store
+        .create_note_with_content(&title, &content, folder_id)
+        .await?;
 
     if !note.locked {
         super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;

@@ -391,6 +391,40 @@ impl<'a> EncryptedNoteStore<'a> {
         Ok(self.to_note(row, false))
     }
 
+    /// Create a note with title and body in one round-trip (atomic insert).
+    pub async fn create_note_with_content(
+        &self,
+        title: &str,
+        content: &str,
+        folder_id: Option<i64>,
+    ) -> AppResult<Note> {
+        let folder_locked_col = if let Some(fid) = folder_id {
+            sqlx::query_scalar::<_, i64>("SELECT locked FROM folders WHERE id = ?")
+                .bind(fid)
+                .fetch_optional(self.pool)
+                .await?
+                .unwrap_or(0) != 0
+        } else {
+            false
+        };
+        self.check_writable(folder_id, folder_locked_col)?;
+
+        let stored_title = self.encrypt_str(folder_id, title);
+        let stored_content = self.encrypt_str(folder_id, content);
+
+        let row = sqlx::query_as::<_, NoteRow>(
+            "INSERT INTO notes (title, content, folder_id) VALUES (?, ?, ?)
+             RETURNING id, title, content, folder_id, created_at, updated_at",
+        )
+        .bind(&stored_title)
+        .bind(&stored_content)
+        .bind(folder_id)
+        .fetch_one(self.pool)
+        .await?;
+
+        Ok(self.to_note(row, folder_locked_col))
+    }
+
     /// Update a note's title and content, encrypting both.  Rejects locked folders.
     pub async fn update_note(&self, id: i64, title: &str, content: &str) -> AppResult<Note> {
         let current: Option<(Option<i64>,)> =

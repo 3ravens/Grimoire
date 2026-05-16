@@ -392,21 +392,27 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
         // Startup path first — do not block on event listener registration.
         (async () => {
-            await getCurrentWindow().show();
-            await vault.checkLockState();
+            try {
+                await getCurrentWindow().show();
+                await vault.checkLockState();
 
-            if (!vault.vaultLocked) {
-                await refreshInstallationWizardFromBackend();
-                if (!installationWizardOpen) {
-                    await loadMainShellAfterUnlock();
+                if (!vault.vaultLocked) {
+                    await refreshInstallationWizardFromBackend();
+                    if (!installationWizardOpen) {
+                        await loadMainShellAfterUnlock();
+                    }
+                } else {
+                    wizardCheckDone = true;
                 }
-            } else {
+            } catch (e) {
+                console.error("Grimoire startup:", e);
+                err.showError(e);
                 wizardCheckDone = true;
-            }
-
-            await tick();
-            if (wizardCheckDone && !installationWizardOpen) {
-                window.__GRIMOIRE_PERF_READY__ = true;
+            } finally {
+                await tick();
+                if (wizardCheckDone && !installationWizardOpen) {
+                    window.__GRIMOIRE_PERF_READY__ = true;
+                }
             }
         })();
 

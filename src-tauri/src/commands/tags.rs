@@ -17,6 +17,7 @@
 
 use serde::Serialize;
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use tauri::State;
 use crate::SharedKeyStore;
 use crate::{AppResult, EncryptedNoteStore};
@@ -226,6 +227,9 @@ pub async fn get_note_links(
     let mut links: Vec<LinkedNote> = Vec::with_capacity(ids.len());
     for id in ids {
         let n = store.get_note(id).await?;
+        if n.locked {
+            continue;
+        }
         links.push(LinkedNote { id, title: n.title });
     }
     links.sort_by(|a, b| a.title.cmp(&b.title));
@@ -252,6 +256,9 @@ pub async fn get_backlinks(
     let mut links: Vec<LinkedNote> = Vec::with_capacity(ids.len());
     for id in ids {
         let n = store.get_note(id).await?;
+        if n.locked {
+            continue;
+        }
         links.push(LinkedNote { id, title: n.title });
     }
     links.sort_by(|a, b| a.title.cmp(&b.title));
@@ -297,8 +304,10 @@ pub async fn get_graph_data(
 ) -> AppResult<(Vec<GraphNode>, Vec<GraphEdge>)> {
     let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let notes = store.list_notes(None, true).await?;
+    let allowed: HashSet<i64> = notes.iter().filter(|n| !n.locked).map(|n| n.id).collect();
     let nodes: Vec<GraphNode> = notes
         .into_iter()
+        .filter(|n| !n.locked)
         .map(|n| GraphNode {
             id: n.id,
             title: n.title,
@@ -306,12 +315,13 @@ pub async fn get_graph_data(
         })
         .collect();
 
-    let edges = sqlx::query_as::<_, GraphEdge>(
+    let mut edges = sqlx::query_as::<_, GraphEdge>(
         "SELECT source_id AS source, target_id AS target FROM note_links",
     )
     .fetch_all(pool.inner())
     .await
     ?;
+    edges.retain(|e| allowed.contains(&e.source) && allowed.contains(&e.target));
 
     Ok((nodes, edges))
 }
@@ -431,4 +441,23 @@ fn replace_first_plain_mention(haystack: &str, needle: &str, replacement: &str) 
         i += 1;
     }
     haystack.to_string()
+}
+
+#[cfg(test)]
+mod graph_filter_tests {
+    use std::collections::HashSet;
+
+    use super::GraphEdge;
+
+    #[test]
+    fn graph_edges_drop_endpoints_not_in_allowed_set() {
+        let allowed: HashSet<i64> = [1i64, 2].into_iter().collect();
+        let mut edges = vec![
+            GraphEdge { source: 1, target: 2 },
+            GraphEdge { source: 1, target: 99 },
+        ];
+        edges.retain(|e| allowed.contains(&e.source) && allowed.contains(&e.target));
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target, 2);
+    }
 }

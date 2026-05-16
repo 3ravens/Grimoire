@@ -29,6 +29,7 @@ use tauri::State;
 use zeroize::Zeroize;
 
 use crate::{
+    commands::search,
     crypto,
     folder_tree::folder_subtree_ids,
     vector::VectorDb,
@@ -128,6 +129,10 @@ pub async fn lock_vault(
         }
         *key_guard = None;
     } // key_guard dropped here before the await
+    // FTS must not retain plaintext titles/snippets while the vault is locked.
+    search::fts_purge_all(pool.inner())
+        .await
+        .map_err(|e| e.to_string())?;
     // Purge LanceDB so note excerpts aren't readable while the vault is locked.
     crate::vector::notes::purge_all(&vdb.0).await?;
     crate::commands::rag::clear_vault_reindex_checkpoint(pool.inner())
@@ -240,6 +245,9 @@ pub async fn set_vault_password(
             .await
             .map_err(|e| e.to_string())?;
     }
+
+    // Notes are ciphertext now — drop FTS rows so plaintext never lingers in SQLite FTS.
+    search::fts_purge_tx(&mut tx).await.map_err(|e| e.to_string())?;
 
     // Write salt + sentinel (INSERT OR REPLACE handles both set and change).
     sqlx::query(
@@ -367,6 +375,12 @@ pub async fn remove_vault_password(
 
     tx.commit().await.map_err(|e| e.to_string())?;
 
+    // Rebuild FTS for plaintext notes now that the vault password is removed.
+    search::fts_purge_all(pool.inner())
+        .await
+        .map_err(|e| e.to_string())?;
+    search::fts_initial_sync(pool.inner()).await;
+
     // Clear the in-memory key.
     let mut key_guard = keys.vault_key.lock().map_err(|e| e.to_string())?;
     if let Some(ref mut k) = *key_guard {
@@ -411,6 +425,31 @@ pub async fn set_folder_password(
         .await
         .map_err(|e| e.to_string())?;
 
+    let root_locked: i64 =
+        sqlx::query_scalar("SELECT COALESCE(locked, 0) FROM folders WHERE id = ?")
+            .bind(folder_id)
+            .fetch_one(pool.inner())
+            .await
+            .map_err(|e| e.to_string())?;
+    if root_locked != 0 {
+        return Err("folder_already_locked".to_string());
+    }
+
+    for &fid in &subtree_ids {
+        if fid == folder_id {
+            continue;
+        }
+        let locked: i64 =
+            sqlx::query_scalar("SELECT COALESCE(locked, 0) FROM folders WHERE id = ?")
+                .bind(fid)
+                .fetch_one(pool.inner())
+                .await
+                .map_err(|e| e.to_string())?;
+        if locked != 0 {
+            return Err("folder_subtree_has_locked_children".to_string());
+        }
+    }
+
     let mut all_note_ids: Vec<i64> = Vec::new();
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
 
@@ -432,6 +471,9 @@ pub async fn set_folder_password(
                 .bind(&enc_content)
                 .bind(id)
                 .execute(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+            search::fts_delete_tx(&mut tx, *id)
                 .await
                 .map_err(|e| e.to_string())?;
         }
@@ -532,6 +574,9 @@ pub async fn remove_folder_password(
     }
 
     tx.commit().await.map_err(|e| e.to_string())?;
+
+    // FTS + Lance for this subtree: the UI calls `start_folder_unlock_reindex`
+    // after a successful remove so plaintext is not searchable until re-index completes.
 
     // All async work is done — now acquire the mutex to update session keys.
     {
