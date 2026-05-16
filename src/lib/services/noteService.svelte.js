@@ -16,7 +16,6 @@ export function createNoteService({ onError }) {
   let tagFilter = $state(null);
   let allTags = $state([]);
   let noteDeletePending = $state(null);
-  let isSeeding = $state(false);
   let isReindexing = $state(false);
   /** Latest `test_data:progress` payload while `generateTestData` runs (dev builds). */
   /** @type {{ phase: string, message: string, current?: number, total?: number } | null} */
@@ -284,22 +283,7 @@ export function createNoteService({ onError }) {
     loadActiveNoteMeta(note);
   }
 
-  async function seedNotes() {
-    isSeeding = true;
-    try {
-      const n = await invoke("seed_notes");
-      window.dispatchEvent(new CustomEvent('grimoire:vault-data-changed'));
-      return { count: n };
-    } catch (e) {
-      onError?.(e);
-      return null;
-    } finally {
-      isSeeding = false;
-    }
-  }
-
   async function generateTestData(params) {
-    isSeeding = true;
     testDataProgress = null;
     let unlisten = null;
     try {
@@ -315,7 +299,6 @@ export function createNoteService({ onError }) {
     } finally {
       unlisten?.();
       testDataProgress = null;
-      isSeeding = false;
     }
   }
   async function reindexAll() {
@@ -418,9 +401,6 @@ export function createNoteService({ onError }) {
     set noteDeletePending(v) {
       noteDeletePending = v;
     },
-    get isSeeding() {
-      return isSeeding;
-    },
     get testDataProgress() {
       return testDataProgress;
     },
@@ -449,7 +429,6 @@ export function createNoteService({ onError }) {
     clearTagFilter,
     moveNote,
     applyRestoredNote,
-    seedNotes,
     generateTestData,
     reindexAll,
   };

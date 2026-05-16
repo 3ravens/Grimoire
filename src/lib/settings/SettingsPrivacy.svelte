@@ -4,6 +4,8 @@
   import AuditLog from '../AuditLog.svelte';
   import ConfirmModal from '../ConfirmModal.svelte';
 
+  let { onOpenPrivacyPolicy = () => {} } = $props();
+
   let auditEnabled = $state(true);
   let logFileAccess = $state(true);
 
@@ -83,6 +85,20 @@
     <input type="checkbox" checked disabled />
     <span class="toggle-label">Always on</span>
   </label>
+</div>
+
+<div class="setting-row">
+  <div class="setting-label">
+    <span class="setting-name">Privacy policy</span>
+    <span class="setting-desc">
+      The official, lawyer-approved, extremely thorough disclosure. You will want to sit down for this one.
+    </span>
+  </div>
+  <div class="setting-actions">
+    <button type="button" class="settings-action-btn" onclick={onOpenPrivacyPolicy}>
+      Open privacy policy…
+    </button>
+  </div>
 </div>
 
 <h3>Audit Log</h3>

@@ -12,7 +12,6 @@
   const notes            = $derived(ns.notes);
   const activeNote       = $derived(ns.activeNote);
   const tagFilter        = $derived(ns.tagFilter);
-  const isSeeding        = $derived(ns.isSeeding);
   const isReindexing     = $derived(ns.isReindexing);
   const reindexProgress  = $derived(ns.reindexProgress);
   const folders          = $derived(fs.folders);
@@ -28,7 +27,6 @@
     onConfirmInlineRename,
     onOpenKanbanTab,
     onSaveNote,
-    onSeedNotes,
     onReindexAll,
     onTableViewToggle,
     onNoteDragStart,
@@ -142,11 +140,6 @@
   {/each}
 </ul>
 
-{#if import.meta.env.DEV && notes.length === 0}
-  <button class="seed-btn" onclick={onSeedNotes} disabled={isSeeding}>
-    {isSeeding ? 'Seeding…' : 'Seed test notes'}
-  </button>
-{/if}
 <button class="seed-btn" onclick={onReindexAll} disabled={isReindexing}>
   {#if isReindexing}
     {#if reindexProgress && reindexProgress.total > 0}

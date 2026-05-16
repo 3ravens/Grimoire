@@ -230,7 +230,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
     // notes, activeNote, editorTitle, editorContent, isDirty, indexState, editorTextareaEl,
     // noteTags, noteLinks, noteBacklinks, unlinkedMentions, tagFilter, allTags,
-    // noteDeletePending, isSeeding, isReindexing all live in noteService (ns).
+    // noteDeletePending, isReindexing all live in noteService (ns).
 
     // ── Tab state ─────────────────────────────────────────────────────────────────
     // tabs, activeTabId, activeTab, makeTabId, chatInsert, searchOpen, tableViewOpen,
@@ -241,7 +241,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     // Search panel
     // searchOpen lives in tabService (ts).
 
-    // isSeeding, isReindexing live in noteService (ns).
+    // isReindexing lives in noteService (ns).
 
     // Tags and links, tagFilter, allTags live in noteService (ns).
 
@@ -836,13 +836,6 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
     // ── Keyboard shortcuts — handled by keyboardService (kbd).
 
-    async function seedNotes() {
-        const result = await ns.seedNotes();
-        if (result?.count != null) {
-            err.showError(`✓ Seeded ${result.count} notes and indexed them.`);
-        }
-    }
-
     async function reindexAll() {
         const result = await ns.reindexAll();
         if (result?.msg) err.showError(`✓ ${result.msg}.`);
@@ -1251,7 +1244,6 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                     onConfirmInlineRename={confirmInlineRename}
                     onOpenKanbanTab={openKanbanTab}
                     onSaveNote={saveNote}
-                    onSeedNotes={seedNotes}
                     onReindexAll={reindexAll}
                     onTableViewToggle={() => {
                         if (ns.isDirty) saveNote();
