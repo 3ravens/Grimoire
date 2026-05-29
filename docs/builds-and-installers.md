@@ -69,7 +69,7 @@ Sources: `src-tauri/vendor-dlls/` or `%VCPKG_ROOT%\installed\x64-windows\bin`.
 | **Homebrew** `libzim`, `protobuf`, `pkg-config` | Build `zim-sys`; protoc for LanceDB |
 | **Rust targets** | `aarch64-apple-darwin`, `x86_64-apple-darwin` for release matrix |
 
-### Linux (Ubuntu 22.04+ baseline)
+### Linux (Ubuntu 24.04+ baseline for CI; 22.04+ for local dev)
 
 | Package | Purpose |
 |---------|---------|
@@ -166,7 +166,7 @@ App data (SQLite, LanceDB index) lives under the OS app data path for `com.grimo
 ### `ci.yml` (pull requests and `main`)
 
 1. `version-sync` — `check-version-sync.sh`
-2. Matrix **test** on `windows-latest`, `macos-15-intel`, `macos-14`, `ubuntu-22.04`:
+2. Matrix **test** on `windows-latest`, `macos-15-intel`, `macos-14`, `ubuntu-24.04`:
    - Install native deps (`scripts/ci/*`)
    - `npm ci`, `npm run build`, `npm test`
    - `cargo test --locked` in `src-tauri`

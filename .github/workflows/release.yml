@@ -16,10 +16,11 @@ permissions:
   contents: read
 
 env:
-  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  # workflow_dispatch: inputs.release_tag; tag push: github.ref_name (e.g. v0.1.0)
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref_name }}
 
 concurrency:
-  group: release-${{ github.workflow }}-${{ env.RELEASE_TAG }}
+  group: release-${{ github.workflow }}-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -53,7 +54,7 @@ jobs:
             platform: macos-intel
           - os: macos-14
             platform: macos-arm
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             platform: linux
     runs-on: ${{ matrix.os }}
     steps:
@@ -75,11 +76,16 @@ jobs:
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify libzim toolchain
+        if: matrix.platform == 'linux' || startsWith(matrix.platform, 'macos')
+        run: |
+          pkg-config --modversion libzim
+          pkg-config --libs libzim
+          protoc --version
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: lts/*
-          cache: npm
-      - run: npm ci
+      - run: npm ci --prefer-offline --no-audit
       - run: npm run build
       - run: npm test
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
@@ -87,7 +93,9 @@ jobs:
           toolchain: stable
       - name: Run Rust tests
         working-directory: src-tauri
-        run: cargo test --locked
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo test --locked -- --nocapture
 
   publish:
     name: Publish (${{ matrix.platform }})
@@ -104,7 +112,7 @@ jobs:
             args: ''
             bundle_root: src-tauri/target/release/bundle
           - platform: linux
-            os: ubuntu-22.04
+            os: ubuntu-24.04
             args: ''
             bundle_root: src-tauri/target/release/bundle
           - platform: macos-arm
@@ -145,10 +153,9 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: lts/*
-          cache: npm
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --prefer-offline --no-audit
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
@@ -181,7 +188,7 @@ jobs:
       - name: Upload checksums to draft release
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ env.RELEASE_TAG }}
           CHECKSUM_FILE: checksums-${{ matrix.platform }}.txt
         run: |

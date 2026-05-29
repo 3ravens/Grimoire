@@ -118,6 +118,11 @@ async fn sync_tags(pool: &SqlitePool, note_id: i64, tags: &[String]) -> AppResul
 /// Persist the parsed wiki-links for a note. Replaces all existing outgoing
 /// links. Link targets that don't match an existing note title are silently
 /// skipped — they'll be picked up on the next save if the target is created.
+///
+/// Resolves `[[title]]` targets by calling [`EncryptedNoteStore::list_notes`] and
+/// scanning decrypted titles. That is simple and correct for typical vault sizes;
+/// if link sync becomes a bottleneck, add a cached title→id map on
+/// [`EncryptedNoteStore`] and use it here instead of a full vault scan.
 async fn sync_links(
     pool: &SqlitePool,
     keys: &crate::KeyStore,

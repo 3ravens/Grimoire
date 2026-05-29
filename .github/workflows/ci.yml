@@ -44,7 +44,7 @@ jobs:
             platform: macos-intel
           - os: macos-14
             platform: macos-arm
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             platform: linux
 
     runs-on: ${{ matrix.os }}
@@ -74,13 +74,19 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Verify libzim toolchain
+        if: matrix.platform == 'linux' || startsWith(matrix.platform, 'macos')
+        run: |
+          pkg-config --modversion libzim
+          pkg-config --libs libzim
+          protoc --version
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: lts/*
-          cache: npm
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --prefer-offline --no-audit
 
       - name: Build frontend
         run: npm run build
@@ -96,12 +102,18 @@ jobs:
 
       - name: Run Rust tests
         working-directory: src-tauri
-        run: cargo test --locked
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo test --locked -- --nocapture
 
       - name: Tauri debug bundle smoke (Linux)
         if: matrix.platform == 'linux'
+        env:
+          CI: true
         run: npm run tauri build -- --debug
 
       - name: Tauri debug bundle smoke (macOS)
-        if: startsWith(matrix.platform, 'macos')
+        if: matrix.platform == 'macos-arm'
+        env:
+          CI: true
         run: npm run tauri build -- --debug

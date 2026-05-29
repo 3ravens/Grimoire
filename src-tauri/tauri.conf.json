@@ -23,7 +23,7 @@
         "dragDropEnabled": false,
         "backgroundColor": "#fdfaf9",
         "visible": false,
-        "devtools": true
+        "devtools": false
       }
     ],
     "security": {

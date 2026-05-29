@@ -11,6 +11,8 @@ sudo apt-get install -y \
   patchelf \
   libfuse2 \
   build-essential \
+  libstdc++-12-dev \
+  g++ \
   curl \
   wget \
   file \
@@ -19,3 +21,12 @@ sudo apt-get install -y \
   clang \
   libzim-dev \
   protobuf-compiler
+
+echo "libzim version: $(pkg-config --modversion libzim)"
+pkg-config --libs libzim
+
+# Ensure test/bundle binaries find libzim.so at runtime (not always on default loader path).
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+  libdir="$(pkg-config --variable=libdir libzim)"
+  echo "LD_LIBRARY_PATH=${libdir}:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+fi

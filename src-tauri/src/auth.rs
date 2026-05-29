@@ -24,7 +24,7 @@
 ///   the vault has a password set (avoids double-encryption and key management complexity).
 /// - Encryption of note content and titles is handled in commands.rs; auth.rs only manages
 ///   key lifecycle (set/verify/clear) and the bulk re-encryption pass.
-use sqlx::SqlitePool;
+use sqlx::{QueryBuilder, SqlitePool};
 use tauri::State;
 use zeroize::Zeroize;
 
@@ -435,17 +435,28 @@ pub async fn set_folder_password(
         return Err("folder_already_locked".to_string());
     }
 
-    for &fid in &subtree_ids {
-        if fid == folder_id {
-            continue;
+    let child_ids: Vec<i64> = subtree_ids
+        .iter()
+        .copied()
+        .filter(|&id| id != folder_id)
+        .collect();
+    if !child_ids.is_empty() {
+        let mut qb = QueryBuilder::new(
+            "SELECT COUNT(*) FROM folders WHERE COALESCE(locked, 0) != 0 AND id IN (",
+        );
+        {
+            let mut sep = qb.separated(", ");
+            for id in &child_ids {
+                sep.push_bind(id);
+            }
         }
-        let locked: i64 =
-            sqlx::query_scalar("SELECT COALESCE(locked, 0) FROM folders WHERE id = ?")
-                .bind(fid)
-                .fetch_one(pool.inner())
-                .await
-                .map_err(|e| e.to_string())?;
-        if locked != 0 {
+        qb.push(")");
+        let locked_children: i64 = qb
+            .build_query_scalar()
+            .fetch_one(pool.inner())
+            .await
+            .map_err(|e| e.to_string())?;
+        if locked_children > 0 {
             return Err("folder_subtree_has_locked_children".to_string());
         }
     }
