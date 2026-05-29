@@ -44,7 +44,7 @@ jobs:
             platform: macos-intel
           - os: macos-14
             platform: macos-arm
-          - os: ubuntu-24.04
+          - os: ubuntu-22.04
             platform: linux
 
     runs-on: ${{ matrix.os }}
@@ -120,6 +120,12 @@ jobs:
           if [[ $status -ne 0 ]]; then
             echo "::error::cargo build --tests failed (exit $status)"
             tail -n 120 ../cargo-build.log
+            {
+              echo "## cargo build --tests (tail errors)"
+              echo '```'
+              grep -E 'error(\[|:)|undefined reference|fatal error:|could not compile|linking with' ../cargo-build.log | tail -n 60 || tail -n 60 ../cargo-build.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
           exit $status
 

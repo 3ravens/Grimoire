@@ -74,7 +74,7 @@ Sources: `src-tauri/vendor-dlls/` or `%VCPKG_ROOT%\installed\x64-windows\bin`.
 | Package | Purpose |
 |---------|---------|
 | `libwebkit2gtk-4.1-dev`, GTK, ayatana, `librsvg2-dev` | Tauri WebKitGTK shell |
-| `clang`, `pkg-config`, `libzim-dev` (Ubuntu 24.04 ships libzim 8.x) | `zim-sys` via pkg-config (ICU/zstd transitives) |
+| `clang`, `pkg-config`, `libzim-dev` (Ubuntu 22.04/24.04 via apt) | `zim-sys` via pkg-config (ICU/zstd transitives) |
 | `protobuf-compiler` | protoc |
 | `patchelf`, `libfuse2` | AppImage tooling |
 
@@ -166,7 +166,7 @@ App data (SQLite, LanceDB index) lives under the OS app data path for `com.grimo
 ### `ci.yml` (pull requests and `main`)
 
 1. `version-sync` — `check-version-sync.sh`
-2. Matrix **test** on `windows-latest`, `macos-15-intel`, `macos-14`, `ubuntu-24.04`:
+2. Matrix **test** on `windows-latest`, `macos-15-intel`, `macos-14`, `ubuntu-22.04`:
    - Install native deps (`scripts/ci/*`)
    - `npm ci`, `npm run build`, `npm test`
    - `cargo test --locked` in `src-tauri`

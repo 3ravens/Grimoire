@@ -54,7 +54,7 @@ jobs:
             platform: macos-intel
           - os: macos-14
             platform: macos-arm
-          - os: ubuntu-24.04
+          - os: ubuntu-22.04
             platform: linux
     runs-on: ${{ matrix.os }}
     steps:
@@ -144,7 +144,7 @@ jobs:
             args: ''
             bundle_root: src-tauri/target/release/bundle
           - platform: linux
-            os: ubuntu-24.04
+            os: ubuntu-22.04
             args: ''
             bundle_root: src-tauri/target/release/bundle
           - platform: macos-arm
