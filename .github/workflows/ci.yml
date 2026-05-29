@@ -20,12 +20,12 @@ jobs:
     name: Version sync
     runs-on: ubuntu-latest
     steps:
-      # actions/checkout@v4.2.2
-      - uses: actions/checkout@11bd71901bbe5b1634565d49a17c8071892bcca1
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
-      # actions/setup-node@v4.1.0
-      - uses: actions/setup-node@3938e6284a573c84089c26aaa2caf91994e67fa
+      # actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: lts/*
       - name: Check version alignment
@@ -50,7 +50,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1634565d49a17c8071892bcca1
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
 
@@ -69,12 +69,12 @@ jobs:
 
       - name: Install protoc (Windows)
         if: matrix.platform == 'windows'
-        # arduino/setup-protoc@v3.0.0
-        uses: arduino/setup-protoc@77c8bc95bb8b29e7c6467c44a94d27118b78803b
+        # arduino/setup-protoc@v3
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@3938e6284a573c84089c26aaa2caf91994e67fa
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: lts/*
           cache: npm
@@ -88,9 +88,9 @@ jobs:
       - name: Run frontend tests
         run: npm test
 
-      # dtolnay/rust-toolchain@stable (pinned 2024-04)
+      # dtolnay/rust-toolchain@stable
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@e87dbbc7b8c29e77e3d70e699bdd2699c107b7b2
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: stable
 
