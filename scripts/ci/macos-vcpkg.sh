@@ -23,9 +23,15 @@ fi
 include="${VCPKG_ROOT}/installed/${triplet}/include"
 lib="${VCPKG_ROOT}/installed/${triplet}/lib"
 
+pc_path="${lib}/pkgconfig"
+if [[ -d "${VCPKG_ROOT}/installed/${triplet}/share/pkgconfig" ]]; then
+  pc_path="${pc_path}:${VCPKG_ROOT}/installed/${triplet}/share/pkgconfig"
+fi
+
 export CXXFLAGS="-I${include} ${CXXFLAGS:-}"
 export LIBZIM_INCLUDE="${include}"
 export LIBZIM_LIB="${lib}"
+export PKG_CONFIG_PATH="${pc_path}:${PKG_CONFIG_PATH:-}"
 
 if [[ -n "${GITHUB_ENV:-}" ]]; then
   {
@@ -33,9 +39,13 @@ if [[ -n "${GITHUB_ENV:-}" ]]; then
     echo "CXXFLAGS=${CXXFLAGS}"
     echo "LIBZIM_INCLUDE=${LIBZIM_INCLUDE}"
     echo "LIBZIM_LIB=${LIBZIM_LIB}"
+    echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH}"
     echo "DYLD_LIBRARY_PATH=${lib}:${DYLD_LIBRARY_PATH:-}"
   } >> "$GITHUB_ENV"
 fi
+
+echo "libzim pc: $(pkg-config --modversion libzim)"
+pkg-config --libs libzim
 
 echo "VCPKG triplet=${triplet}"
 echo "LIBZIM_INCLUDE=${LIBZIM_INCLUDE}"

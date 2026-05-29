@@ -81,10 +81,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${LIBZIM_INCLUDE:-}"
-          test -n "${LIBZIM_LIB:-}"
-          test -f "${LIBZIM_INCLUDE}/zim/version.h"
-          ls "${LIBZIM_LIB}"/libzim* || ls "${LIBZIM_LIB}"/libzim.*
+          pkg-config --modversion libzim
+          pkg-config --libs libzim
+          if [[ -n "${LIBZIM_INCLUDE:-}" ]]; then
+            test -f "${LIBZIM_INCLUDE}/zim/version.h"
+          fi
+          if [[ -n "${LIBZIM_LIB:-}" ]]; then
+            ls "${LIBZIM_LIB}"/libzim* || ls "${LIBZIM_LIB}"/libzim.*
+          fi
           protoc --version
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -95,11 +99,35 @@ jobs:
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: stable
+      - name: Build Rust tests
+        working-directory: src-tauri
+        env:
+          RUST_BACKTRACE: 1
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --locked --tests 2>&1 | tee ../cargo-build.log
+          status=${PIPESTATUS[0]}
+          if [[ $status -ne 0 ]]; then
+            echo "::error::cargo build --tests failed (exit $status)"
+            tail -n 120 ../cargo-build.log
+          fi
+          exit $status
+
       - name: Run Rust tests
         working-directory: src-tauri
         env:
           RUST_BACKTRACE: 1
-        run: cargo test --locked -- --nocapture
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked -- --nocapture 2>&1 | tee ../cargo-test.log
+          status=${PIPESTATUS[0]}
+          if [[ $status -ne 0 ]]; then
+            echo "::error::cargo test failed (exit $status)"
+            tail -n 100 ../cargo-test.log
+          fi
+          exit $status
 
   publish:
     name: Publish (${{ matrix.platform }})

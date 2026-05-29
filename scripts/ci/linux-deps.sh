@@ -20,7 +20,13 @@ sudo apt-get install -y \
   pkg-config \
   clang \
   protobuf-compiler \
-  git
+  git \
+  libzim-dev
 
-# Tauri/WebKitGTK packages above; libzim 9.x via vcpkg (same as Windows).
-bash "$(dirname "$0")/linux-vcpkg.sh"
+LIB_DIR="$(pkg-config --variable=libdir libzim)"
+echo "libzim version: $(pkg-config --modversion libzim)"
+echo "libzim libdir: ${LIB_DIR}"
+
+if [[ -n "${GITHUB_ENV:-}" ]]; then
+  echo "LD_LIBRARY_PATH=${LIB_DIR}:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+fi

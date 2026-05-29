@@ -79,10 +79,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${LIBZIM_INCLUDE:-}"
-          test -n "${LIBZIM_LIB:-}"
-          test -f "${LIBZIM_INCLUDE}/zim/version.h"
-          ls "${LIBZIM_LIB}"/libzim* || ls "${LIBZIM_LIB}"/libzim.*
+          pkg-config --modversion libzim
+          pkg-config --libs libzim
+          if [[ -n "${LIBZIM_INCLUDE:-}" ]]; then
+            test -f "${LIBZIM_INCLUDE}/zim/version.h"
+          fi
+          if [[ -n "${LIBZIM_LIB:-}" ]]; then
+            ls "${LIBZIM_LIB}"/libzim* || ls "${LIBZIM_LIB}"/libzim.*
+          fi
           protoc --version
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -108,7 +112,24 @@ jobs:
         working-directory: src-tauri
         env:
           RUST_BACKTRACE: 1
-        run: cargo build --locked --tests
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --locked --tests 2>&1 | tee ../cargo-build.log
+          status=${PIPESTATUS[0]}
+          if [[ $status -ne 0 ]]; then
+            echo "::error::cargo build --tests failed (exit $status)"
+            tail -n 120 ../cargo-build.log
+          fi
+          exit $status
+
+      - name: Upload cargo build log on failure
+        if: failure() && (matrix.platform == 'linux' || startsWith(matrix.platform, 'macos'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-build-${{ matrix.platform }}
+          path: cargo-build.log
+          if-no-files-found: ignore
 
       - name: Run Rust tests
         working-directory: src-tauri
