@@ -25,6 +25,9 @@ dist-ssr
 *.sln
 *.sw?
 
+# CI-local vcpkg clone (scripts/ci/windows-vcpkg.ps1)
+vcpkg/
+
 # Vendored runtime DLLs (copied from vcpkg at dev setup time)
 src-tauri/vendor-dlls/
 

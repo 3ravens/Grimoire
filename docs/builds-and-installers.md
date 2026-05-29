@@ -138,7 +138,7 @@ src-tauri/target/release/bundle/
 
 ### macOS
 
-- Separate CI jobs build **Apple Silicon** (`aarch64-apple-darwin` on `macos-14`) and **Intel** (`x86_64-apple-darwin` on `macos-13`).
+- Separate CI jobs build **Apple Silicon** (`aarch64-apple-darwin` on `macos-14`) and **Intel** (`x86_64-apple-darwin` on `macos-15-intel`).
 - Expect Gatekeeper warnings until Developer ID signing + notarization exist.
 
 ### Linux
@@ -166,7 +166,7 @@ App data (SQLite, LanceDB index) lives under the OS app data path for `com.grimo
 ### `ci.yml` (pull requests and `main`)
 
 1. `version-sync` — `check-version-sync.sh`
-2. Matrix **test** on `windows-latest`, `macos-13`, `macos-14`, `ubuntu-22.04`:
+2. Matrix **test** on `windows-latest`, `macos-15-intel`, `macos-14`, `ubuntu-22.04`:
    - Install native deps (`scripts/ci/*`)
    - `npm ci`, `npm run build`, `npm test`
    - `cargo test --locked` in `src-tauri`
@@ -259,7 +259,7 @@ Install `libfuse2`, or run with extract-and-run per AppImage docs.
 
 ## 11. Related roadmap items (not implemented here)
 
-From Phase 4 [ROADMAP](../.vscode/Guidelines/ROADMAP.md):
+From Phase 4 of the project roadmap (local `.vscode/Guidelines/ROADMAP.md` when present):
 
 - **Update notifications / opt-in auto-update** — needs `tauri-plugin-updater` + signed releases
 - **Dependency license audit** — `cargo deny`, npm `license-checker`

@@ -60,6 +60,7 @@ fn vcpkg_root() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\vcpkg"))
 }
 
+#[cfg(target_os = "windows")]
 fn vcpkg_installed_bin_dir() -> std::path::PathBuf {
     vcpkg_root()
         .join("installed")

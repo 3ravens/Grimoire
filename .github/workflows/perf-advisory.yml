@@ -4,18 +4,30 @@ name: perf-advisory
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-advisory-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   perf-budget-offline:
+    name: Perf budget (offline)
     runs-on: ubuntu-latest
     continue-on-error: true
     defaults:
       run:
         working-directory: src-tauri
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1634565d49a17c8071892bcca1
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e87dbbc7b8c29e77e3d70e699bdd2699c107b7b2
+        with:
+          toolchain: stable
 
       - name: Run perf-budget (offline — save path only)
         env:

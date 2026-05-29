@@ -51,6 +51,7 @@
   let embedModel = $state(defaultEmbed);
   let embedInstalled = $state(false);
   let chatInstalled = $state(false);
+  let chatInstalledRequest = 0;
   let embedPullBusy = $state(false);
 
   let wikipediaEnable = $state(false);
@@ -161,14 +162,22 @@
 
   async function refreshChatInstalled() {
     const model = selectedChatModel;
+    const requestId = ++chatInstalledRequest;
     if (!model) {
-      chatInstalled = false;
+      if (requestId === chatInstalledRequest) {
+        chatInstalled = false;
+      }
       return;
     }
     try {
-      chatInstalled = await checkChatModelInstalled(model);
+      const installed = await checkChatModelInstalled(model);
+      if (requestId === chatInstalledRequest && model === selectedChatModel) {
+        chatInstalled = installed;
+      }
     } catch {
-      chatInstalled = false;
+      if (requestId === chatInstalledRequest && model === selectedChatModel) {
+        chatInstalled = false;
+      }
     }
   }
 
@@ -176,13 +185,6 @@
     await checkOllama();
     if (ollamaOk !== true) return;
     await Promise.all([refreshEmbedInstalled(), refreshChatInstalled()]);
-    if (chatInstalled && selectedChatModel) {
-      try {
-        await saveChatModelSetting(selectedChatModel);
-      } catch {
-        /* non-fatal; finish step will save again */
-      }
-    }
   }
 
   $effect(() => {

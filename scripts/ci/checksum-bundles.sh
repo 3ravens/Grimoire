@@ -1,9 +1,18 @@
 #!/usr/bin/env bash
-# Write SHA-256 checksums for installer artifacts under src-tauri/target/release/bundle.
+# Write SHA-256 checksums for installer artifacts under a Tauri bundle directory.
 set -euo pipefail
 
 ROOT="${1:-src-tauri/target/release/bundle}"
 OUT="${2:-checksums.txt}"
+
+hash_file() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file"
+  else
+    shasum -a 256 "$file"
+  fi
+}
 
 if [[ ! -d "$ROOT" ]]; then
   echo "Bundle directory not found: $ROOT" >&2
@@ -26,7 +35,7 @@ fi
   echo "# Grimoire release checksums (SHA-256)"
   echo "# Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   for f in "${FILES[@]}"; do
-    (cd "$(dirname "$f")" && sha256sum "$(basename "$f")")
+    (cd "$(dirname "$f")" && hash_file "$(basename "$f")")
   done
 } > "$OUT"
 

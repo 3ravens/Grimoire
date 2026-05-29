@@ -9,7 +9,7 @@ Short maintainer checklist. Full packaging details: [`docs/builds-and-installers
    - [`src-tauri/Cargo.toml`](../src-tauri/Cargo.toml)
    - [`src-tauri/tauri.conf.json`](../src-tauri/tauri.conf.json)
 2. Run locally: `bash scripts/ci/check-version-sync.sh`
-3. Merge to `main` with green **ci** workflow on GitHub.
+3. Merge to `main` with green **ci** workflow on GitHub (Actions).
 
 ## Create a release candidate
 
@@ -45,7 +45,7 @@ Confirm uninstall does **not** delete the user’s note vault folder.
 2. **Publish** the draft release (remove draft status).
 3. Update [grimoireapp.dev/download](https://grimoireapp.dev/download) with links to each platform asset.
 4. Add a “Last verified” line in `docs/builds-and-installers.md` (date + tag).
-5. Mark the Phase 4 cross-platform builds item in `.vscode/Guidelines/ROADMAP.md` when all assets are validated.
+5. Mark the Phase 4 cross-platform builds item in your local roadmap/checklist when all assets are validated.
 
 ## Release blocked if
 

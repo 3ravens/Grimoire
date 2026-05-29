@@ -1,3 +1,4 @@
+# PR/main CI — least-privilege token; actions pinned to commit SHAs (see comments).
 name: ci
 
 on:
@@ -7,22 +8,31 @@ on:
       - main
       - master
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   version-sync:
+    name: Version sync
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # actions/checkout@v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1634565d49a17c8071892bcca1
+        with:
+          persist-credentials: false
+      # actions/setup-node@v4.1.0
+      - uses: actions/setup-node@3938e6284a573c84089c26aaa2caf91994e67fa
         with:
           node-version: lts/*
       - name: Check version alignment
         run: bash scripts/ci/check-version-sync.sh
 
   test:
+    name: Test (${{ matrix.platform }})
     needs: version-sync
     strategy:
       fail-fast: false
@@ -30,7 +40,7 @@ jobs:
         include:
           - os: windows-latest
             platform: windows
-          - os: macos-13
+          - os: macos-15-intel
             platform: macos-intel
           - os: macos-14
             platform: macos-arm
@@ -40,7 +50,9 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1634565d49a17c8071892bcca1
+        with:
+          persist-credentials: false
 
       - name: Install Linux native dependencies
         if: matrix.platform == 'linux'
@@ -50,13 +62,6 @@ jobs:
         if: startsWith(matrix.platform, 'macos')
         run: bash scripts/ci/macos-deps.sh
 
-      - name: Cache vcpkg (Windows)
-        if: matrix.platform == 'windows'
-        uses: actions/cache@v4
-        with:
-          path: vcpkg
-          key: vcpkg-libzim-${{ runner.os }}-${{ hashFiles('scripts/ci/windows-vcpkg.ps1') }}
-
       - name: Install Windows native dependencies
         if: matrix.platform == 'windows'
         shell: pwsh
@@ -64,11 +69,12 @@ jobs:
 
       - name: Install protoc (Windows)
         if: matrix.platform == 'windows'
-        uses: arduino/setup-protoc@v3
+        # arduino/setup-protoc@v3.0.0
+        uses: arduino/setup-protoc@77c8bc95bb8b29e7c6467c44a94d27118b78803b
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@3938e6284a573c84089c26aaa2caf91994e67fa
         with:
           node-version: lts/*
           cache: npm
@@ -82,19 +88,14 @@ jobs:
       - name: Run frontend tests
         run: npm test
 
+      # dtolnay/rust-toolchain@stable (pinned 2024-04)
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: dtolnay/rust-toolchain@e87dbbc7b8c29e77e3d70e699bdd2699c107b7b2
         with:
-          workspaces: src-tauri
+          toolchain: stable
 
       - name: Run Rust tests
         working-directory: src-tauri
-        env:
-          VCPKG_ROOT: ${{ matrix.platform == 'windows' && format('{0}/vcpkg', github.workspace) || '' }}
-          CXXFLAGS: ${{ matrix.platform == 'windows' && format('/I{0}/vcpkg/installed/x64-windows/include', github.workspace) || '' }}
         run: cargo test --locked
 
       - name: Tauri debug bundle smoke (Linux)
