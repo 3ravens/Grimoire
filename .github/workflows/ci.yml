@@ -80,8 +80,8 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${{ matrix.platform }}" == linux ]]; then
-            pkg-config --modversion libzim
-            pkg-config --libs libzim
+            test -n "${LIBZIM_LIB:-}"
+            ls "${LIBZIM_LIB}"/libzim.so*
           else
             test -f "${LIBZIM_INCLUDE:-$(brew --prefix libzim)/include}/zim/version.h"
             test -n "${LIBZIM_LIB:-}"
@@ -107,6 +107,12 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: stable
+
+      - name: Build Rust tests
+        working-directory: src-tauri
+        env:
+          RUST_BACKTRACE: 1
+        run: cargo build --locked --tests
 
       - name: Run Rust tests
         working-directory: src-tauri

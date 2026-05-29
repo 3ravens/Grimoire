@@ -82,8 +82,8 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${{ matrix.platform }}" == linux ]]; then
-            pkg-config --modversion libzim
-            pkg-config --libs libzim
+            test -n "${LIBZIM_LIB:-}"
+            ls "${LIBZIM_LIB}"/libzim.so*
           else
             test -f "${LIBZIM_INCLUDE:-$(brew --prefix libzim)/include}/zim/version.h"
             test -n "${LIBZIM_LIB:-}"

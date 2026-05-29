@@ -14,7 +14,6 @@ if [[ -n "${GITHUB_ENV:-}" ]]; then
   echo "LIBZIM_INCLUDE=${prefix}/include" >> "$GITHUB_ENV"
   echo "LIBZIM_LIB=${prefix}/lib" >> "$GITHUB_ENV"
   echo "DYLD_LIBRARY_PATH=${prefix}/lib:${DYLD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-  echo "RUSTFLAGS=-C link-arg=-Wl,-rpath,${prefix}/lib ${RUSTFLAGS:-}" >> "$GITHUB_ENV"
 
   paths=()
   [[ -d "${prefix}/lib/pkgconfig" ]] && paths+=("${prefix}/lib/pkgconfig")

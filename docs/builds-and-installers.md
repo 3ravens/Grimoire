@@ -74,7 +74,7 @@ Sources: `src-tauri/vendor-dlls/` or `%VCPKG_ROOT%\installed\x64-windows\bin`.
 | Package | Purpose |
 |---------|---------|
 | `libwebkit2gtk-4.1-dev`, GTK, ayatana, `librsvg2-dev` | Tauri WebKitGTK shell |
-| `libzim-dev`, `clang`, `pkg-config` | `zim-sys` |
+| `clang`, `pkg-config`, `git` + vcpkg `libzim:x64-linux` | `zim-sys` (same libzim 9.x as Windows) |
 | `protobuf-compiler` | protoc |
 | `patchelf`, `libfuse2` | AppImage tooling |
 
