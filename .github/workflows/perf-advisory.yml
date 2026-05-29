@@ -1,0 +1,23 @@
+# Optional advisory perf smoke (does not block merges or releases).
+name: perf-advisory
+
+on:
+  workflow_dispatch:
+
+jobs:
+  perf-budget-offline:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run perf-budget (offline — save path only)
+        env:
+          PERF_OFFLINE: "1"
+        run: cargo run --bin perf-budget

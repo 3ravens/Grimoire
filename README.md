@@ -22,6 +22,14 @@ npm install
 npm run tauri dev
 ```
 
+## Building installers
+
+Pre-built installers are produced by GitHub Actions when a `v*` tag is pushed (see [`.github/RELEASING.md`](.github/RELEASING.md)). For local packaging, native prerequisites (libzim, WebKitGTK, vcpkg on Windows), commands, and troubleshooting, see **[`docs/builds-and-installers.md`](docs/builds-and-installers.md)**.
+
+```bash
+npm run tauri:build   # release bundles under src-tauri/target/release/bundle/
+```
+
 ## Where app data lives
 
 - SQLite (`grimoire.db`), LanceDB (`lancedb/`), and migration markers live under the OS app data directory for the bundle id **`com.grimoire.app`** (for example `%APPDATA%\com.grimoire.app` on Windows). Your **note vault** is a separate folder you choose; it is not deleted by app updates.

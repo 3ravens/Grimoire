@@ -1,0 +1,182 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (e.g. v0.1.0-rc.1); must match app version in package.json / Cargo / tauri.conf.json'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Check version alignment
+        run: bash scripts/ci/check-version-sync.sh
+
+  test:
+    needs: version-sync
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-13
+            platform: macos-intel
+          - os: macos-14
+            platform: macos-arm
+          - os: ubuntu-22.04
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux native dependencies
+        if: matrix.platform == 'linux'
+        run: bash scripts/ci/linux-deps.sh
+      - name: Install macOS native dependencies
+        if: startsWith(matrix.platform, 'macos')
+        run: bash scripts/ci/macos-deps.sh
+      - name: Install Windows native dependencies
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: scripts/ci/windows-vcpkg.ps1
+      - name: Install protoc (Windows)
+        if: matrix.platform == 'windows'
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Run Rust tests
+        working-directory: src-tauri
+        env:
+          VCPKG_ROOT: ${{ matrix.platform == 'windows' && format('{0}/vcpkg', github.workspace) || '' }}
+          CXXFLAGS: ${{ matrix.platform == 'windows' && format('/I{0}/vcpkg/installed/x64-windows/include', github.workspace) || '' }}
+        run: cargo test --locked
+
+  publish:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            args: ''
+          - platform: linux
+            os: ubuntu-22.04
+            args: ''
+          - platform: macos-arm
+            os: macos-14
+            args: '--target aarch64-apple-darwin'
+          - platform: macos-intel
+            os: macos-13
+            args: '--target x86_64-apple-darwin'
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache vcpkg (Windows)
+        if: matrix.platform == 'windows'
+        uses: actions/cache@v4
+        with:
+          path: vcpkg
+          key: vcpkg-libzim-${{ runner.os }}-${{ hashFiles('scripts/ci/windows-vcpkg.ps1') }}
+
+      - name: Install Linux native dependencies
+        if: matrix.platform == 'linux'
+        run: bash scripts/ci/linux-deps.sh
+
+      - name: Install macOS native dependencies
+        if: startsWith(matrix.platform, 'macos')
+        run: bash scripts/ci/macos-deps.sh
+
+      - name: Install Windows native dependencies
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: scripts/ci/windows-vcpkg.ps1
+
+      - name: Install protoc (Windows)
+        if: matrix.platform == 'windows'
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VCPKG_ROOT: ${{ matrix.platform == 'windows' && format('{0}/vcpkg', github.workspace) || '' }}
+          CXXFLAGS: ${{ matrix.platform == 'windows' && format('/I{0}/vcpkg/installed/x64-windows/include', github.workspace) || '' }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: Grimoire ${{ env.RELEASE_TAG }}
+          releaseBody: |
+            Unsigned pre-release installers. See [docs/builds-and-installers.md](https://github.com/${{ github.repository }}/blob/main/docs/builds-and-installers.md) for install notes and SHA-256 verification.
+
+            **Ollama is not bundled** — install separately or use the in-app setup wizard.
+          releaseDraft: true
+          prerelease: ${{ !startsWith(github.ref_name, 'v1.') || contains(github.ref_name, '-') }}
+          args: ${{ matrix.args }}
+
+      - name: Generate bundle checksums
+        shell: bash
+        run: |
+          bash scripts/ci/checksum-bundles.sh \
+            src-tauri/target/release/bundle \
+            "checksums-${{ matrix.platform }}.txt"
+
+      - name: Upload checksums to draft release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ env.RELEASE_TAG }}" \
+            "checksums-${{ matrix.platform }}.txt" \
+            --clobber
