@@ -5,28 +5,23 @@ set -euo pipefail
 brew update
 brew install libzim protobuf pkg-config
 
+prefix="$(brew --prefix libzim)"
+echo "libzim brew prefix: ${prefix}"
 echo "libzim version: $(brew list --versions libzim)"
 
-# Help pkg-config find Homebrew prefixes on Apple Silicon and Intel.
+# Homebrew libzim often has no libzim.pc; zim-sys honors LIBZIM_INCLUDE / LIBZIM_LIB.
 if [[ -n "${GITHUB_ENV:-}" ]]; then
+  echo "LIBZIM_INCLUDE=${prefix}/include" >> "$GITHUB_ENV"
+  echo "LIBZIM_LIB=${prefix}/lib" >> "$GITHUB_ENV"
+  echo "DYLD_LIBRARY_PATH=${prefix}/lib:${DYLD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+  echo "RUSTFLAGS=-C link-arg=-Wl,-rpath,${prefix}/lib ${RUSTFLAGS:-}" >> "$GITHUB_ENV"
+
   paths=()
-  dylib_paths=()
+  [[ -d "${prefix}/lib/pkgconfig" ]] && paths+=("${prefix}/lib/pkgconfig")
   [[ -d /opt/homebrew/lib/pkgconfig ]] && paths+=("/opt/homebrew/lib/pkgconfig")
   [[ -d /usr/local/lib/pkgconfig ]] && paths+=("/usr/local/lib/pkgconfig")
   if [[ ${#paths[@]} -gt 0 ]]; then
     IFS=:
     echo "PKG_CONFIG_PATH=${paths[*]}" >> "$GITHUB_ENV"
-  fi
-
-  for prefix in /opt/homebrew /usr/local; do
-    if [[ -d "${prefix}/opt/libzim/lib" ]]; then
-      dylib_paths+=("${prefix}/opt/libzim/lib")
-    elif [[ -d "${prefix}/lib" ]]; then
-      dylib_paths+=("${prefix}/lib")
-    fi
-  done
-  if [[ ${#dylib_paths[@]} -gt 0 ]]; then
-    IFS=:
-    echo "DYLD_LIBRARY_PATH=${dylib_paths[*]}:${DYLD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
   fi
 fi

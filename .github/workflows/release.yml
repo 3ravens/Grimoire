@@ -78,9 +78,17 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify libzim toolchain
         if: matrix.platform == 'linux' || startsWith(matrix.platform, 'macos')
+        shell: bash
         run: |
-          pkg-config --modversion libzim
-          pkg-config --libs libzim
+          set -euo pipefail
+          if [[ "${{ matrix.platform }}" == linux ]]; then
+            pkg-config --modversion libzim
+            pkg-config --libs libzim
+          else
+            test -f "${LIBZIM_INCLUDE:-$(brew --prefix libzim)/include}/zim/version.h"
+            test -n "${LIBZIM_LIB:-}"
+            ls "${LIBZIM_LIB}"/libzim.dylib || ls "${LIBZIM_LIB}"/libzim.*.dylib
+          fi
           protoc --version
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:

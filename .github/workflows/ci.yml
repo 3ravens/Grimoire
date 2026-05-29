@@ -76,9 +76,17 @@ jobs:
 
       - name: Verify libzim toolchain
         if: matrix.platform == 'linux' || startsWith(matrix.platform, 'macos')
+        shell: bash
         run: |
-          pkg-config --modversion libzim
-          pkg-config --libs libzim
+          set -euo pipefail
+          if [[ "${{ matrix.platform }}" == linux ]]; then
+            pkg-config --modversion libzim
+            pkg-config --libs libzim
+          else
+            test -f "${LIBZIM_INCLUDE:-$(brew --prefix libzim)/include}/zim/version.h"
+            test -n "${LIBZIM_LIB:-}"
+            ls "${LIBZIM_LIB}"/libzim.dylib || ls "${LIBZIM_LIB}"/libzim.*.dylib
+          fi
           protoc --version
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -104,7 +112,24 @@ jobs:
         working-directory: src-tauri
         env:
           RUST_BACKTRACE: 1
-        run: cargo test --locked -- --nocapture
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked -- --nocapture 2>&1 | tee ../cargo-test.log
+          status=${PIPESTATUS[0]}
+          if [[ $status -ne 0 ]]; then
+            echo "::error::cargo test failed (exit $status)"
+            tail -n 100 ../cargo-test.log
+          fi
+          exit $status
+
+      - name: Upload cargo test log on failure
+        if: failure() && (matrix.platform == 'linux' || startsWith(matrix.platform, 'macos'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-test-${{ matrix.platform }}
+          path: cargo-test.log
+          if-no-files-found: ignore
 
       - name: Tauri debug bundle smoke (Linux)
         if: matrix.platform == 'linux'
