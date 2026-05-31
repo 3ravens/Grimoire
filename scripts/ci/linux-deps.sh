@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native packages for Tauri (WebKitGTK) + libzim + protoc on Ubuntu CI runners.
+# WebKitGTK/Tauri deps via apt; libzim 9.x via vcpkg (matches Windows/macOS CI and zim-sys).
 set -euo pipefail
 
 sudo apt-get update
@@ -21,12 +21,11 @@ sudo apt-get install -y \
   clang \
   protobuf-compiler \
   git \
-  libzim-dev
+  zip \
+  unzip \
+  tar
 
-LIB_DIR="$(pkg-config --variable=libdir libzim)"
+bash "$(dirname "$0")/linux-vcpkg.sh"
+
 echo "libzim version: $(pkg-config --modversion libzim)"
-echo "libzim libdir: ${LIB_DIR}"
-
-if [[ -n "${GITHUB_ENV:-}" ]]; then
-  echo "LD_LIBRARY_PATH=${LIB_DIR}:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
-fi
+pkg-config --libs libzim
