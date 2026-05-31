@@ -36,3 +36,5 @@ fi
 echo "VCPKG_ROOT=${VCPKG_ROOT}"
 echo "LIBZIM_INCLUDE=${LIBZIM_INCLUDE}"
 echo "LIBZIM_LIB=${LIBZIM_LIB}"
+echo "libzim pc: $(pkg-config --modversion libzim)"
+pkg-config --libs libzim

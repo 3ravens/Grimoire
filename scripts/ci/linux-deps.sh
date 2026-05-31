@@ -25,7 +25,9 @@ sudo apt-get install -y \
   unzip \
   tar
 
-bash "$(dirname "$0")/linux-vcpkg.sh"
+# Source (not bash) so PKG_CONFIG_PATH / LIBZIM_* apply in this step and to GITHUB_ENV.
+# shellcheck source=linux-vcpkg.sh
+source "$(dirname "$0")/linux-vcpkg.sh"
 
 echo "libzim version: $(pkg-config --modversion libzim)"
 pkg-config --libs libzim
