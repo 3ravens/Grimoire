@@ -1,13 +1,9 @@
 # Cargo configuration for the Grimoire Tauri crate.
 #
-# Windows-only CXXFLAGS for zim-sys: see comment in [target.'cfg(windows)'.env] below.
-# Suppress LanceDB/Arrow/DataFusion internal span noise in dev builds via RUST_LOG.
+# Windows CXXFLAGS for zim-sys are NOT set here (target [env] tables do not
+# support the { value, force } form). CI sets CXXFLAGS via scripts/ci/windows-vcpkg.ps1;
+# local Windows dev: run that script or set CXXFLAGS=/I%VCPKG_ROOT%\installed\x64-windows\include.
 
 [env]
 # Set RUST_LOG in your shell to override (force = false).
 RUST_LOG = { value = "warn,app=info", force = false }
-
-# zim-sys compiles zim-bind.cc on Windows; cxx_build needs vcpkg include paths (MSVC /I syntax).
-# Must not apply on Linux/macOS — a global CXXFLAGS here breaks clang with `/IC:\vcpkg\...`.
-[target.x86_64-pc-windows-msvc.env]
-CXXFLAGS = { value = "/IC:\\vcpkg\\installed\\x64-windows\\include", force = false }
