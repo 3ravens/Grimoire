@@ -9,5 +9,5 @@ RUST_LOG = { value = "warn,app=info", force = false }
 
 # zim-sys compiles zim-bind.cc on Windows; cxx_build needs vcpkg include paths (MSVC /I syntax).
 # Must not apply on Linux/macOS — a global CXXFLAGS here breaks clang with `/IC:\vcpkg\...`.
-[target.'cfg(windows)'.env]
+[target.x86_64-pc-windows-msvc.env]
 CXXFLAGS = { value = "/IC:\\vcpkg\\installed\\x64-windows\\include", force = false }

@@ -170,8 +170,9 @@ App data (SQLite, LanceDB index) lives under the OS app data path for `com.grimo
    - Install native deps (`scripts/ci/*`)
    - `npm ci`, `npm run build`, `npm test`
    - `cargo test --locked` in `src-tauri`
-   - **Linux + macOS:** `npm run tauri build -- --debug` (bundle smoke)
-   - **Windows:** no full Tauri release build in CI (DLL/vcpkg cost); release job validates packaging
+   - **Linux:** `npm run tauri build -- --debug --bundles deb` (deb-only smoke; full `.deb`/`.rpm`/`.AppImage` on release)
+   - **macOS ARM:** `npm run tauri build -- --debug --bundles dmg`
+   - **macOS Intel / Windows:** no Tauri bundle step in PR CI (release job validates packaging)
 
 ### `release.yml` (tags `v*`)
 

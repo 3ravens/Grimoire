@@ -34,6 +34,8 @@ jobs:
   test:
     name: Test (${{ matrix.platform }})
     needs: version-sync
+    # PR smoke must not hang on Linux RPM/AppImage (RPM alone can run for hours on GA).
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -164,10 +166,11 @@ jobs:
         if: matrix.platform == 'linux'
         env:
           CI: true
-        run: npm run tauri build -- --debug
+        # bundle.targets is "all"; RPM packaging has hung >4h on ubuntu-22.04 runners.
+        run: npm run tauri build -- --debug --bundles deb
 
       - name: Tauri debug bundle smoke (macOS)
         if: matrix.platform == 'macos-arm'
         env:
           CI: true
-        run: npm run tauri build -- --debug
+        run: npm run tauri build -- --debug --bundles dmg
