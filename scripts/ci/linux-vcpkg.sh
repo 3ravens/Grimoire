@@ -11,7 +11,7 @@ if [[ ! -x "${VCPKG_ROOT}/vcpkg" ]]; then
   "${VCPKG_ROOT}/bootstrap-vcpkg.sh" -disableMetrics
 fi
 
-"${VCPKG_ROOT}/vcpkg" install libzim:x64-linux
+bash "$(dirname "$0")/vcpkg-install-retry.sh" "${VCPKG_ROOT}/vcpkg" libzim:x64-linux
 
 triplet=x64-linux
 include="${VCPKG_ROOT}/installed/${triplet}/include"

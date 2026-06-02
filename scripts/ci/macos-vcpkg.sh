@@ -18,7 +18,7 @@ else
   triplet=x64-osx
 fi
 
-"${VCPKG_ROOT}/vcpkg" install "libzim:${triplet}"
+bash "$(dirname "$0")/vcpkg-install-retry.sh" "${VCPKG_ROOT}/vcpkg" "libzim:${triplet}"
 
 include="${VCPKG_ROOT}/installed/${triplet}/include"
 lib="${VCPKG_ROOT}/installed/${triplet}/lib"

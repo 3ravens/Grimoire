@@ -56,9 +56,35 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Cache vcpkg (Linux)
+        if: matrix.platform == 'linux'
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936310080e7f94938 # v4.2.0
+        with:
+          path: |
+            vcpkg/downloads
+            vcpkg/installed
+            vcpkg/buildtrees
+            vcpkg/packages
+          key: vcpkg-linux-${{ hashFiles('scripts/ci/linux-vcpkg.sh', 'scripts/ci/vcpkg-install-retry.sh') }}
+          restore-keys: |
+            vcpkg-linux-
+
       - name: Install Linux native dependencies
         if: matrix.platform == 'linux'
         run: bash scripts/ci/linux-deps.sh
+
+      - name: Cache vcpkg (macOS)
+        if: startsWith(matrix.platform, 'macos')
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936310080e7f94938 # v4.2.0
+        with:
+          path: |
+            vcpkg/downloads
+            vcpkg/installed
+            vcpkg/buildtrees
+            vcpkg/packages
+          key: vcpkg-${{ matrix.platform }}-${{ hashFiles('scripts/ci/macos-vcpkg.sh', 'scripts/ci/vcpkg-install-retry.sh') }}
+          restore-keys: |
+            vcpkg-${{ matrix.platform }}-
 
       - name: Install macOS native dependencies
         if: startsWith(matrix.platform, 'macos')
