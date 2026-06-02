@@ -232,10 +232,6 @@ SQL file to the exact bytes that were applied originally."
 
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
-                #[cfg(debug_assertions)]
-                {
-                    let _ = window.open_devtools();
-                }
             }
 
             Ok(())

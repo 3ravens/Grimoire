@@ -3,16 +3,39 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 // *************************************************
-// Damn simple configuration if we are on Windows (not tested)
-#[cfg(not(target_family = "unix"))]
+// Windows configuration
+#[cfg(target_os = "windows")]
+fn vcpkg_root() -> PathBuf {
+    env::var("VCPKG_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(r"C:\vcpkg"))
+}
+
+#[cfg(target_os = "windows")]
 fn configure_lib() {
+    let lib_dir = vcpkg_root()
+        .join("installed")
+        .join("x64-windows")
+        .join("lib");
+
+    println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=zim");
 }
 
-#[cfg(not(target_family = "unix"))]
+#[cfg(target_os = "windows")]
 fn find_libzim() -> (Vec<PathBuf>, bool) {
     configure_lib();
-    (vec![], false)
+
+    let include_dir = env::var("LIBZIM_INCLUDE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            vcpkg_root()
+                .join("installed")
+                .join("x64-windows")
+                .join("include")
+        });
+
+    (vec![include_dir], false)
 }
 
 // *************************************************

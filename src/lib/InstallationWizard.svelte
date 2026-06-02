@@ -718,10 +718,6 @@
     font-family: ui-monospace, monospace;
     font-size: 0.9em;
   }
-  .wiz-ok {
-    color: #8fd19e;
-    margin: 0.25rem 0 0.75rem;
-  }
   .wiz-warn {
     color: #f0c674;
     margin: 0.25rem 0 0.75rem;
