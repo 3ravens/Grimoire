@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Write SHA-256 checksums for installer artifacts under a Tauri bundle directory.
+# Avoid mapfile/readarray (bash 4+) so macOS default bash 3.2 works on GitHub runners.
 set -euo pipefail
 
 ROOT="${1:-src-tauri/target/release/bundle}"
@@ -19,14 +20,15 @@ if [[ ! -d "$ROOT" ]]; then
   exit 1
 fi
 
-mapfile -t FILES < <(
-  find "$ROOT" -type f \( \
-    -name '*.msi' -o -name '*.exe' -o -name '*.deb' -o -name '*.rpm' -o \
-    -name '*.AppImage' -o -name '*.dmg' -o -name '*.app.tar.gz' \
-  \) | sort
-)
+list_file="$(mktemp)"
+trap 'rm -f "$list_file"' EXIT
 
-if [[ ${#FILES[@]} -eq 0 ]]; then
+find "$ROOT" -type f \( \
+  -name '*.msi' -o -name '*.exe' -o -name '*.deb' -o -name '*.rpm' -o \
+  -name '*.AppImage' -o -name '*.dmg' -o -name '*.app.tar.gz' \
+\) | sort >"$list_file"
+
+if [[ ! -s "$list_file" ]]; then
   echo "No installer artifacts found under $ROOT" >&2
   exit 1
 fi
@@ -34,9 +36,9 @@ fi
 {
   echo "# Grimoire release checksums (SHA-256)"
   echo "# Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  for f in "${FILES[@]}"; do
+  while IFS= read -r f; do
     (cd "$(dirname "$f")" && hash_file "$(basename "$f")")
-  done
-} > "$OUT"
+  done <"$list_file"
+} >"$OUT"
 
 cat "$OUT"

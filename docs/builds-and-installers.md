@@ -12,7 +12,7 @@ A **Grimoire build** is a **Tauri v2** desktop application: Svelte frontend (`di
 
 | Platform | Architectures | Typical installer formats |
 |----------|---------------|---------------------------|
-| Windows | x64 | NSIS `.exe` (and MSI if enabled by Tauri) |
+| Windows | x64 | NSIS `.exe` (MSI disabled in `tauri.windows.conf.json` for semver prerelease tags like `1.0.0-rc.1`) |
 | macOS | Apple Silicon (`aarch64`), Intel (`x86_64`) | `.dmg` containing `.app` |
 | Linux | x64 | `.deb`, `.rpm`, `.AppImage` |
 
