@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.0"
+version = "1.0.0-rc.1"
 description = "Grimoire — local-first Markdown notes with LLM chat and semantic search (RAG)."
 authors = ["Wim Palland"]
 license = "GPL-3.0-or-later"
