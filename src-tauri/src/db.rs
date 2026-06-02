@@ -25,8 +25,7 @@ use tauri::{AppHandle, Manager};
 fn app_sqlite_options(db_path: &std::path::Path) -> Result<SqliteConnectOptions, sqlx::Error> {
     let url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
     Ok(
-        SqliteConnectOptions::from_str(&url)
-            .map_err(|e| sqlx::Error::Configuration(e.into()))?
+        SqliteConnectOptions::from_str(&url)?
             .create_if_missing(true)
             .journal_mode(SqliteJournalMode::Wal)
             .busy_timeout(Duration::from_millis(10_000)),

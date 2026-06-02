@@ -1,0 +1,35 @@
+# Optional advisory perf smoke (does not block merges or releases).
+name: perf-advisory
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-advisory-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  perf-budget-offline:
+    name: Perf budget (offline)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+
+      - name: Run perf-budget (offline — save path only)
+        env:
+          PERF_OFFLINE: "1"
+        run: cargo run --bin perf-budget

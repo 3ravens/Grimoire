@@ -23,7 +23,7 @@
         "dragDropEnabled": false,
         "backgroundColor": "#fdfaf9",
         "visible": false,
-        "devtools": true
+        "devtools": false
       }
     ],
     "security": {
@@ -44,16 +44,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": {
-      "nsis-dll-staging/zim-9.dll": "zim-9.dll",
-      "nsis-dll-staging/zstd.dll": "zstd.dll",
-      "nsis-dll-staging/liblzma.dll": "liblzma.dll",
-      "nsis-dll-staging/icudt78.dll": "icudt78.dll",
-      "nsis-dll-staging/icuin78.dll": "icuin78.dll",
-      "nsis-dll-staging/icuio78.dll": "icuio78.dll",
-      "nsis-dll-staging/icutu78.dll": "icutu78.dll",
-      "nsis-dll-staging/icuuc78.dll": "icuuc78.dll"
-    },
     "windows": {
       "webviewInstallMode": {
         "type": "skip"

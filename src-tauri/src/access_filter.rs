@@ -61,7 +61,7 @@ impl AccessFilter {
         let unlocked: HashSet<i64> = keys
             .folder_keys
             .lock()
-            .map_err(|e| AppError::InvalidInput(e.to_string()))?
+            .map_err(|e| AppError::Internal(format!("folder key store lock poisoned: {e}")))?
             .keys()
             .copied()
             .collect();

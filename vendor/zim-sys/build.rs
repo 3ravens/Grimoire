@@ -10,9 +10,9 @@ fn configure_lib() {
 }
 
 #[cfg(not(target_family = "unix"))]
-fn find_libzim() -> Vec<PathBuf> {
+fn find_libzim() -> (Vec<PathBuf>, bool) {
     configure_lib();
-    vec![]
+    (vec![], false)
 }
 
 // *************************************************
@@ -25,47 +25,58 @@ fn configure_lib(link_path: &PathBuf) {
 
 /// Find libzim binary using pkg_config
 #[cfg(target_family = "unix")]
-fn find_system_lib() -> Vec<PathBuf> {
-    let libzim = pkg_config::probe_library("libzim").unwrap();
+fn probe_pkg_config(include_override: Option<PathBuf>) -> Option<Vec<PathBuf>> {
+    let libzim = pkg_config::Config::new().probe("libzim").ok()?;
 
     let include_paths: Vec<&Path> = libzim.include_paths.iter().map(PathBuf::as_path).collect();
-    let link_path = &libzim.link_paths[0];
+    let link_path = libzim.link_paths.first()?;
     println!("Linking to {link_path:?} and includes {include_paths:?}");
 
-    configure_lib(link_path);
-    libzim.include_paths
+    for path in &libzim.link_paths {
+        configure_lib(path);
+    }
+
+    let includes = match include_override {
+        Some(p) => vec![p],
+        None => libzim.include_paths,
+    };
+    Some(includes)
 }
 
 /// Find libzim using env var `LIBZIM_INCLUDE`, `LIBZIM_LIB`.
 ///
 /// Can be used to use a specific library and don't use system one.
 #[cfg(target_family = "unix")]
-fn find_local_lib() -> Result<Vec<PathBuf>, ()> {
-    let include_path: PathBuf = if let Ok(p) = env::var("LIBZIM_INCLUDE") {
-        p.into()
-    } else {
-        return Err(());
-    };
+fn find_local_lib(include_override: Option<PathBuf>) -> Result<Vec<PathBuf>, ()> {
+    let include_path = include_override.or_else(|| env::var("LIBZIM_INCLUDE").ok().map(PathBuf::from))
+        .ok_or(())?;
 
-    let lib_dir: PathBuf = if let Ok(p) = env::var("LIBZIM_LIB") {
-        p.into()
-    } else {
-        return Err(());
-    };
+    let lib_dir: PathBuf = env::var("LIBZIM_LIB").ok().map(PathBuf::from).ok_or(())?;
     configure_lib(&lib_dir);
     Ok(vec![include_path])
 }
 
 #[cfg(target_family = "unix")]
-fn find_libzim() -> Vec<PathBuf> {
-    match find_local_lib() {
-        Ok(p) => return p,
-        Err(_) => find_system_lib(),
+fn find_libzim() -> (Vec<PathBuf>, bool) {
+    let include_override = env::var("LIBZIM_INCLUDE").ok().map(PathBuf::from);
+
+    // Prefer pkg-config so ICU/zstd/lzma etc. are linked (vcpkg and distro .pc files).
+    if let Some(includes) = probe_pkg_config(include_override.clone()) {
+        return (includes, true);
     }
+
+    if let Ok(includes) = find_local_lib(include_override) {
+        return (includes, false);
+    }
+
+    let includes = probe_pkg_config(None).expect(
+        "libzim not found: install libzim-dev (Linux), brew/vcpkg libzim (macOS), or set LIBZIM_INCLUDE and LIBZIM_LIB",
+    );
+    (includes, true)
 }
 
 fn main() {
-    let include_dirs = find_libzim();
+    let (include_dirs, linked_by_pkg_config) = find_libzim();
 
     let sources = ["src/binding.rs"];
     cxx_build::bridges(sources)
@@ -75,9 +86,12 @@ fn main() {
         .flag_if_supported("-Wno-deprecated-declarations")
         .compile("zim-sys");
 
-    println!("cargo:rustc-link-lib=zim"); // if this doesn't go after cxx_build.(...).compile() we get a link error
+    if !linked_by_pkg_config {
+        println!("cargo:rustc-link-lib=zim");
+    }
     println!("cargo:rerun-if-env-changed=LIBZIM_INCLUDE");
     println!("cargo:rerun-if-env-changed=LIBZIM_LIB");
     println!("cargo:rerun-if-env-changed=LD_LIBRARY_PATH");
+    println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
     println!("cargo:rerun-if-changed=build.rs");
 }

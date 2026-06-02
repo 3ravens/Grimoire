@@ -29,6 +29,12 @@ fn main() {
     std::process::exit(2);
 }
 
+fn parse_env_bool(var_name: &str) -> bool {
+    std::env::var(var_name)
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 #[cfg(debug_assertions)]
 fn main() {
     // `seed_test_vault_inner` is a large async state machine; polling it on the default
@@ -110,13 +116,8 @@ async fn run() -> Result<(), String> {
 
     let keys = bench_shared_keystore();
 
-    let skip_ollama = std::env::var("PERF_SKIP_OLLAMA")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-
-    let offline = std::env::var("PERF_OFFLINE")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+    let skip_ollama = parse_env_bool("PERF_SKIP_OLLAMA");
+    let offline = parse_env_bool("PERF_OFFLINE");
 
     eprintln!("Seeding test vault (deterministic seed)…");
     seed_test_vault_inner(
@@ -205,13 +206,8 @@ async fn run() -> Result<(), String> {
     let query = std::env::var("PERF_RAG_QUERY")
         .unwrap_or_else(|_| "What did I write about fermentation?".to_string());
 
-    let skip_ollama = offline
-        || std::env::var("PERF_SKIP_OLLAMA")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-
     let mut ttft_ms: Option<u64> = None;
-    if skip_ollama {
+    if skip_ollama || offline {
         if offline {
             eprintln!("PERF_OFFLINE — skipping RAG TTFT (no localhost Ollama).");
         } else {

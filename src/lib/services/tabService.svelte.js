@@ -278,7 +278,7 @@ export function createTabService({ onError }) {
           } else if (t.type === 'kanban' && t.folderId != null) {
             return { tab: t, note: null };
           } else if (t.type === 'wikipedia' && t.bundleId && t.articlePath) {
-            return { tab: { ...t, readMode: false }, note: null };
+            return { tab: t, note: null };
           }
           return null;
         })

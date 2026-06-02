@@ -54,11 +54,18 @@ const NSIS_STAGED_DLLS: &[&str] = &[
 
 /// `installed/<triplet>/bin` for runtime DLLs (same tree as `add_vcpkg_libzim_search_path` lib dir).
 #[cfg(target_os = "windows")]
-fn vcpkg_installed_bin_dir() -> std::path::PathBuf {
-    let root = std::env::var("VCPKG_ROOT")
+fn vcpkg_root() -> std::path::PathBuf {
+    std::env::var("VCPKG_ROOT")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\vcpkg"));
-    root.join("installed").join("x64-windows").join("bin")
+        .unwrap_or_else(|_| std::path::PathBuf::from(r"C:\vcpkg"))
+}
+
+#[cfg(target_os = "windows")]
+fn vcpkg_installed_bin_dir() -> std::path::PathBuf {
+    vcpkg_root()
+        .join("installed")
+        .join("x64-windows")
+        .join("bin")
 }
 
 /// Copy the libzim DLLs from vendor-dlls/ into the Cargo output directory so
@@ -189,7 +196,7 @@ Place real DLLs in vendor-dlls or vcpkg installed/x64-windows/bin before bundlin
 /// Emit the vcpkg lib directory as a linker search path so `zim.lib` is found.
 #[cfg(target_os = "windows")]
 fn add_vcpkg_libzim_search_path() {
-    let lib_dir = std::path::Path::new(r"C:\vcpkg\installed\x64-windows\lib");
+    let lib_dir = vcpkg_root().join("installed").join("x64-windows").join("lib");
     if lib_dir.exists() {
         println!("cargo:rustc-link-search={}", lib_dir.display());
     }

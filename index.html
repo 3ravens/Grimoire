@@ -23,23 +23,65 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>grimoire</title>
     <style>
-      html, body { margin: 0; background: #fdfaf9; }
-      @media (prefers-color-scheme: dark) {
-        html, body { background: #171412; }
+      :root {
+        --text-h: #1a0f0f;
+        --bg: #fdfaf9;
+        --danger: #c0392b;
       }
-      html[data-theme="bag"] { background: #111111; }
-      html[data-theme="matrix"] { background: #000000; }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --text-h: #f0e8e8;
+          --bg: #171412;
+          --danger: #e06060;
+        }
+      }
+      html[data-theme="bag"] {
+        --bg: #111111;
+      }
+      html[data-theme="matrix"] {
+        --bg: #000000;
+      }
+      html,
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text-h);
+      }
+      #grimoire-boot-overlay {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+        font: 14px/1.5 system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text-h);
+        z-index: 2147483647;
+        text-align: center;
+      }
+      #grimoire-boot-overlay .boot-title {
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+      }
+      #grimoire-boot-overlay .boot-sub {
+        opacity: 0.85;
+      }
+      #grimoire-boot-error {
+        margin-top: 1rem;
+        color: var(--danger);
+        white-space: pre-wrap;
+        max-width: 42rem;
+        display: none;
+      }
     </style>
   </head>
   <body>
-    <div
-      id="grimoire-boot-overlay"
-      style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:1.5rem;font:14px/1.5 system-ui,sans-serif;background:#171412;color:#e8e0dc;z-index:2147483647;text-align:center"
-    >
+    <div id="grimoire-boot-overlay">
       <div>
-        <div style="font-weight:600;margin-bottom:0.5rem">Grimoire</div>
-        <div style="opacity:0.85">Loading interface…</div>
-        <div id="grimoire-boot-error" style="margin-top:1rem;color:#f0a0a0;white-space:pre-wrap;max-width:42rem;display:none"></div>
+        <div class="boot-title">Grimoire</div>
+        <div class="boot-sub">Loading interface…</div>
+        <div id="grimoire-boot-error"></div>
       </div>
     </div>
     <div id="app"></div>

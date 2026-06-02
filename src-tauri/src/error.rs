@@ -43,6 +43,8 @@ pub enum AppError {
     Auth(String),
     /// LanceDB vector store failure (open, insert, query).
     VectorStore(String),
+    /// Unexpected internal failure (poisoned locks, invariant violations).
+    Internal(String),
 }
 
 impl fmt::Display for AppError {
@@ -56,6 +58,7 @@ impl fmt::Display for AppError {
             AppError::InvalidInput(m)     => write!(f, "{m}"),
             AppError::Auth(m)             => write!(f, "{m}"),
             AppError::VectorStore(m)      => write!(f, "{m}"),
+            AppError::Internal(m)       => write!(f, "{m}"),
         }
     }
 }

@@ -1,0 +1,227 @@
+# Tag or manual dispatch → draft GitHub Release with per-platform installers.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (e.g. v0.1.0-rc.1); must match app version in package.json / Cargo / tauri.conf.json'
+        required: true
+
+# Default read-only; publish job escalates only where releases are created.
+permissions:
+  contents: read
+
+env:
+  # workflow_dispatch: inputs.release_tag; tag push: github.ref_name (e.g. v0.1.0)
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag || github.ref_name }}
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  version-sync:
+    name: Version sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: lts/*
+      - name: Check version alignment
+        run: bash scripts/ci/check-version-sync.sh
+      - name: Check release tag matches app version
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: bash scripts/ci/check-version-sync.sh --release-tag "$RELEASE_TAG"
+
+  test:
+    name: Test (${{ matrix.platform }})
+    needs: version-sync
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-15-intel
+            platform: macos-intel
+          - os: macos-14
+            platform: macos-arm
+          - os: ubuntu-22.04
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Install Linux native dependencies
+        if: matrix.platform == 'linux'
+        run: bash scripts/ci/linux-deps.sh
+      - name: Install macOS native dependencies
+        if: startsWith(matrix.platform, 'macos')
+        run: bash scripts/ci/macos-deps.sh
+      - name: Install Windows native dependencies
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: scripts/ci/windows-vcpkg.ps1
+      - name: Install protoc (Windows)
+        if: matrix.platform == 'windows'
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify libzim toolchain
+        if: matrix.platform == 'linux' || startsWith(matrix.platform, 'macos')
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg-config --modversion libzim
+          pkg-config --libs libzim
+          if [[ -n "${LIBZIM_INCLUDE:-}" ]]; then
+            test -f "${LIBZIM_INCLUDE}/zim/version.h"
+          fi
+          if [[ -n "${LIBZIM_LIB:-}" ]]; then
+            ls "${LIBZIM_LIB}"/libzim* || ls "${LIBZIM_LIB}"/libzim.*
+          fi
+          protoc --version
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: lts/*
+      - run: npm ci --prefer-offline --no-audit
+      - run: npm run build
+      - run: npm test
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+      - name: Build Rust tests
+        working-directory: src-tauri
+        env:
+          RUST_BACKTRACE: 1
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --locked --tests 2>&1 | tee ../cargo-build.log
+          status=${PIPESTATUS[0]}
+          if [[ $status -ne 0 ]]; then
+            echo "::error::cargo build --tests failed (exit $status)"
+            tail -n 120 ../cargo-build.log
+          fi
+          exit $status
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        env:
+          RUST_BACKTRACE: 1
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked -- --nocapture 2>&1 | tee ../cargo-test.log
+          status=${PIPESTATUS[0]}
+          if [[ $status -ne 0 ]]; then
+            echo "::error::cargo test failed (exit $status)"
+            tail -n 100 ../cargo-test.log
+          fi
+          exit $status
+
+  publish:
+    name: Publish (${{ matrix.platform }})
+    needs: test
+    # Create/upload release assets only in this job.
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            args: ''
+            bundle_root: src-tauri/target/release/bundle
+          - platform: linux
+            os: ubuntu-22.04
+            args: ''
+            bundle_root: src-tauri/target/release/bundle
+          - platform: macos-arm
+            os: macos-14
+            args: '--target aarch64-apple-darwin'
+            bundle_root: src-tauri/target/aarch64-apple-darwin/release/bundle
+          - platform: macos-intel
+            os: macos-15-intel
+            args: '--target x86_64-apple-darwin'
+            bundle_root: src-tauri/target/x86_64-apple-darwin/release/bundle
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Linux native dependencies
+        if: matrix.platform == 'linux'
+        run: bash scripts/ci/linux-deps.sh
+
+      - name: Install macOS native dependencies
+        if: startsWith(matrix.platform, 'macos')
+        run: bash scripts/ci/macos-deps.sh
+
+      - name: Install Windows native dependencies
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: scripts/ci/windows-vcpkg.ps1
+
+      - name: Install protoc (Windows)
+        if: matrix.platform == 'windows'
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: lts/*
+
+      - name: Install frontend dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+          targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      # tauri-apps/tauri-action@v0 (0.6.2)
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: Grimoire ${{ env.RELEASE_TAG }}
+          releaseBody: |
+            Unsigned pre-release installers. See [docs/builds-and-installers.md](https://github.com/${{ github.repository }}/blob/main/docs/builds-and-installers.md) for install notes and SHA-256 verification.
+
+            **Ollama is not bundled** — install separately or use the in-app setup wizard.
+          releaseDraft: true
+          prerelease: ${{ !startsWith(env.RELEASE_TAG, 'v1.') || contains(env.RELEASE_TAG, '-') }}
+          args: ${{ matrix.args }}
+
+      - name: Generate bundle checksums
+        shell: bash
+        env:
+          BUNDLE_ROOT: ${{ matrix.bundle_root }}
+          CHECKSUM_FILE: checksums-${{ matrix.platform }}.txt
+        run: |
+          bash scripts/ci/checksum-bundles.sh "$BUNDLE_ROOT" "$CHECKSUM_FILE"
+
+      - name: Upload checksums to draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+          CHECKSUM_FILE: checksums-${{ matrix.platform }}.txt
+        run: |
+          gh release upload "$RELEASE_TAG" "$CHECKSUM_FILE" --clobber

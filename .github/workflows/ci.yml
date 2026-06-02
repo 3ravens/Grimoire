@@ -1,0 +1,176 @@
+# PR/main CI — least-privilege token; actions pinned to commit SHAs (see comments).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version-sync:
+    name: Version sync
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      # actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: lts/*
+      - name: Check version alignment
+        run: bash scripts/ci/check-version-sync.sh
+
+  test:
+    name: Test (${{ matrix.platform }})
+    needs: version-sync
+    # PR smoke must not hang on Linux RPM/AppImage (RPM alone can run for hours on GA).
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-15-intel
+            platform: macos-intel
+          - os: macos-14
+            platform: macos-arm
+          - os: ubuntu-22.04
+            platform: linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Linux native dependencies
+        if: matrix.platform == 'linux'
+        run: bash scripts/ci/linux-deps.sh
+
+      - name: Install macOS native dependencies
+        if: startsWith(matrix.platform, 'macos')
+        run: bash scripts/ci/macos-deps.sh
+
+      - name: Install Windows native dependencies
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: scripts/ci/windows-vcpkg.ps1
+
+      - name: Install protoc (Windows)
+        if: matrix.platform == 'windows'
+        # arduino/setup-protoc@v3
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify libzim toolchain
+        if: matrix.platform == 'linux' || startsWith(matrix.platform, 'macos')
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg-config --modversion libzim
+          pkg-config --libs libzim
+          if [[ -n "${LIBZIM_INCLUDE:-}" ]]; then
+            test -f "${LIBZIM_INCLUDE}/zim/version.h"
+          fi
+          if [[ -n "${LIBZIM_LIB:-}" ]]; then
+            ls "${LIBZIM_LIB}"/libzim* || ls "${LIBZIM_LIB}"/libzim.*
+          fi
+          protoc --version
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: lts/*
+
+      - name: Install frontend dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Run frontend tests
+        run: npm test
+
+      # dtolnay/rust-toolchain@stable
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+
+      - name: Build Rust tests
+        working-directory: src-tauri
+        env:
+          RUST_BACKTRACE: 1
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --locked --tests 2>&1 | tee ../cargo-build.log
+          status=${PIPESTATUS[0]}
+          if [[ $status -ne 0 ]]; then
+            echo "::error::cargo build --tests failed (exit $status)"
+            tail -n 120 ../cargo-build.log
+            {
+              echo "## cargo build --tests (tail errors)"
+              echo '```'
+              grep -E 'error(\[|:)|undefined reference|fatal error:|could not compile|linking with' ../cargo-build.log | tail -n 60 || tail -n 60 ../cargo-build.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit $status
+
+      - name: Upload cargo build log on failure
+        if: failure() && (matrix.platform == 'linux' || startsWith(matrix.platform, 'macos'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-build-${{ matrix.platform }}
+          path: cargo-build.log
+          if-no-files-found: ignore
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        env:
+          RUST_BACKTRACE: 1
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --locked -- --nocapture 2>&1 | tee ../cargo-test.log
+          status=${PIPESTATUS[0]}
+          if [[ $status -ne 0 ]]; then
+            echo "::error::cargo test failed (exit $status)"
+            tail -n 100 ../cargo-test.log
+          fi
+          exit $status
+
+      - name: Upload cargo test log on failure
+        if: failure() && (matrix.platform == 'linux' || startsWith(matrix.platform, 'macos'))
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-test-${{ matrix.platform }}
+          path: cargo-test.log
+          if-no-files-found: ignore
+
+      - name: Tauri debug bundle smoke (Linux)
+        if: matrix.platform == 'linux'
+        env:
+          CI: true
+        # bundle.targets is "all"; RPM packaging has hung >4h on ubuntu-22.04 runners.
+        run: npm run tauri build -- --debug --bundles deb
+
+      - name: Tauri debug bundle smoke (macOS)
+        if: matrix.platform == 'macos-arm'
+        env:
+          CI: true
+        run: npm run tauri build -- --debug --bundles dmg

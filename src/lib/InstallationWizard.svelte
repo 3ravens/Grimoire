@@ -50,6 +50,8 @@
   const defaultEmbed = CURATED_EMBEDDING_MODELS[0]?.value ?? 'nomic-embed-text';
   let embedModel = $state(defaultEmbed);
   let embedInstalled = $state(false);
+  let chatInstalled = $state(false);
+  let chatInstalledRequest = 0;
   let embedPullBusy = $state(false);
 
   let wikipediaEnable = $state(false);
@@ -101,6 +103,15 @@
     });
   });
 
+  const selectedChatModel = $derived(
+    String(useCustomModel ? customModel.trim() : chatPick).trim(),
+  );
+
+  const skipDepsStep = $derived(ollamaOk === true);
+  const skipModelsStep = $derived(
+    ollamaOk === true && embedInstalled && chatInstalled,
+  );
+
   $effect(() => {
     const rows = curatedForWizard;
     if (!rows.length) return;
@@ -110,6 +121,7 @@
   });
 
   onMount(() => {
+    void runPreflight();
     return () => {
       unsubPull?.();
     };
@@ -120,6 +132,7 @@
     try {
       await invoke('list_ollama_installed_models');
       ollamaOk = true;
+      await Promise.all([refreshEmbedInstalled(), refreshChatInstalled()]);
     } catch {
       ollamaOk = false;
     } finally {
@@ -147,17 +160,76 @@
     }
   }
 
+  async function refreshChatInstalled() {
+    const model = selectedChatModel;
+    const requestId = ++chatInstalledRequest;
+    if (!model) {
+      if (requestId === chatInstalledRequest) {
+        chatInstalled = false;
+      }
+      return;
+    }
+    try {
+      const installed = await checkChatModelInstalled(model);
+      if (requestId === chatInstalledRequest && model === selectedChatModel) {
+        chatInstalled = installed;
+      }
+    } catch {
+      if (requestId === chatInstalledRequest && model === selectedChatModel) {
+        chatInstalled = false;
+      }
+    }
+  }
+
+  async function runPreflight() {
+    await checkOllama();
+    if (ollamaOk !== true) return;
+    await Promise.all([refreshEmbedInstalled(), refreshChatInstalled()]);
+  }
+
   $effect(() => {
     if (mainStep === MS_HW && !hardwareReport && !hwBusy) {
       void loadHardware();
     }
-    if (mainStep === MS_DEPS && ollamaOk === null && !ollamaCheckBusy) {
-      void checkOllama();
-    }
-    if (mainStep === MS_MODELS) {
+    if (ollamaOk === true) {
+      embedModel;
+      selectedChatModel;
       void refreshEmbedInstalled();
+      void refreshChatInstalled();
     }
   });
+
+  function advanceFromStarter() {
+    if (!skipDepsStep) return MS_DEPS;
+    if (!skipModelsStep) return MS_HW;
+    return MS_WIKI;
+  }
+
+  function advanceFromDeps() {
+    if (!skipModelsStep) return MS_HW;
+    return MS_WIKI;
+  }
+
+  function advanceFromHw() {
+    if (!skipModelsStep) return MS_MODELS;
+    return MS_WIKI;
+  }
+
+  function retreatFromWiki() {
+    if (!skipModelsStep) return MS_MODELS;
+    if (!skipDepsStep) return MS_HW;
+    return MS_STARTER;
+  }
+
+  function retreatFromModels() {
+    if (!skipDepsStep) return MS_HW;
+    return MS_STARTER;
+  }
+
+  function retreatFromHw() {
+    if (!skipDepsStep) return MS_DEPS;
+    return MS_STARTER;
+  }
 
   function tourNext() {
     if (tourSlide < tourSlides.length - 1) {
@@ -175,13 +247,38 @@
     mainStep = MS_STARTER;
   }
 
-  function stepNext() {
+  async function stepNext() {
+    if (mainStep === MS_STARTER) {
+      if (ollamaOk === null) await checkOllama();
+      mainStep = advanceFromStarter();
+      return;
+    }
+    if (mainStep === MS_DEPS) {
+      mainStep = advanceFromDeps();
+      return;
+    }
+    if (mainStep === MS_HW) {
+      mainStep = advanceFromHw();
+      return;
+    }
     if (mainStep < MS_WIKI) mainStep += 1;
   }
 
   function stepBack() {
-    if (mainStep > MS_STARTER) {
-      mainStep -= 1;
+    if (mainStep === MS_WIKI) {
+      mainStep = retreatFromWiki();
+      return;
+    }
+    if (mainStep === MS_MODELS) {
+      mainStep = retreatFromModels();
+      return;
+    }
+    if (mainStep === MS_HW) {
+      mainStep = retreatFromHw();
+      return;
+    }
+    if (mainStep === MS_DEPS) {
+      mainStep = MS_STARTER;
       return;
     }
     if (mainStep === MS_STARTER) {
@@ -208,6 +305,7 @@
     const installed = await checkChatModelInstalled(model);
     if (installed) {
       await saveChatModelSetting(model);
+      chatInstalled = true;
       return;
     }
     dlModal = {
@@ -241,6 +339,7 @@
     try {
       await pullChatModel(model);
       await saveChatModelSetting(model);
+      chatInstalled = true;
       dlModal = null;
       unsubPull?.();
       unsubPull = null;
@@ -272,7 +371,7 @@
     if (finishBusy) return;
     finishBusy = true;
     try {
-      const chat = String(useCustomModel ? customModel.trim() : chatPick).trim();
+      const chat = selectedChatModel;
       if (chat) {
         const ok = await checkChatModelInstalled(chat);
         if (!ok) {
@@ -359,21 +458,21 @@
         <button type="button" class="wiz-btn primary" onclick={stepNext}>Next</button>
       </div>
     {:else if mainStep === MS_DEPS}
-      <p class="wiz-body">
-        Grimoire uses <strong>Ollama</strong> on your machine for chat and embeddings. Install it, start
-        <code class="wiz-code">ollama serve</code>, then re-check.
-      </p>
-      {#if ollamaOk === true}
-        <p class="wiz-ok" role="status">Ollama is reachable.</p>
+      {#if ollamaOk === null && ollamaCheckBusy}
+        <p class="wiz-body">Checking local AI runtime…</p>
       {:else if ollamaOk === false}
+        <p class="wiz-body">
+          Grimoire uses <strong>Ollama</strong> on your machine for chat and embeddings. Install it, start
+          <code class="wiz-code">ollama serve</code>, then re-check.
+        </p>
         <p class="wiz-warn" role="alert">Could not reach Ollama on this computer.</p>
+        <div class="wiz-row">
+          <button type="button" class="wiz-btn secondary" onclick={openOllamaDownload}>Open Ollama download</button>
+          <button type="button" class="wiz-btn secondary" onclick={checkOllama} disabled={ollamaCheckBusy}
+            >{ollamaCheckBusy ? 'Checking…' : 'Check again'}</button
+          >
+        </div>
       {/if}
-      <div class="wiz-row">
-        <button type="button" class="wiz-btn secondary" onclick={openOllamaDownload}>Open Ollama download</button>
-        <button type="button" class="wiz-btn secondary" onclick={checkOllama} disabled={ollamaCheckBusy}
-          >{ollamaCheckBusy ? 'Checking…' : 'Check again'}</button
-        >
-      </div>
       <div class="wiz-row">
         <button type="button" class="wiz-btn secondary" onclick={stepBack}>Back</button>
         <button type="button" class="wiz-btn primary" onclick={stepNext}>Next</button>
@@ -408,9 +507,12 @@
         <button type="button" class="wiz-btn primary" onclick={stepNext}>Next</button>
       </div>
     {:else if mainStep === MS_MODELS}
-      <p class="wiz-body">
-        Third-party models are community weights — use them at your own risk. Grimoire does not vet model behaviour.
-      </p>
+      {#if !chatInstalled || !embedInstalled}
+        <p class="wiz-body">
+          Third-party models are community weights — use them at your own risk. Grimoire does not vet model behaviour.
+        </p>
+      {/if}
+      {#if !chatInstalled}
       <label class="wiz-check">
         <input type="checkbox" bind:checked={useCustomModel} />
         Use custom Ollama model id
@@ -431,21 +533,20 @@
       <div class="wiz-model-actions">
         <button type="button" class="wiz-btn secondary" onclick={startChatPull}>Pull / save chat model</button>
       </div>
-      <hr class="wiz-hr" />
+      {/if}
+      {#if !chatInstalled && !embedInstalled}
+        <hr class="wiz-hr" />
+      {/if}
+      {#if !embedInstalled}
       <p class="wiz-body">
         <strong>Embedding model</strong> ({embedModel}) powers semantic search. It must be installed in Ollama.
       </p>
-      {#if embedInstalled}
-        <p class="wiz-ok" role="status">Embedding model is installed.</p>
-      {:else}
-        <p class="wiz-warn" role="status">Embedding model not installed yet.</p>
+        <div class="wiz-row">
+          <button type="button" class="wiz-btn secondary" onclick={pullEmbed} disabled={embedPullBusy}>
+            {embedPullBusy ? 'Pulling…' : `Pull ${embedModel}`}
+          </button>
+        </div>
       {/if}
-      <div class="wiz-row">
-        <button type="button" class="wiz-btn secondary" onclick={pullEmbed} disabled={embedPullBusy}>
-          {embedPullBusy ? 'Pulling…' : `Pull ${embedModel}`}
-        </button>
-        <button type="button" class="wiz-btn secondary" onclick={refreshEmbedInstalled}>Refresh status</button>
-      </div>
       <div class="wiz-row">
         <button type="button" class="wiz-btn secondary" onclick={stepBack}>Back</button>
         <button type="button" class="wiz-btn primary" onclick={stepNext}>Next</button>
