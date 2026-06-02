@@ -2,14 +2,8 @@
 # Bootstrap vcpkg and install libzim for macOS CI (same 9.x as Windows/Linux vcpkg).
 set -euo pipefail
 
-export VCPKG_ROOT="${VCPKG_ROOT:-${GITHUB_WORKSPACE}/vcpkg}"
-
-if [[ ! -x "${VCPKG_ROOT}/vcpkg" ]]; then
-  if [[ ! -d "${VCPKG_ROOT}/.git" ]]; then
-    git clone --depth 1 https://github.com/microsoft/vcpkg "${VCPKG_ROOT}"
-  fi
-  "${VCPKG_ROOT}/bootstrap-vcpkg.sh" -disableMetrics
-fi
+# shellcheck source=vcpkg-bootstrap.sh
+source "$(dirname "$0")/vcpkg-bootstrap.sh"
 
 arch="$(uname -m)"
 if [[ "${arch}" == arm64 ]]; then
@@ -19,6 +13,8 @@ else
 fi
 
 bash "$(dirname "$0")/vcpkg-install-retry.sh" "${VCPKG_ROOT}/vcpkg" "libzim:${triplet}"
+
+vcpkg_save_ci_cache
 
 include="${VCPKG_ROOT}/installed/${triplet}/include"
 lib="${VCPKG_ROOT}/installed/${triplet}/lib"

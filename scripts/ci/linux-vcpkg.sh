@@ -2,16 +2,12 @@
 # Bootstrap vcpkg and install libzim:x64-linux (matches Windows CI / release builds).
 set -euo pipefail
 
-export VCPKG_ROOT="${VCPKG_ROOT:-${GITHUB_WORKSPACE}/vcpkg}"
-
-if [[ ! -x "${VCPKG_ROOT}/vcpkg" ]]; then
-  if [[ ! -d "${VCPKG_ROOT}/.git" ]]; then
-    git clone --depth 1 https://github.com/microsoft/vcpkg "${VCPKG_ROOT}"
-  fi
-  "${VCPKG_ROOT}/bootstrap-vcpkg.sh" -disableMetrics
-fi
+# shellcheck source=vcpkg-bootstrap.sh
+source "$(dirname "$0")/vcpkg-bootstrap.sh"
 
 bash "$(dirname "$0")/vcpkg-install-retry.sh" "${VCPKG_ROOT}/vcpkg" libzim:x64-linux
+
+vcpkg_save_ci_cache
 
 triplet=x64-linux
 include="${VCPKG_ROOT}/installed/${triplet}/include"
