@@ -41,6 +41,27 @@ jobs:
           RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: bash scripts/ci/check-version-sync.sh --release-tag "$RELEASE_TAG"
 
+  license-audit:
+    name: License audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      # EmbarkStudios/cargo-deny-action@v2.0.20 (cargo-deny 0.19.8)
+      - name: cargo-deny (licenses)
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe
+        with:
+          command: check licenses
+          manifest-path: ./src-tauri/Cargo.toml
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: lts/*
+      - name: Install frontend dependencies
+        run: npm ci --prefer-offline --no-audit
+      - name: license-checker (npm production deps)
+        run: npm run license:check
+
   test:
     name: Test (${{ matrix.platform }})
     needs: version-sync
@@ -131,7 +152,7 @@ jobs:
 
   publish:
     name: Publish (${{ matrix.platform }})
-    needs: test
+    needs: [test, license-audit]
     # Create/upload release assets only in this job.
     permissions:
       contents: write

@@ -64,6 +64,22 @@
   cursor: not-allowed;
 }
 
+.activity-bar-btn.has-badge {
+  position: relative;
+}
+
+.activity-bar-badge {
+  position: absolute;
+  inset-block-start: 7px;
+  inset-inline-end: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1.5px var(--bg2);
+  pointer-events: none;
+}
+
 .activity-bar-separator {
   width: 20px;
   border: none;

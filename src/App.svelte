@@ -97,6 +97,11 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     /** Non-null after `get_app_data_migration_banner` returns a message (preview data copy). */
     let appDataMigrationBanner = $state(/** @type {string | null} */ (null));
 
+    /** Non-null when an opt-in update check found a newer version (notify-only). */
+    let updateBanner = $state(
+        /** @type {{ latest: string, current: string, downloadUrl: string } | null} */ (null),
+    );
+
     /** First-run installation wizard (see `wizard_status`). */
     let installationWizardOpen = $state(false);
     /** False until `wizard_status` resolves (avoids a one-frame flash of the main shell). */
@@ -162,6 +167,42 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
             err.showError(e);
         }
         appDataMigrationBanner = null;
+    }
+
+    /** Apply a `check_for_update` result to the banner state. */
+    function applyUpdateCheckResult(res) {
+        if (res && res.enabled && res.updateAvailable && res.latest) {
+            updateBanner = {
+                latest: String(res.latest),
+                current: String(res.current),
+                downloadUrl: String(res.downloadUrl),
+            };
+        } else {
+            updateBanner = null;
+        }
+    }
+
+    /** Opt-in, notify-only update check. Makes no network call unless enabled. */
+    async function refreshUpdateBanner() {
+        try {
+            const res = await invoke("check_for_update");
+            applyUpdateCheckResult(res);
+        } catch {
+            updateBanner = null;
+        }
+    }
+
+    function dismissUpdateBanner() {
+        updateBanner = null;
+    }
+
+    async function openUpdateDownload() {
+        if (!updateBanner) return;
+        try {
+            await invoke("open_external_url", { url: updateBanner.downloadUrl });
+        } catch (e) {
+            err.showError(e);
+        }
     }
 
     async function resumeVaultReindexFromBanner() {
@@ -363,6 +404,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
         void refreshVaultReindexBanner();
         void refreshAppDataMigrationBanner();
+        void refreshUpdateBanner();
     }
 
     async function onInstallationWizardDone() {
@@ -479,6 +521,11 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         };
         window.addEventListener("grimoire:navigate-note", onNavigateNote);
 
+        // Settings → "Check now" re-runs the update check; reflect its result here.
+        const onUpdateCheck = (e) =>
+            applyUpdateCheckResult(/** @type {CustomEvent} */ (e).detail);
+        window.addEventListener("grimoire:update-check", onUpdateCheck);
+
         return () => {
             cancelled = true;
             unsubs.forEach((u) => u());
@@ -488,6 +535,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                 onVaultDataChanged,
             );
             window.removeEventListener("grimoire:navigate-note", onNavigateNote);
+            window.removeEventListener("grimoire:update-check", onUpdateCheck);
         };
     });
 
@@ -927,6 +975,21 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         </div>
     {/if}
 
+    {#if updateBanner}
+        <div class="vault-reindex-banner" role="status">
+            <span>
+                A newer version of Grimoire is available:
+                <strong>{updateBanner.latest}</strong> (you have {updateBanner.current}).
+            </span>
+            <span class="banner-actions">
+                <button type="button" class="primary" onclick={openUpdateDownload}>
+                    View download
+                </button>
+                <button type="button" onclick={dismissUpdateBanner}>Dismiss</button>
+            </span>
+        </div>
+    {/if}
+
     <!-- Password modals (rendered above everything) -->
     {#if fs.folderUnlockTarget}
         <PasswordModal
@@ -1032,6 +1095,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         onWikipedia={() => (ui.wikiSearchOpen = true)}
         onLock={lockVault}
         onSettings={() => (ui.settingsOpen = true)}
+        updateAvailable={updateBanner != null}
         onHelp={() => openPublicSite("https://grimoireapp.dev/help")}
         onDocs={() => openPublicSite("https://docs.grimoireapp.dev")}
         onReportBug={openBugReportFromShell}

@@ -370,6 +370,7 @@ SQL file to the exact bytes that were applied originally."
         commands::prune_audit_log,
         commands::open_bug_report,
         commands::open_external_url,
+        commands::check_for_update,
         // ── Debug-only commands (excluded from release builds) ───────────────
         #[cfg(debug_assertions)]
         commands::debug_search,

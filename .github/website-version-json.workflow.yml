@@ -1,0 +1,104 @@
+# ============================================================================
+# HANDOFF ARTIFACT — this file does NOT run in the Grimoire app repo.
+# It lives under .github/ (not .github/workflows/) on purpose so GitHub does
+# not execute it here. Copy it into the GRIMOIRE WEBSITE repo as
+# `.github/workflows/publish-version-json.yml`, then set the two env values
+# (APP_REPO, OUTPUT_PATH) for that repo.
+#
+# Purpose: keep `https://grimoireapp.dev/version.json` in sync with the latest
+# *stable* Grimoire release. The desktop app's opt-in update check reads this
+# file (shape: { "version": "x.y.z" }) to decide whether to notify the user.
+# ============================================================================
+name: publish-version-json
+
+on:
+  # Manual run from the Actions tab.
+  workflow_dispatch:
+  # Safety net so a forgotten publish self-heals within a few hours.
+  schedule:
+    - cron: '0 */6 * * *'
+  # Optional: instant refresh when the app repo finishes a release (see note at
+  # the bottom of this file for the dispatching step to add in the app repo).
+  repository_dispatch:
+    types: [grimoire-release]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-version-json
+  cancel-in-progress: true
+
+env:
+  # The public Grimoire application repository (owner/name).
+  APP_REPO: wimpal/Grimoire
+  # Where the deployed site serves static files from. Adjust to your framework:
+  #   SvelteKit / static adapter → static/version.json
+  #   Astro / Next.js            → public/version.json
+  OUTPUT_PATH: static/version.json
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout@v4 — pin to your repo's preferred SHA.
+      - uses: actions/checkout@v4
+        with:
+          # Push the updated file back to the default branch.
+          persist-credentials: true
+
+      - name: Resolve latest stable Grimoire version
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # `releases/latest` excludes drafts and prereleases (RCs), so this is
+          # the latest STABLE version — exactly what the update check advertises.
+          tag=$(gh api "repos/${APP_REPO}/releases/latest" --jq '.tag_name' 2>/dev/null || echo "")
+          if [[ -z "$tag" || "$tag" == "null" ]]; then
+            echo "No stable release found yet; nothing to publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Write version.json
+        if: steps.ver.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$OUTPUT_PATH")"
+          printf '{ "version": "%s" }\n' "${{ steps.ver.outputs.version }}" > "$OUTPUT_PATH"
+          echo "Wrote $OUTPUT_PATH:"
+          cat "$OUTPUT_PATH"
+
+      - name: Commit if changed
+        if: steps.ver.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- "$OUTPUT_PATH"; then
+            echo "version.json already up to date — no commit needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$OUTPUT_PATH"
+          git commit -m "chore: publish version.json ${{ steps.ver.outputs.version }}"
+          git push
+
+# ----------------------------------------------------------------------------
+# OPTIONAL — instant updates instead of waiting for the 6-hour schedule.
+# Add a job to the Grimoire APP repo's .github/workflows/release.yml that fires
+# a repository_dispatch after `publish` succeeds. Requires a fine-grained PAT
+# secret `WEBSITE_DISPATCH_TOKEN` (contents:write on the website repo):
+#
+#   notify-website:
+#     needs: publish
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Refresh website version.json
+#         env:
+#           GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+#         run: gh api repos/<OWNER>/<WEBSITE_REPO>/dispatches -f event_type=grimoire-release
+# ----------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 Single reference for how Grimoire is packaged, what CI produces, and how to fix common build failures. Maintainer checklist: [`.github/RELEASING.md`](../.github/RELEASING.md).
 
-**Last verified:** _pending — run the first RC via [`.github/workflows/release.yml`](../.github/workflows/release.yml) (tag push or workflow dispatch), then record the date and tag here._
+**Last verified:** _pending a full release run — the cross-platform matrix and the `license-audit` gate are wired in [`ci.yml`](../.github/workflows/ci.yml) / [`release.yml`](../.github/workflows/release.yml) and pass locally; the maintainer must dispatch the first RC via [`.github/workflows/release.yml`](../.github/workflows/release.yml) (tag push or workflow dispatch), confirm `.deb` + `.rpm` + `.AppImage` + macOS `.dmg` (Intel + ARM) + Windows NSIS in the draft release, then record the date and tag here._
 
 ---
 
@@ -166,7 +166,8 @@ App data (SQLite, LanceDB index) lives under the OS app data path for `com.grimo
 ### `ci.yml` (pull requests and `main`)
 
 1. `version-sync` — `check-version-sync.sh`
-2. Matrix **test** on `windows-latest`, `macos-15-intel`, `macos-14`, `ubuntu-22.04`:
+2. `license-audit` — `cargo deny check licenses` (`src-tauri/deny.toml`) + `npm run license:check` (production deps)
+3. Matrix **test** on `windows-latest`, `macos-15-intel`, `macos-14`, `ubuntu-22.04`:
    - Install native deps (`scripts/ci/*`)
    - `npm ci`, `npm run build`, `npm test`
    - `cargo test --locked` in `src-tauri`
@@ -176,10 +177,11 @@ App data (SQLite, LanceDB index) lives under the OS app data path for `com.grimo
 
 ### `release.yml` (tags `v*`)
 
-1. Same tests as CI
-2. **publish** matrix: Windows, Linux, macOS ARM, macOS Intel
-3. `tauri-apps/tauri-action@v0` → **draft** GitHub Release
-4. `checksum-bundles.sh` → `checksums-<platform>.txt` uploaded via `gh release upload`
+1. `version-sync` + `license-audit` (release tag must match app version; licenses must pass)
+2. Same tests as CI
+3. **publish** matrix (gated on both `test` and `license-audit`): Windows, Linux, macOS ARM, macOS Intel
+4. `tauri-apps/tauri-action@v0` → **draft** GitHub Release (Linux `bundle.targets: "all"` → `.deb` + `.rpm` + `.AppImage`)
+5. `checksum-bundles.sh` → `checksums-<platform>.txt` uploaded via `gh release upload`
 
 ### Reading failed jobs
 
@@ -258,13 +260,20 @@ Install `libfuse2`, or run with extract-and-run per AppImage docs.
 
 ---
 
-## 11. Related roadmap items (not implemented here)
+## 11. Related roadmap items
 
 From Phase 4 of the project roadmap (local `.vscode/Guidelines/ROADMAP.md` when present):
 
-- **Update notifications / opt-in auto-update** — needs `tauri-plugin-updater` + signed releases
-- **Dependency license audit** — `cargo deny`, npm `license-checker`
-- **Production signing** — separate hardening pass
+- **Update notifications** — implemented as **opt-in, notify-only**: when the user enables
+  the check in Settings, the app reads `https://grimoireapp.dev/version.json` on launch and
+  shows a banner/badge linking to the download page. No network call is made unless the user
+  opts in, and there is no silent in-app apply (the `tauri-plugin-updater` background apply is
+  deferred to Phase 5). The release process **must publish/update `version.json`** for the
+  check to detect a release — see [`.github/RELEASING.md`](../.github/RELEASING.md).
+- **Dependency license audit** — implemented: `cargo deny check licenses`
+  ([`src-tauri/deny.toml`](../src-tauri/deny.toml)) and `npm run license:check`
+  (`license-checker-rseidelsohn`), both enforced by the `license-audit` CI job.
+- **Production signing** — still a separate hardening pass (Authenticode / Developer ID + notarization).
 
 ---
 

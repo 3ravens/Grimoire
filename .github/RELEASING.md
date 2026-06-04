@@ -9,7 +9,10 @@ Short maintainer checklist. Full packaging details: [`docs/builds-and-installers
    - [`src-tauri/Cargo.toml`](../src-tauri/Cargo.toml)
    - [`src-tauri/tauri.conf.json`](../src-tauri/tauri.conf.json)
 2. Run locally: `bash scripts/ci/check-version-sync.sh`
-3. Merge to `main` with green **ci** workflow on GitHub (Actions).
+3. License audit is green (also enforced by the `license-audit` CI job):
+   - `cargo deny --manifest-path src-tauri/Cargo.toml check licenses`
+   - `npm run license:check`
+4. Merge to `main` with green **ci** workflow on GitHub (Actions).
 
 ## Create a release candidate
 
@@ -44,20 +47,29 @@ Confirm uninstall does **not** delete the user’s note vault folder.
 1. Edit release notes on GitHub if needed.
 2. **Publish** the draft release (remove draft status).
 3. Update [grimoireapp.dev/download](https://grimoireapp.dev/download) with links to each platform asset.
-4. Add a “Last verified” line in `docs/builds-and-installers.md` (date + tag).
-5. Mark the Phase 4 cross-platform builds item in your local roadmap/checklist when all assets are validated.
+4. **Update `version.json` on grimoireapp.dev** to the new version number. This static file
+   (`https://grimoireapp.dev/version.json`, shape `{ "version": "x.y.z" }`) is what every
+   opted-in client's update check reads. If it is not bumped, users who enabled "Check for
+   updates" are never notified of this release. This is automated by the website-repo
+   workflow drafted in [`website-version-json.workflow.yml`](website-version-json.workflow.yml)
+   (copy it into the website repo); the manual fallback is to edit the file directly.
+5. Add a “Last verified” line in `docs/builds-and-installers.md` (date + tag).
+6. Mark the Phase 4 cross-platform builds item in your local roadmap/checklist when all assets are validated.
 
 ## Release blocked if
 
-- Any matrix job in **release** failed.
+- Any matrix job in **release** failed (includes `version-sync` and `license-audit`).
 - Windows build logged `release build: missing DLL`.
 - Linux release is missing `.deb`, `.rpm`, or `.AppImage`.
 - macOS Intel or ARM artifact is missing.
 - Checksum files are missing or do not match installers.
 - Download page still says “coming soon” after publish.
+- `version.json` on grimoireapp.dev was not bumped to the published version.
 
 ## Not in this release pipeline
 
 - **Ollama** and models — user installs via wizard or manually.
 - **Code signing / notarization** — follow-up hardening; see builds doc.
-- **Auto-update** — separate Phase 4 roadmap item.
+- **Silent in-app auto-update** — deferred to Phase 5. The shipped behaviour is **opt-in,
+  notify-only**: clients read `version.json` and link to the download page (hence the
+  publish step above). No `tauri-plugin-updater` background apply yet.
