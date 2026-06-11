@@ -88,11 +88,10 @@ jobs:
           path: |
             .ci-vcpkg-cache/downloads
             .ci-vcpkg-cache/installed
-            .ci-vcpkg-cache/buildtrees
             .ci-vcpkg-cache/packages
-          key: vcpkg-linux-v2-${{ hashFiles('scripts/ci/linux-vcpkg.sh', 'scripts/ci/vcpkg-bootstrap.sh', 'scripts/ci/vcpkg-install-retry.sh') }}
+          key: vcpkg-linux-v3-${{ hashFiles('scripts/ci/linux-vcpkg.sh', 'scripts/ci/vcpkg-bootstrap.sh', 'scripts/ci/vcpkg-install-retry.sh') }}
           restore-keys: |
-            vcpkg-linux-v2-
+            vcpkg-linux-v3-
 
       - name: Install Linux native dependencies
         if: matrix.platform == 'linux'
@@ -105,11 +104,10 @@ jobs:
           path: |
             .ci-vcpkg-cache/downloads
             .ci-vcpkg-cache/installed
-            .ci-vcpkg-cache/buildtrees
             .ci-vcpkg-cache/packages
-          key: vcpkg-${{ matrix.platform }}-v2-${{ hashFiles('scripts/ci/macos-vcpkg.sh', 'scripts/ci/vcpkg-bootstrap.sh', 'scripts/ci/vcpkg-install-retry.sh') }}
+          key: vcpkg-${{ matrix.platform }}-v3-${{ hashFiles('scripts/ci/macos-vcpkg.sh', 'scripts/ci/vcpkg-bootstrap.sh', 'scripts/ci/vcpkg-install-retry.sh') }}
           restore-keys: |
-            vcpkg-${{ matrix.platform }}-v2-
+            vcpkg-${{ matrix.platform }}-v3-
 
       - name: Install macOS native dependencies
         if: startsWith(matrix.platform, 'macos')

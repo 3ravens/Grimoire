@@ -6,7 +6,9 @@ set -euo pipefail
 export VCPKG_ROOT="${VCPKG_ROOT:-${GITHUB_WORKSPACE}/vcpkg}"
 VCPKG_CI_CACHE="${VCPKG_CI_CACHE:-${GITHUB_WORKSPACE}/.ci-vcpkg-cache}"
 
-vcpkg_ci_cache_subdirs=(downloads installed buildtrees packages)
+# Omit buildtrees: vcpkg leaves read-only files there; caching them causes
+# "Permission denied" on save when GitHub Actions restores a prior cache hit.
+vcpkg_ci_cache_subdirs=(downloads installed packages)
 
 vcpkg_restore_ci_cache() {
   [[ -n "${GITHUB_WORKSPACE:-}" ]] || return 0
@@ -28,6 +30,7 @@ vcpkg_save_ci_cache() {
     src="${VCPKG_ROOT}/${sub}"
     dst="${VCPKG_CI_CACHE}/${sub}"
     if [[ -d "$src" ]]; then
+      rm -rf "$dst"
       mkdir -p "$dst"
       cp -a "${src}/." "$dst/"
     fi
