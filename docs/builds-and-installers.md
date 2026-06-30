@@ -2,7 +2,7 @@
 
 Single reference for how Grimoire is packaged, what CI produces, and how to fix common build failures. Maintainer checklist: [`.github/RELEASING.md`](../.github/RELEASING.md).
 
-**Last verified:** _pending a full release run — the cross-platform matrix and the `license-audit` gate are wired in [`ci.yml`](../.github/workflows/ci.yml) / [`release.yml`](../.github/workflows/release.yml) and pass locally; the maintainer must dispatch the first RC via [`.github/workflows/release.yml`](../.github/workflows/release.yml) (tag push or workflow dispatch), confirm `.deb` + `.rpm` + `.AppImage` + macOS `.dmg` (Intel + ARM) + Windows NSIS in the draft release, then record the date and tag here._
+**Last verified:** 2026-06-30 — tag `v1.0.0-rc.2` ([release workflow](https://github.com/wimpal/Grimoire/actions/runs/28448850281)). All platform installers present: Windows NSIS `.exe`, Linux `.deb` + `.rpm` + `.AppImage`, macOS Intel + ARM `.dmg`, and per-platform `checksums-*.txt`. Windows installer SHA-256 verified locally against `checksums-windows.txt`.
 
 ---
 
