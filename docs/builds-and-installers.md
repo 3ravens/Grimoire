@@ -40,7 +40,7 @@ flowchart LR
 | [`src-tauri/vendor-dlls/`](../src-tauri/vendor-dlls/) | **Optional local mirror** (gitignored); copy of vcpkg `bin` DLLs for offline dev |
 | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | PR/main: tests on Win/macOS/Linux |
 | [`.github/workflows/release.yml`](../.github/workflows/release.yml) | Tags `v*`: draft release + installers |
-| [`scripts/ci/`](../scripts/ci/) | Shared install/checksum/version scripts |
+| [`scripts/ci/`](../scripts/ci/) | Shared install/checksum/version scripts; [`linuxdeploy-plugin-gtk.sh`](../scripts/ci/linuxdeploy-plugin-gtk.sh) (vendored Tauri GTK plugin with Wayland-lib patch for AppImage) |
 
 ---
 
@@ -257,6 +257,27 @@ Debug builds may use **placeholder** DLLs on Windows. Only **release** installer
 ### AppImage will not start
 
 Install `libfuse2`, or run with extract-and-run per AppImage docs.
+
+### AppImage aborts on Wayland sessions (`EGL_BAD_PARAMETER`)
+
+**Affected builds:** `v1.0.0-rc.2` and earlier AppImages fail to launch on hosts running an actual Wayland session (`XDG_SESSION_TYPE=wayland`). The window flashes white, then the app aborts with:
+
+```text
+Could not create default EGL display: EGL_BAD_PARAMETER.  Aborting...
+```
+
+**Cause:** those builds bundle older `libwayland-*` client libraries from the CI runner, which clash with the host's newer Wayland/Mesa ABI. The app forces `GDK_BACKEND=x11` and does not use Wayland directly; the bundled libs are unnecessary.
+
+**Fixed in:** builds produced after the `linuxdeploy-plugin-gtk.sh` patch (see [`scripts/ci/AGENTS.md`](../scripts/ci/AGENTS.md)).
+
+**Workaround for affected AppImages:**
+
+```bash
+./Grimoire_*.appimage --appimage-extract
+mkdir -p /tmp/wayland-libs-backup
+mv squashfs-root/usr/lib/libwayland-* /tmp/wayland-libs-backup/
+./squashfs-root/AppRun
+```
 
 ---
 

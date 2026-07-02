@@ -36,7 +36,7 @@ Download each artifact and smoke-test:
 | Windows | Installer runs; Wikipedia reader opens a ZIM; no missing-DLL errors |
 | macOS Intel | `.dmg` opens on Intel Mac (or Rosetta if testing on ARM) |
 | macOS ARM | `.dmg` opens on Apple Silicon |
-| Linux | `.deb` or `.AppImage` launches; WebKitGTK present on host |
+| Linux | `.deb` or `.AppImage` launches on a **Wayland session** (not just X11); WebKitGTK present on host |
 
 Confirm **unsigned** OS warnings are acceptable (SmartScreen / Gatekeeper). Verify SHA-256 files match downloaded installers.
 
