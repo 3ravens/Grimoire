@@ -651,6 +651,35 @@ pub async fn unlock_folder(
     Ok(true)
 }
 
+/// Remove FTS rows and LanceDB vectors for every note in `folder_ids`.
+/// Called when a folder is session-locked so plaintext search indexes are not left on disk.
+pub(crate) async fn purge_folder_notes_from_search(
+    pool: &SqlitePool,
+    vdb: &lancedb::Connection,
+    folder_ids: &[i64],
+) -> Result<(), String> {
+    let mut note_ids: Vec<i64> = Vec::new();
+    for &fid in folder_ids {
+        let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM notes WHERE folder_id = ?")
+            .bind(fid)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        note_ids.extend(ids);
+    }
+    for id in &note_ids {
+        search::fts_delete(pool, *id)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    for id in note_ids {
+        if let Err(e) = crate::vector::notes::remove(vdb, id).await {
+            log::warn!("session lock: failed to remove vectors for note {id}: {e}");
+        }
+    }
+    Ok(())
+}
+
 /// Lock a folder for this session: zeroize and remove its key from memory.
 /// Also locks all descendant folders that were unlocked with the same key.
 #[tauri::command]
@@ -658,12 +687,14 @@ pub async fn lock_folder(
     folder_id: i64,
     pool: State<'_, SqlitePool>,
     keys: State<'_, SharedKeyStore>,
+    vdb: State<'_, VectorDb>,
     coord: State<'_, crate::commands::FolderUnlockReindexCoordinator>,
 ) -> Result<(), String> {
     coord.inner().cancel_current_job();
     let subtree_ids = folder_subtree_ids(pool.inner(), folder_id)
         .await
         .map_err(|e| e.to_string())?;
+    purge_folder_notes_from_search(pool.inner(), &vdb.0, &subtree_ids).await?;
     let mut folder_keys = keys.folder_keys.lock().map_err(|e| e.to_string())?;
     for fid in subtree_ids {
         if let Some(ref mut k) = folder_keys.get_mut(&fid) {
@@ -756,5 +787,40 @@ mod tests {
             .await
             .unwrap());
         assert!(keys.vault_key.lock().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn session_lock_purges_fts_for_subtree_notes() {
+        use crate::commands::search;
+        use crate::vector;
+
+        let pool = memory_pool().await;
+        let folder_id: i64 =
+            sqlx::query_scalar("INSERT INTO folders (name) VALUES ('locked') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let note_id: i64 = sqlx::query_scalar(
+            "INSERT INTO notes (title, content, folder_id) VALUES ('Secret', 'body', ?) RETURNING id",
+        )
+        .bind(folder_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        search::fts_upsert(&pool, note_id, "Secret", "body").await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let conn = vector::connect_dir(dir.path()).await.unwrap();
+
+        purge_folder_notes_from_search(&pool, &conn, &[folder_id])
+            .await
+            .unwrap();
+
+        let cnt: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notes_fts WHERE rowid = ?")
+            .bind(note_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(cnt, 0);
     }
 }

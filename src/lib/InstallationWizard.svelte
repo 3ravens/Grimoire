@@ -58,6 +58,8 @@
   let openWikiSettings = $state(false);
 
   let finishBusy = $state(false);
+  let skipAi = $state(false);
+  let wizardStatus = $state('');
 
   /** @type {null | { model: string, phase: 'confirm' | 'pulling' | 'error', confirmKind?: string, hardwareWarning?: unknown, statusLine: string, progress: { completed: number, total: number } | null, errorMessage: string }} */
   let dlModal = $state(null);
@@ -211,12 +213,12 @@
   }
 
   function advanceFromHw() {
-    if (!skipModelsStep) return MS_MODELS;
-    return MS_WIKI;
+    if (skipAi || skipModelsStep) return MS_WIKI;
+    return MS_MODELS;
   }
 
   function retreatFromWiki() {
-    if (!skipModelsStep) return MS_MODELS;
+    if (skipAi || skipModelsStep) return MS_HW;
     if (!skipDepsStep) return MS_HW;
     return MS_STARTER;
   }
@@ -367,34 +369,47 @@
     }
   }
 
+  function continueWithoutAi() {
+    skipAi = true;
+    wizardStatus = 'Continuing without AI features. Chat and semantic search stay off until you enable them in Settings → Hardware.';
+    if (mainStep === MS_DEPS || mainStep === MS_MODELS) {
+      mainStep = MS_HW;
+    }
+  }
+
   async function finishWizard() {
     if (finishBusy) return;
     finishBusy = true;
     try {
-      const chat = selectedChatModel;
-      if (chat) {
-        const ok = await checkChatModelInstalled(chat);
-        if (!ok) {
-          err?.showError?.(
-            'Pull or pick an installed chat model before finishing, or clear the custom id.',
-          );
+      let chat = null;
+      let embed = null;
+      if (!skipAi) {
+        chat = selectedChatModel;
+        if (chat) {
+          const ok = await checkChatModelInstalled(chat);
+          if (!ok) {
+            err?.showError?.(
+              'Pull or pick an installed chat model before finishing, or clear the custom id.',
+            );
+            finishBusy = false;
+            return;
+          }
+          await saveChatModelSetting(chat);
+        }
+        if (!(await checkChatModelInstalled(embedModel))) {
+          err?.showError?.('Pull the embedding model before finishing (required for semantic search).');
           finishBusy = false;
           return;
         }
-        await saveChatModelSetting(chat);
-      }
-      if (!(await checkChatModelInstalled(embedModel))) {
-        err?.showError?.('Pull the embedding model before finishing (required for semantic search).');
-        finishBusy = false;
-        return;
+        embed = embedModel;
       }
 
       const res = await invoke('wizard_finish', {
         starterPackId: starterPack,
         wikipediaEnabled: wikipediaEnable,
         openWikipediaSettingsAfter: openWikiSettings,
-        chatModel: chat || null,
-        embeddingModel: embedModel,
+        chatModel: chat,
+        embeddingModel: embed,
       });
       const o = /** @type {{ openWikipediaSettings?: boolean }} */ (res);
       if (o?.openWikipediaSettings) {
@@ -417,10 +432,36 @@
     if (mainStep === MS_WIKI) return 'Wikipedia (optional)';
     return 'Setup';
   });
+
+  const wizardStepNumber = $derived.by(() => {
+    const order = [MS_STARTER, MS_DEPS, MS_HW, MS_MODELS, MS_WIKI].filter((s) => {
+      if (s === MS_DEPS && skipDepsStep) return false;
+      if (s === MS_MODELS && (skipAi || skipModelsStep)) return false;
+      return true;
+    });
+    const idx = order.indexOf(mainStep);
+    return idx >= 0 ? { current: idx + 1, total: order.length } : null;
+  });
+
+  $effect(() => {
+    stepTitle;
+    mainStep;
+    if (mainStep === MS_DEPS && ollamaCheckBusy) {
+      wizardStatus = 'Checking local AI runtime…';
+    } else if (mainStep === MS_HW && hwBusy) {
+      wizardStatus = 'Scanning hardware…';
+    } else if (mainStep !== MS_DEPS && mainStep !== MS_HW && !skipAi) {
+      wizardStatus = '';
+    }
+  });
 </script>
 
 <div class="wiz-screen" use:focusTrap role="dialog" aria-modal="true" aria-labelledby="wiz-title">
   <div class="wiz-card">
+    {#if wizardStepNumber}
+      <p class="wiz-step-count" id="wiz-step-count">Step {wizardStepNumber.current} of {wizardStepNumber.total}</p>
+    {/if}
+    <div class="sr-only" aria-live="polite" aria-atomic="true">{wizardStatus || stepTitle}</div>
     <h1 id="wiz-title" class="wiz-h1">{stepTitle}</h1>
     <p class="wiz-privacy">
       Grimoire is local-first: nothing here phones home. Network use is only what you explicitly start (for
@@ -474,6 +515,9 @@
         </div>
       {/if}
       <div class="wiz-row">
+        <button type="button" class="wiz-btn secondary" onclick={continueWithoutAi}>Continue without AI features</button>
+      </div>
+      <div class="wiz-row">
         <button type="button" class="wiz-btn secondary" onclick={stepBack}>Back</button>
         <button type="button" class="wiz-btn primary" onclick={stepNext}>Next</button>
       </div>
@@ -499,6 +543,12 @@
             <button type="button" class="wiz-link" onclick={openAmdDrivers}>AMD driver support</button>
           </p>
         {/if}
+        {#if String(hardwareReport?.capability ?? '') !== 'full'}
+          <p class="wiz-note">
+            AI features are off by default on this hardware. You can enable chat and semantic search later in
+            Settings → Hardware.
+          </p>
+        {/if}
       {:else}
         <p class="wiz-body">Hardware details unavailable — you can review them later under Settings → Hardware.</p>
       {/if}
@@ -518,7 +568,7 @@
         Use custom Ollama model id
       </label>
       {#if useCustomModel}
-        <input class="wiz-input" placeholder="e.g. mistral:7b-instruct" bind:value={customModel} />
+        <input class="wiz-input" aria-label="Custom Ollama model id" placeholder="e.g. mistral:7b-instruct" bind:value={customModel} />
       {:else}
         <div class="wiz-options" role="radiogroup" aria-label="Chat model">
           {#each curatedForWizard as m}
@@ -617,6 +667,22 @@
   .wiz-h1 {
     font-size: 1.35rem;
     margin: 0 0 0.5rem;
+  }
+  .wiz-step-count {
+    font-size: 0.8rem;
+    opacity: 0.75;
+    margin: 0 0 0.35rem;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
   .wiz-h2 {
     font-size: 1.1rem;

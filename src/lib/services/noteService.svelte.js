@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-export function createNoteService({ onError }) {
+export function createNoteService({ onError, getLlmEnabled = () => true }) {
   let notes = $state([]);
   let activeNote = $state(null);
   let editorTitle = $state("");
@@ -104,18 +104,22 @@ export function createNoteService({ onError }) {
       activeNote = updated;
       isDirty = false;
       transclusionRefresh += 1;
-      indexState = "indexing";
-      invoke("index_note", {
-        noteId: updated.id,
-        title: editorTitle,
-        content: editorContent,
-      })
-        .then(() => {
-          indexState = "idle";
+      if (getLlmEnabled()) {
+        indexState = "indexing";
+        invoke("index_note", {
+          noteId: updated.id,
+          title: editorTitle,
+          content: editorContent,
         })
-        .catch(() => {
-          indexState = "error";
-        });
+          .then(() => {
+            indexState = "idle";
+          })
+          .catch(() => {
+            indexState = "error";
+          });
+      } else {
+        indexState = "idle";
+      }
       invoke("sync_note_relations", {
         noteId: updated.id,
         content: editorContent,
@@ -181,18 +185,20 @@ export function createNoteService({ onError }) {
           content: templateContent,
         }).catch(() => {});
       }
-      indexState = "indexing";
-      invoke("index_note", {
-        noteId: note.id,
-        title: "Untitled",
-        content: templateContent,
-      })
-        .then(() => {
-          indexState = "idle";
+      if (getLlmEnabled()) {
+        indexState = "indexing";
+        invoke("index_note", {
+          noteId: note.id,
+          title: "Untitled",
+          content: templateContent,
         })
-        .catch(() => {
-          indexState = "error";
-        });
+          .then(() => {
+            indexState = "idle";
+          })
+          .catch(() => {
+            indexState = "error";
+          });
+      }
       return note;
     } catch (e) {
       onError?.(e);
@@ -308,6 +314,9 @@ export function createNoteService({ onError }) {
     }
   }
   async function reindexAll() {
+    if (!getLlmEnabled()) {
+      return { msg: null, skipped: true };
+    }
     isReindexing = true;
     reindexProgress = { processed: 0, total: 0, indexed: 0 };
     let unlisten = null;

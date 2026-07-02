@@ -32,9 +32,9 @@
       {exportStatus === 'running' ? 'Exporting…' : 'Export'}
     </button>
     {#if exportStatus.startsWith('done:')}
-      <span class="export-ok">✓ {exportStatus.slice(5)} notes exported</span>
+      <span class="export-ok" role="status" aria-live="polite">✓ {exportStatus.slice(5)} notes exported</span>
     {:else if exportStatus.startsWith('error:')}
-      <span class="export-err">{exportStatus.slice(6)}</span>
+      <span class="export-err" role="status" aria-live="polite">{exportStatus.slice(6)}</span>
     {/if}
   </div>
 </div>

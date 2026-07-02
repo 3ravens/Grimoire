@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use tauri::State;
 use crate::{AppResult};
-use crate::hardware::{detect, HardwareInfo, LlmCapability};
+use crate::hardware::{detect, llm_features_enabled, HardwareCapability, HardwareInfo};
 use crate::config::SharedConfig;
 use crate::indexing_profile::{IndexingThroughputPlan, IndexingThroughputTier};
 
@@ -59,13 +59,11 @@ pub async fn get_hardware_info(
 /// Returns true if LLM features should be active:
 /// either the hardware is capable, or the user has force-enabled.
 #[tauri::command]
-pub async fn get_llm_enabled(config: State<'_, SharedConfig>) -> AppResult<bool> {
-    let info = detect().await;
-    if info.capability == LlmCapability::Full {
-        return Ok(true);
-    }
-    let force = config.read().unwrap().llm_force_enabled;
-    Ok(force)
+pub async fn get_llm_enabled(
+    config: State<'_, SharedConfig>,
+    hw: State<'_, HardwareCapability>,
+) -> AppResult<bool> {
+    Ok(llm_features_enabled(&config.read().unwrap(), hw.0.clone()))
 }
 
 /// A single model currently loaded in Ollama, from /api/ps.

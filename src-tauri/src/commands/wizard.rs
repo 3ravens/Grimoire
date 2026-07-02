@@ -216,29 +216,34 @@ pub async fn wizard_finish_impl(
 
     let pool_cl = pool.clone();
     let vdb_arc = vdb.clone();
-    let embedding_model = config.read().unwrap().embedding_model.clone();
+    let should_embed = embedding_model
+        .as_ref()
+        .is_some_and(|m| !m.trim().is_empty());
+    let embed_model_name = config.read().unwrap().embedding_model.clone();
     let max_retries = config.read().unwrap().background_max_retries;
 
     for (note_id, title, content) in indexed {
         crate::commands::search::fts_upsert(&pool_cl, note_id, &title, &content).await;
-        let pool_i = pool_cl.clone();
-        let conn = vdb_arc.clone();
-        let em = embedding_model.clone();
-        let t = title.clone();
-        let c = content.clone();
-        tauri::async_runtime::spawn(async move {
-            let _ = index_note_vectors_inner(
-                &pool_i,
-                &conn,
-                &em,
-                max_retries,
-                note_id,
-                &t,
-                &c,
-                crate::vector::embedder::EmbedBatchOptions::default(),
-            )
-            .await;
-        });
+        if should_embed {
+            let pool_i = pool_cl.clone();
+            let conn = vdb_arc.clone();
+            let em = embed_model_name.clone();
+            let t = title.clone();
+            let c = content.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = index_note_vectors_inner(
+                    &pool_i,
+                    &conn,
+                    &em,
+                    max_retries,
+                    note_id,
+                    &t,
+                    &c,
+                    crate::vector::embedder::EmbedBatchOptions::default(),
+                )
+                .await;
+            });
+        }
     }
 
     Ok(WizardFinishResult {

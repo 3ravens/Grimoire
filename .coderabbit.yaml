@@ -34,7 +34,7 @@ reviews:
 
         Treat these as non-negotiable invariants (flag violations as high severity):
         - Privacy: no silent network calls, telemetry, or cloud sync. User-visible network use must be explicit and opt-in (e.g. Wikipedia/Kiwix download in settings).
-        - User data safety: uninstall/updates must not delete the user's note vault directory (vault is separate from app data).
+        - User data safety: uninstall/updates must not delete user notes by default (notes live in SQLite under the app data directory; Windows uninstaller offers an explicit opt-in to delete everything).
         - Locked content: notes in locked folders must never appear in FTS, LanceDB, RAG context, or search results until unlocked and re-indexed. Defense in depth (skip on index + filter on read) is intentional — do not suggest removing layers without replacing them.
         - Storage boundaries: SQLite = metadata, settings, FTS only; LanceDB = semantic vectors only; Ollama = local inference (localhost:11434); Tauri IPC = Rust ↔ Svelte boundary. Do not store note bodies or embeddings in the wrong store.
         - Index consistency: any change that mutates note content, encryption, or folder lock state must keep SQLite FTS and LanceDB aligned (including bulk reindex paths).

@@ -163,7 +163,7 @@
   </div>
 
   {#if retentionDays > 0 && previewCount > 0}
-    <p class="retention-preview">~{previewCount.toLocaleString()} entr{previewCount === 1 ? 'y' : 'ies'} would be removed.</p>
+    <p class="retention-preview" role="status" aria-live="polite">~{previewCount.toLocaleString()} entr{previewCount === 1 ? 'y' : 'ies'} would be removed.</p>
   {/if}
 
   <div class="retention-actions">

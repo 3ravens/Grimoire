@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::State;
 
+use crate::config::SharedConfig;
+use crate::hardware::{llm_features_enabled, HardwareCapability, LLM_GATE_MESSAGE};
 use crate::{AppError, AppResult};
 
 fn ollama_http_client() -> AppResult<reqwest::Client> {
@@ -107,6 +109,8 @@ struct OllamaStreamChunk {
 pub async fn chat(
     app: tauri::AppHandle,
     pool: State<'_, SqlitePool>,
+    config: State<'_, crate::config::SharedConfig>,
+    hw: State<'_, HardwareCapability>,
     model: String,
     messages: Vec<ChatMessage>,
     keep_in_memory: bool,
@@ -117,6 +121,10 @@ pub async fn chat(
     num_ctx: i32,
 ) -> AppResult<()> {
     use tauri::Emitter;
+
+    if !llm_features_enabled(&config.read().unwrap(), hw.0.clone()) {
+        return Err(AppError::InvalidInput(LLM_GATE_MESSAGE.to_string()));
+    }
 
     // Capture the last user message for the audit log before the messages vec is moved.
     let audit_detail: String = messages
@@ -358,6 +366,8 @@ pub async fn benchmark_rag_chat_ttft(
 pub async fn suggest_note_improvement(
     app: tauri::AppHandle,
     pool: State<'_, SqlitePool>,
+    config: State<'_, crate::config::SharedConfig>,
+    hw: State<'_, HardwareCapability>,
     model: String,
     note_id: Option<i64>,
     note_title: Option<String>,
@@ -370,6 +380,10 @@ pub async fn suggest_note_improvement(
     num_ctx: i32,
 ) -> AppResult<()> {
     use tauri::Emitter;
+
+    if !llm_features_enabled(&config.read().unwrap(), hw.0.clone()) {
+        return Err(AppError::InvalidInput(LLM_GATE_MESSAGE.to_string()));
+    }
 
     let _ = crate::audit::log_event(
         pool.inner(), "llm_improve", Some("note"),
@@ -447,6 +461,8 @@ pub async fn suggest_note_improvement(
 #[tauri::command(rename_all = "camelCase")]
 pub async fn suggest_hunk_refinement(
     app: tauri::AppHandle,
+    config: State<'_, SharedConfig>,
+    hw: State<'_, HardwareCapability>,
     model: String,
     hunk_content: String,
     instruction: String,
@@ -457,6 +473,10 @@ pub async fn suggest_hunk_refinement(
     num_ctx: i32,
 ) -> AppResult<()> {
     use tauri::Emitter;
+
+    if !llm_features_enabled(&config.read().unwrap(), hw.0.clone()) {
+        return Err(AppError::InvalidInput(LLM_GATE_MESSAGE.to_string()));
+    }
 
     let user_content = format!(
         "{}\n\nUser instruction: {}\n\nSection to rewrite:\n{}",

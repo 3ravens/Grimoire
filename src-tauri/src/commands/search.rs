@@ -21,7 +21,6 @@ use tauri::State;
 use crate::AppResult;
 use crate::{KeyStore, SharedKeyStore};
 use crate::AccessFilter;
-use crate::config::SharedConfig;
 
 // ---------------------------------------------------------------------------
 // FTS index helpers â€” called by notes.rs and rag.rs
@@ -198,157 +197,6 @@ pub async fn fts_search(
 // Combined search (FTS + semantic via RRF)
 // ---------------------------------------------------------------------------
 
-/// A merged search result from both FTS and semantic search.
-#[derive(Debug, Serialize)]
-pub struct SearchResult {
-    pub note_id: i64,
-    pub title: String,
-    pub folder_id: Option<i64>,
-    pub snippet: Option<String>,
-    pub excerpt: Option<String>,
-    pub matched_by: String,
-    pub score: f64,
-}
-
-const RRF_K: f64 = 60.0;
-
-fn rrf_score(rank: usize) -> f64 {
-    1.0 / (RRF_K + rank as f64)
-}
-
-/// Search notes using both full-text (FTS5) and semantic (LanceDB) search,
-/// merged via Reciprocal Rank Fusion.
-///
-/// Both searches run concurrently. If Ollama is unavailable the semantic half
-/// silently returns no results and FTS results are returned alone.
-///
-/// For a faster UI experience, prefer calling `fts_search` for instant results
-/// and `search_notes` for deferred semantic results, then merging on the
-/// frontend with the same RRF logic.
-#[tauri::command]
-pub async fn combined_search(
-    pool: State<'_, SqlitePool>,
-    keys: State<'_, SharedKeyStore>,
-    vdb: State<'_, crate::vector::VectorDb>,
-    config: State<'_, SharedConfig>,
-    query: String,
-    limit: Option<usize>,
-) -> AppResult<Vec<SearchResult>> {
-    let limit = limit.unwrap_or(10);
-    let query = query.trim().to_string();
-    if query.is_empty() {
-        return Ok(vec![]);
-    }
-
-    let fts_fut = fts_search_inner(pool.inner(), keys.inner().as_ref(), &query, limit * 2);
-
-    let semantic_fut = async {
-        let model = config.read().unwrap().embedding_model.clone();
-        match crate::commands::rag::embed_query(&query, &model).await {
-            Ok(vec) => crate::vector::notes::search(&vdb.0, vec, limit * 2).await.ok(),
-            Err(_) => None,
-        }
-    };
-
-    let (fts_rows, semantic_matches) = tokio::join!(fts_fut, semantic_fut);
-    let fts_rows = fts_rows?;
-    let semantic_matches = semantic_matches.unwrap_or_default();
-
-    use std::collections::HashMap;
-
-    struct Entry {
-        title: String,
-        folder_id: Option<i64>,
-        snippet: Option<String>,
-        excerpt: Option<String>,
-        fts: bool,
-        semantic: bool,
-        score: f64,
-    }
-
-    let mut entries: HashMap<i64, Entry> = HashMap::new();
-
-    for (rank, row) in fts_rows.iter().enumerate() {
-        let e = entries.entry(row.note_id).or_insert(Entry {
-            title: row.title.clone(),
-            folder_id: row.folder_id,
-            snippet: None,
-            excerpt: None,
-            fts: false,
-            semantic: false,
-            score: 0.0,
-        });
-        e.score += rrf_score(rank + 1);
-        e.fts = true;
-        e.snippet = Some(row.snippet.clone());
-    }
-
-    for (rank, m) in semantic_matches.iter().enumerate() {
-        let e = entries.entry(m.note_id).or_insert(Entry {
-            title: m.title.clone(),
-            folder_id: None,
-            snippet: None,
-            excerpt: None,
-            fts: false,
-            semantic: false,
-            score: 0.0,
-        });
-        e.score += rrf_score(rank + 1);
-        e.semantic = true;
-        if e.excerpt.is_none() {
-            e.excerpt = m.excerpts.first().cloned();
-        }
-    }
-
-    // Back-fill folder_id for semantic-only hits.
-    let semantic_only_ids: Vec<i64> = entries
-        .iter()
-        .filter(|(_, e)| e.semantic && e.folder_id.is_none() && !e.fts)
-        .map(|(id, _)| *id)
-        .collect();
-
-    if !semantic_only_ids.is_empty() {
-        let placeholders = semantic_only_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-        let sql = format!("SELECT id, folder_id FROM notes WHERE id IN ({placeholders})");
-        let mut q = sqlx::query_as::<_, (i64, Option<i64>)>(&sql);
-        for id in &semantic_only_ids {
-            q = q.bind(id);
-        }
-        if let Ok(pairs) = q.fetch_all(pool.inner()).await {
-            for (id, fid) in pairs {
-                if let Some(e) = entries.get_mut(&id) {
-                    e.folder_id = fid;
-                }
-            }
-        }
-    }
-
-    let mut results: Vec<SearchResult> = entries
-        .into_iter()
-        .map(|(note_id, e)| SearchResult {
-            note_id,
-            title: e.title,
-            folder_id: e.folder_id,
-            snippet: e.snippet,
-            excerpt: e.excerpt,
-            matched_by: match (e.fts, e.semantic) {
-                (true, true) => "both",
-                (true, false) => "fts",
-                _ => "semantic",
-            }
-            .to_string(),
-            score: e.score,
-        })
-        .collect();
-
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-    results.truncate(limit);
-    let _ = crate::audit::log_event(
-        pool.inner(), "search_combined", None, None, None, Some(&query),
-    ).await;
-    Ok(results)
-}
-
 // ---------------------------------------------------------------------------
 // Startup FTS population
 // ---------------------------------------------------------------------------
@@ -430,6 +278,10 @@ mod tests {
 
     #[test]
     fn rrf_score_matches_reciprocal_rank_fusion() {
+        const RRF_K: f64 = 60.0;
+        fn rrf_score(rank: usize) -> f64 {
+            1.0 / (RRF_K + rank as f64)
+        }
         let s1 = rrf_score(1);
         let s2 = rrf_score(2);
         assert!((s1 - 1.0 / (RRF_K + 1.0)).abs() < 1e-9);

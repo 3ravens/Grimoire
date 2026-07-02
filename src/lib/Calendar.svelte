@@ -18,6 +18,9 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 <script>
   import { invoke } from '@tauri-apps/api/core';
   import { tick } from 'svelte';
+  import { getContext } from 'svelte';
+
+  const settings = getContext('settings');
 
   /**
    * @type {{
@@ -146,6 +149,92 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     calendarFocusedDay = next;
     await tick();
     calGridEl?.querySelector(`[data-day="${next}"]`)?.focus();
+  }
+
+  // ── Heatmap keyboard navigation ────────────────────────────────────────────
+
+  /** ISO date string focused via keyboard in the activity heatmap. */
+  let heatmapFocusedIso = $state(null);
+  let heatGridEl = $state(null);
+
+  function heatmapCoordsForIso(iso) {
+    for (let w = 0; w < heatmapWeeks.length; w++) {
+      for (let d = 0; d < 7; d++) {
+        const cell = heatmapWeeks[w][d];
+        if (cell && cell.date === iso) return { w, d };
+      }
+    }
+    return null;
+  }
+
+  function heatmapCellAt(w, d) {
+    const week = heatmapWeeks[w];
+    if (!week) return null;
+    return week[d] ?? null;
+  }
+
+  function initialHeatmapFocusIso() {
+    const todayCoords = heatmapCoordsForIso(todayISO);
+    if (todayCoords && heatmapCellAt(todayCoords.w, todayCoords.d)) return todayISO;
+    for (let w = heatmapWeeks.length - 1; w >= 0; w--) {
+      for (let d = 6; d >= 0; d--) {
+        const cell = heatmapCellAt(w, d);
+        if (cell && cell.total > 0) return cell.date;
+      }
+    }
+    for (let w = heatmapWeeks.length - 1; w >= 0; w--) {
+      for (let d = 6; d >= 0; d--) {
+        const cell = heatmapCellAt(w, d);
+        if (cell) return cell.date;
+      }
+    }
+    return null;
+  }
+
+  async function focusHeatmapCell(iso) {
+    heatmapFocusedIso = iso;
+    await tick();
+    heatGridEl?.querySelector(`[data-heat-date="${iso}"]`)?.focus();
+  }
+
+  async function handleHeatGridKeydown(e) {
+    if (!['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) return;
+    e.preventDefault();
+
+    if (heatmapFocusedIso === null) {
+      const iso = initialHeatmapFocusIso();
+      if (iso) await focusHeatmapCell(iso);
+      return;
+    }
+
+    if (e.key === 'Enter' || e.key === ' ') {
+      const coords = heatmapCoordsForIso(heatmapFocusedIso);
+      if (!coords) return;
+      const cell = heatmapCellAt(coords.w, coords.d);
+      if (cell && cell.total > 0) selectHeatmapDay(cell.date);
+      return;
+    }
+
+    const coords = heatmapCoordsForIso(heatmapFocusedIso);
+    if (!coords) return;
+    let { w, d } = coords;
+    if (e.key === 'ArrowRight') w += 1;
+    else if (e.key === 'ArrowLeft') w -= 1;
+    else if (e.key === 'ArrowDown') d += 1;
+    else if (e.key === 'ArrowUp') d -= 1;
+
+    for (let i = 0; i < 400; i++) {
+      const cell = heatmapCellAt(w, d);
+      if (cell) {
+        await focusHeatmapCell(cell.date);
+        return;
+      }
+      if (e.key === 'ArrowRight') w += 1;
+      else if (e.key === 'ArrowLeft') w -= 1;
+      else if (e.key === 'ArrowDown') d += 1;
+      else if (e.key === 'ArrowUp') d -= 1;
+      if (w < 0 || w >= heatmapWeeks.length || d < 0 || d > 6) return;
+    }
   }
 
   // ── Calendar grid derived values ───────────────────────────────────────────
@@ -333,6 +422,13 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     try {
       const note = await invoke('get_or_create_daily_note', { dateStr: cellISO(day), dateFormat });
       await onRefresh();
+      if (settings.llmEnabled) {
+        invoke('index_note', {
+          noteId: note.id,
+          title: note.title,
+          content: note.content ?? '',
+        }).catch(() => {});
+      }
       // Select the Daily Notes folder in the sidebar so the note is visible.
       if (note.folder_id != null) onSelectFolder(note.folder_id);
       onSelectNote(note);
@@ -360,14 +456,18 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         class="cal-tab"
         class:active={subView === 'calendar'}
         role="tab"
+        id="cal-tab-calendar"
         aria-selected={subView === 'calendar'}
+        aria-controls="cal-panel-calendar"
         onclick={() => (subView = 'calendar')}
       >Calendar</button>
       <button
         class="cal-tab"
         class:active={subView === 'heatmap'}
         role="tab"
+        id="cal-tab-heatmap"
         aria-selected={subView === 'heatmap'}
+        aria-controls="cal-panel-heatmap"
         onclick={() => (subView = 'heatmap')}
       >Activity</button>
     </div>
@@ -379,7 +479,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
     {#if subView === 'calendar'}
       <!-- ── Monthly calendar grid ──────────────────────────────────────── -->
-      <div class="cal-view">
+      <div class="cal-view" id="cal-panel-calendar" role="tabpanel" aria-labelledby="cal-tab-calendar">
         <div class="cal-month-nav">
           <button class="cal-nav-btn" onclick={prevYear} aria-label="Previous year">«</button>
           <button class="cal-nav-btn" onclick={prevMonth} aria-label="Previous month">‹</button>
@@ -425,7 +525,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
     {:else}
       <!-- ── Activity heatmap ──────────────────────────────────────────── -->
-      <div class="heat-view">
+      <div class="heat-view" id="cal-panel-heatmap" role="tabpanel" aria-labelledby="cal-tab-heatmap">
 
         <!-- Left: heatmap + legend -->
         <div class="heat-left">
@@ -453,7 +553,14 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
               </div>
 
               <!-- 53 × 7 grid -->
-              <div class="heat-grid" role="grid" aria-label="Activity heatmap">
+              <div
+                class="heat-grid"
+                role="grid"
+                aria-label="Activity heatmap"
+                tabindex="-1"
+                bind:this={heatGridEl}
+                onkeydown={handleHeatGridKeydown}
+              >
                 {#each heatmapWeeks as week, _wi}
                   <div class="heat-col" role="row">
                     {#each week as cell}
@@ -465,8 +572,13 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                           class:heat-clickable={cell.total > 0}
                           class:heat-selected={cell.date === selectedHeatmapDay}
                           role="gridcell"
+                          tabindex={cell.date === heatmapFocusedIso ? 0 : -1}
+                          data-heat-date={cell.date}
                           aria-label="{cell.date}: {cell.created} created, {cell.modified} modified"
-                          onclick={() => cell.total > 0 && selectHeatmapDay(cell.date)}
+                          onclick={() => {
+                            if (cell.total > 0) selectHeatmapDay(cell.date);
+                            heatmapFocusedIso = cell.date;
+                          }}
                           onmouseenter={cell.total > 0 ? (e) => showTooltip(e, `${formatDateStr(cell.date)}\n${cell.created} created \u00b7 ${cell.modified} modified`) : null}
                           onmousemove={cell.total > 0 ? moveTooltip : null}
                           onmouseleave={cell.total > 0 ? hideTooltip : null}
@@ -507,7 +619,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
           {#if selectedHeatmapDay}
             <div class="heat-detail-header">
               <span class="heat-detail-date">{formatDateStr(selectedHeatmapDay)}</span>
-              <button class="heat-detail-close" onclick={() => { selectedHeatmapDay = null; dayNotes = []; }}>✕</button>
+              <button class="heat-detail-close" aria-label="Close day detail" onclick={() => { selectedHeatmapDay = null; dayNotes = []; }}>✕</button>
             </div>
             {#if dayNotes.length === 0}
               <p class="heat-detail-empty">No notes found for this day.</p>

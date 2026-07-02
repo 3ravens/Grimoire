@@ -1,6 +1,7 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
   import TableOfContents from './TableOfContents.svelte';
+  import { sanitizeWikipediaHtml } from './utils/sanitize.js';
 
   /**
    * Wikipedia article reader.
@@ -106,7 +107,7 @@
         invoke('load_wikipedia_highlights', { bundleId: bid, articlePath: apath }),
       ]);
 
-      articleHtml  = articleResult.html;
+      articleHtml  = sanitizeWikipediaHtml(articleResult.html);
       articleTitle = articleResult.title;
       highlights   = loadedHighlights;
 

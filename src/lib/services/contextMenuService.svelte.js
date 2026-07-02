@@ -73,8 +73,8 @@ export function createContextMenuService(deps) {
 
   // ── Menu builder ──────────────────────────────────────────────────────────
 
-  /** @param {MouseEvent} e */
-  function buildCtxItems(e) {
+  /** @param {Element} target */
+  function buildCtxItemsForTarget(target) {
     const {
       ns,
       ts,
@@ -97,7 +97,6 @@ export function createContextMenuService(deps) {
       lockFolderSession,
       onError,
     } = deps;
-    const target = /** @type {Element} */ (e.target);
     const tabEl = target.closest("[data-tab-id]");
     const noteLiEl = target.closest("[data-note-id]");
     const folderLiEl = target.closest("[data-folder-id]");
@@ -330,12 +329,31 @@ export function createContextMenuService(deps) {
         {
           label: "Suggest improvements",
           action: () => is.startImprove(),
-          disabled: !ns.editorContent || is.improveState.status !== "idle",
+          disabled: !settings.llmEnabled || !ns.editorContent || is.improveState.status !== "idle",
         },
       ];
     }
 
     return items;
+  }
+
+  /** @param {MouseEvent} e */
+  function buildCtxItems(e) {
+    return buildCtxItemsForTarget(/** @type {Element} */ (e.target));
+  }
+
+  /** @param {Element} el */
+  function openFromElement(el) {
+    if (deps.settings.devNativeContextMenu) {
+      ctxMenu = null;
+      return;
+    }
+    const items = buildCtxItemsForTarget(el);
+    if (items.length === 0) return;
+    const rect = el.getBoundingClientRect();
+    const x = Math.min(rect.left, window.innerWidth - 174);
+    const y = Math.min(rect.bottom, window.innerHeight - items.length * 28 - 16);
+    ctxMenu = { x, y, items };
   }
 
   // ── Event listener management ─────────────────────────────────────────────
@@ -376,5 +394,6 @@ export function createContextMenuService(deps) {
     },
     setup,
     close,
+    openFromElement,
   };
 }

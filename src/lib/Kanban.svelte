@@ -311,12 +311,27 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         try {
           await invoke('set_note_property', { noteId: note.id, defId: groupByDefId, value: newValue });
           await refreshNotes(folderId);
-          moveAnnouncement = `Moved to ${newCol.label}. Press left or right to continue, Enter to confirm, Escape to cancel.`;
+          moveAnnouncement = `Moved to ${newCol.label}. Press arrow keys to move or reorder, Enter to confirm, Escape to cancel.`;
           await tick();
           /** @type {HTMLElement | null} */ (document.querySelector(`[data-note-id="${note.id}"] .kanban-card-title`))?.focus();
         } catch (err) {
           errorMsg = String(err);
         }
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const noteIds = col.notes.map(n => n.id);
+        const idx = noteIds.indexOf(note.id);
+        if (idx === -1) return;
+        const targetIdx = e.key === 'ArrowUp' ? idx - 1 : idx + 1;
+        if (targetIdx < 0 || targetIdx >= noteIds.length) {
+          moveAnnouncement = `Already at the ${e.key === 'ArrowUp' ? 'top' : 'bottom'} of ${col.label}.`;
+          return;
+        }
+        const targetId = noteIds[targetIdx];
+        reorderWithinColumn(col.key, note.id, targetId, e.key === 'ArrowUp');
+        moveAnnouncement = `Reordered within ${col.label}. Press arrow keys to move or reorder, Enter to confirm, Escape to cancel.`;
+        await tick();
+        /** @type {HTMLElement | null} */ (document.querySelector(`[data-note-id="${note.id}"] .kanban-card-title`))?.focus();
       } else if (e.key === 'Enter') {
         e.preventDefault();
         movingNoteId = null;
@@ -329,7 +344,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     } else if (e.key === 'm' || e.key === 'M') {
       e.preventDefault();
       movingNoteId = note.id;
-      moveAnnouncement = `Moving "${note.title}" from ${col.label}. Press left or right arrows to move between columns, Enter to confirm, Escape to cancel.`;
+      moveAnnouncement = `Moving "${note.title}" from ${col.label}. Press arrow keys to move between columns or reorder within a column, Enter to confirm, Escape to cancel.`;
     }
   }
 
@@ -408,7 +423,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 
       {#if defs.filter(d => d.id !== groupByDefId).length > 0}
         <details class="kanban-fields-picker">
-          <summary class="kanban-fields-btn">Show fields</summary>
+          <summary class="kanban-fields-btn" aria-label="Show optional card fields">Show fields</summary>
           <div class="kanban-fields-menu">
             {#each defs.filter(d => d.id !== groupByDefId) as def (def.id)}
               <label class="kanban-fields-row">
@@ -509,6 +524,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
             {:else}
               <button
                 class="kanban-add-btn"
+                aria-label="New note in {col.label}"
                 onclick={() => startCreating(col.key)}
               >+ New</button>
             {/if}

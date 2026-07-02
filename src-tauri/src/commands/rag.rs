@@ -183,16 +183,52 @@ pub(crate) async fn index_note_vectors_inner(
     Ok(())
 }
 
+/// Best-effort background re-embed when LLM features are enabled.
+pub(crate) fn spawn_note_reindex_if_enabled(
+    pool: SqlitePool,
+    vdb: lancedb::Connection,
+    config: SharedConfig,
+    capability: crate::hardware::LlmCapability,
+    note_id: i64,
+    title: String,
+    content: String,
+) {
+    if !crate::hardware::llm_features_enabled(&config.read().unwrap(), capability) {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let (model, max_retries) = {
+            let cfg = config.read().unwrap();
+            (cfg.embedding_model.clone(), cfg.background_max_retries)
+        };
+        let _ = index_note_vectors_inner(
+            &pool,
+            &vdb,
+            &model,
+            max_retries,
+            note_id,
+            &title,
+            &content,
+            crate::vector::embedder::EmbedBatchOptions::default(),
+        )
+        .await;
+    });
+}
+
 /// Embed a note and store it in the vector index.
 #[tauri::command]
 pub async fn index_note(
     pool: State<'_, SqlitePool>,
     vdb: State<'_, crate::vector::VectorDb>,
     config: State<'_, SharedConfig>,
+    hw: State<'_, crate::hardware::HardwareCapability>,
     note_id: i64,
     title: String,
     content: String,
 ) -> AppResult<()> {
+    if !crate::hardware::llm_features_enabled(&config.read().unwrap(), hw.0.clone()) {
+        return Ok(());
+    }
     let model = config.read().unwrap().embedding_model.clone();
     let max_retries = config.read().unwrap().background_max_retries;
     index_note_vectors_inner(
@@ -328,10 +364,14 @@ pub async fn start_folder_unlock_reindex(
     keys: State<'_, SharedKeyStore>,
     vdb: State<'_, crate::vector::VectorDb>,
     config: State<'_, SharedConfig>,
+    hw: State<'_, crate::hardware::HardwareCapability>,
     gate: State<'_, super::VaultReindexGate>,
     coord: State<'_, super::FolderUnlockReindexCoordinator>,
     root_folder_id: i64,
 ) -> AppResult<()> {
+    if !crate::hardware::llm_features_enabled(&config.read().unwrap(), hw.0.clone()) {
+        return Ok(());
+    }
     let pool = pool.inner().clone();
     let keys = Arc::clone(keys.inner());
     let vdb = crate::vector::VectorDb(vdb.inner().0.clone());
@@ -879,11 +919,16 @@ pub async fn reindex_all(
     keys: State<'_, SharedKeyStore>,
     vdb: State<'_, crate::vector::VectorDb>,
     config: State<'_, SharedConfig>,
+    hw: State<'_, crate::hardware::HardwareCapability>,
     cancel_map: State<'_, super::CancelMap>,
     gate: State<'_, super::VaultReindexGate>,
     force_restart: Option<bool>,
 ) -> AppResult<String> {
     let _hold = gate.0.lock().await;
+
+    if !crate::hardware::llm_features_enabled(&config.read().unwrap(), hw.0.clone()) {
+        return Ok("0 notes indexed (LLM features disabled)".to_string());
+    }
 
     let vault_key_absent = keys
         .vault_key

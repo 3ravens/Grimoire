@@ -184,6 +184,8 @@ SQL file to the exact bytes that were applied originally."
                 app_handle.manage(Arc::new(RwLock::new(app_config)) as config::SharedConfig);
 
                 let hw_snapshot = hardware::detect().await;
+                let capability = hw_snapshot.capability.clone();
+                app_handle.manage(hardware::HardwareCapability(capability));
                 let tier = indexing_profile::tier_from_env()
                     .unwrap_or_else(|| indexing_profile::tier_from_hardware(&hw_snapshot));
                 let indexing_plan =
@@ -285,7 +287,6 @@ SQL file to the exact bytes that were applied originally."
         commands::list_all_tags,
         commands::get_graph_data,
         commands::fts_search,
-        commands::combined_search,
         commands::list_templates,
         commands::create_template,
         commands::update_template,

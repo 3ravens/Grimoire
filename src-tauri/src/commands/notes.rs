@@ -22,8 +22,11 @@ use sqlx::SqlitePool;
 use tauri::State;
 use crate::AccessFilter;
 use crate::SharedKeyStore;
+use crate::config::SharedConfig;
+use crate::hardware::HardwareCapability;
 use crate::{AppError, AppResult, EncryptedNoteStore};
 use crate::vector::VectorDb;
+use super::rag::spawn_note_reindex_if_enabled;
 use super::{Note, Folder};
 
 #[derive(Debug, Serialize)]
@@ -225,6 +228,8 @@ pub async fn move_note(
     pool: State<'_, SqlitePool>,
     keys: State<'_, SharedKeyStore>,
     vdb: State<'_, VectorDb>,
+    config: State<'_, SharedConfig>,
+    hw: State<'_, HardwareCapability>,
     id: i64,
     folder_id: Option<i64>,
 ) -> AppResult<Note> {
@@ -234,12 +239,24 @@ pub async fn move_note(
         super::search::fts_delete(pool.inner(), note.id)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
+        crate::vector::notes::remove(&vdb.0, note.id)
+            .await
+            .map_err(AppError::VectorStore)?;
     } else {
         super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
+        if let Err(e) = crate::vector::notes::remove(&vdb.0, note.id).await {
+            log::warn!("move_note: failed to clear stale vectors for {}: {e}", note.id);
+        }
+        spawn_note_reindex_if_enabled(
+            pool.inner().clone(),
+            vdb.inner().0.clone(),
+            config.inner().clone(),
+            hw.0.clone(),
+            note.id,
+            note.title.clone(),
+            note.content.clone(),
+        );
     }
-    crate::vector::notes::remove(&vdb.0, note.id)
-        .await
-        .map_err(AppError::VectorStore)?;
     let _ = crate::audit::log_event(
         pool.inner(), "note_update", Some("note"),
         Some(note.id), Some(&note.title), Some("moved"),
@@ -252,12 +269,26 @@ pub async fn move_note(
 pub async fn rename_note(
     pool: State<'_, SqlitePool>,
     keys: State<'_, SharedKeyStore>,
+    vdb: State<'_, VectorDb>,
+    config: State<'_, SharedConfig>,
+    hw: State<'_, HardwareCapability>,
     id: i64,
     name: String,
 ) -> AppResult<Note> {
     let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let note = store.rename_note(id, &name).await?;
     super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
+    if !note.locked {
+        spawn_note_reindex_if_enabled(
+            pool.inner().clone(),
+            vdb.inner().0.clone(),
+            config.inner().clone(),
+            hw.0.clone(),
+            note.id,
+            note.title.clone(),
+            note.content.clone(),
+        );
+    }
     let _ = crate::audit::log_event(
         pool.inner(), "note_update", Some("note"),
         Some(note.id), Some(&note.title), Some("renamed"),
@@ -311,12 +342,24 @@ pub async fn delete_note(
 pub async fn duplicate_note(
     pool: State<'_, SqlitePool>,
     keys: State<'_, SharedKeyStore>,
+    vdb: State<'_, VectorDb>,
+    config: State<'_, SharedConfig>,
+    hw: State<'_, HardwareCapability>,
     id: i64,
 ) -> AppResult<Note> {
     let store = EncryptedNoteStore::new(pool.inner(), keys.inner().as_ref());
     let note = store.duplicate_note(id).await?;
     if !note.locked {
         super::search::fts_upsert(pool.inner(), note.id, &note.title, &note.content).await;
+        spawn_note_reindex_if_enabled(
+            pool.inner().clone(),
+            vdb.inner().0.clone(),
+            config.inner().clone(),
+            hw.0.clone(),
+            note.id,
+            note.title.clone(),
+            note.content.clone(),
+        );
     }
     let _ = crate::audit::log_event(
         pool.inner(), "note_create", Some("note"),

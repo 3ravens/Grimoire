@@ -18,6 +18,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
 <script>
   import { invoke } from '@tauri-apps/api/core';
   import { getContext } from 'svelte';
+  import { sanitizeSearchSnippet } from './utils/sanitize.js';
 
   const fs = getContext('fs');
   const ts = getContext('ts');
@@ -194,11 +195,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                 <span class="result-folder">{folderMap[result.folder_id]}</span>
               {/if}
               {#if result.snippet}
-                <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-                <!-- snippet comes from SQLite's FTS5 snippet() — the only HTML it can
-                     contain is <b>…</b> tags wrapping matched terms. No user content
-                     can inject arbitrary HTML here because FTS5 escapes all other text. -->
-                <p class="result-excerpt">{@html result.snippet}</p>
+                <p class="result-excerpt">{@html sanitizeSearchSnippet(result.snippet)}</p>
               {:else if result.excerpt}
                 <p class="result-excerpt">{result.excerpt}</p>
               {/if}

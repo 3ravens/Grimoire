@@ -238,12 +238,12 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
   </div>
 
   {#if exportStatus}
-    <p class="export-status">{exportStatus}</p>
+    <p class="export-status" role="status" aria-live="polite">{exportStatus}</p>
   {/if}
 
   <!-- Table -->
   {#if loading && entries.length === 0}
-    <p class="empty-state">Loading…</p>
+    <p class="empty-state" role="status" aria-live="polite">Loading…</p>
   {:else if entries.length === 0}
     <p class="empty-state">No entries{searchQuery || filter !== 'all' ? ' matching your filter' : ''}.</p>
   {:else}

@@ -20,7 +20,11 @@ use sqlx::SqlitePool;
 use std::collections::HashSet;
 use tauri::State;
 use crate::SharedKeyStore;
+use crate::config::SharedConfig;
+use crate::hardware::HardwareCapability;
+use crate::vector::VectorDb;
 use crate::{AppResult, EncryptedNoteStore};
+use super::rag::spawn_note_reindex_if_enabled;
 use super::{Note, LinkedNote, GraphNode, GraphEdge};
 
 // ---------------------------------------------------------------------------
@@ -388,6 +392,9 @@ pub async fn get_unlinked_mentions(
 pub async fn convert_mention_to_link(
     pool: State<'_, SqlitePool>,
     keys: State<'_, SharedKeyStore>,
+    vdb: State<'_, VectorDb>,
+    config: State<'_, SharedConfig>,
+    hw: State<'_, HardwareCapability>,
     note_id: i64,
     title: String,
 ) -> AppResult<String> {
@@ -398,18 +405,28 @@ pub async fn convert_mention_to_link(
 
     let wiki_link = format!("[[{title}]]");
 
-    // Replace only the first plain occurrence that is not already bracketed.
-    // Strategy: scan for `title`, check it is not preceded by `[[` and followed by `]]`.
     let updated = replace_first_plain_mention(&content, &title, &wiki_link);
 
     if updated == content {
-        // No plain occurrence found — nothing to do.
         return Ok(content);
     }
 
     let saved = store
-        .update_note(note_id, &note_title, &updated)
+        .save_note_with_version(note_id, &note_title, &updated)
         .await?;
+
+    if !saved.locked {
+        super::search::fts_upsert(pool.inner(), saved.id, &saved.title, &saved.content).await;
+        spawn_note_reindex_if_enabled(
+            pool.inner().clone(),
+            vdb.inner().0.clone(),
+            config.inner().clone(),
+            hw.0.clone(),
+            saved.id,
+            saved.title.clone(),
+            saved.content.clone(),
+        );
+    }
 
     let links = parse_wiki_links(&saved.content);
     sync_links(pool.inner(), keys.inner(), note_id, &links).await?;

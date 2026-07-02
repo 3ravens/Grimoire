@@ -3,6 +3,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { marked } from 'marked';
+import { sanitizeNoteHtml } from './sanitize.js';
 
 /** Maximum nesting depth for `![[title]]` embeds (inclusive of first expansion). */
 export const TRANSCLUSION_MAX_DEPTH = 5;
@@ -137,7 +138,7 @@ export async function renderTransclusionMarkdownToHtml(markdown, opts = {}) {
     const out = [];
     for (const part of parts) {
       if (part.type === 'text') {
-        out.push(marked.parse(part.value));
+        out.push(sanitizeNoteHtml(marked.parse(part.value)));
         continue;
       }
 

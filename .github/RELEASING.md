@@ -40,7 +40,7 @@ Download each artifact and smoke-test:
 
 Confirm **unsigned** OS warnings are acceptable (SmartScreen / Gatekeeper). Verify SHA-256 files match downloaded installers.
 
-Confirm uninstall does **not** delete the user’s note vault folder.
+Confirm uninstall does **not** delete user data when the Windows NSIS **“Delete app data”** checkbox is **left unchecked** (notes live in `%APPDATA%\com.grimoire.app\grimoire.db`). On Windows, also confirm the uninstaller checkbox label reads **“Permanently delete all notes, settings, and history (cannot be undone)”**; checking it must remove that folder intentionally.
 
 ## Publish
 

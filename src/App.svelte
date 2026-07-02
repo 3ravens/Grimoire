@@ -75,7 +75,10 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
             );
         },
     });
-    const ns = createNoteService({ onError: err.showError });
+    const ns = createNoteService({
+        onError: err.showError,
+        getLlmEnabled: () => settings.llmEnabled,
+    });
     const ts = createTabService({ onError: err.showError });
     const is = createImproveService({
         onError: err.showError,
@@ -265,6 +268,14 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         lockVault,
         sendSelectionToChat,
         deleteNote,
+        openContextMenuFromFocus: () => {
+            const el = document.activeElement;
+            if (!(el instanceof HTMLElement)) return;
+            const ctxTarget = el.closest(
+                '[data-note-id], [data-folder-id], [data-tab-id], .content-area, [data-action="create-note-btn"]',
+            );
+            if (ctxTarget) ctx.openFromElement(ctxTarget);
+        },
     });
 
     // ── Core state ─────────────────────────────────────────────────────────────
@@ -614,18 +625,25 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
             // Use .finally() so add_scanned_path always runs even if index_note fails
             // (e.g. large PDFs with many chunks can time out or exceed Ollama capacity).
             // Both operations use the embed model so they must be sequential, not concurrent.
-            invoke("index_note", {
-                noteId: note.id,
-                title: note.title,
-                content: note.content,
-            })
-                .catch(() => {})
-                .finally(() => {
-                    invoke("add_scanned_path", {
-                        path: filePath,
-                        kind: "file",
-                    }).catch(() => {});
-                });
+            if (settings.llmEnabled) {
+                invoke("index_note", {
+                    noteId: note.id,
+                    title: note.title,
+                    content: note.content,
+                })
+                    .catch(() => {})
+                    .finally(() => {
+                        invoke("add_scanned_path", {
+                            path: filePath,
+                            kind: "file",
+                        }).catch(() => {});
+                    });
+            } else {
+                invoke("add_scanned_path", {
+                    path: filePath,
+                    kind: "file",
+                }).catch(() => {});
+            }
         } catch (e) {
             err.showError(e);
         }
@@ -667,18 +685,20 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
                     content: templateContent,
                 }).catch(() => {});
             }
-            ns.indexState = "indexing";
-            invoke("index_note", {
-                noteId: note.id,
-                title: "Untitled",
-                content: templateContent,
-            })
-                .then(() => {
-                    ns.indexState = "idle";
+            if (settings.llmEnabled) {
+                ns.indexState = "indexing";
+                invoke("index_note", {
+                    noteId: note.id,
+                    title: "Untitled",
+                    content: templateContent,
                 })
-                .catch(() => {
-                    ns.indexState = "error";
-                });
+                    .then(() => {
+                        ns.indexState = "idle";
+                    })
+                    .catch(() => {
+                        ns.indexState = "error";
+                    });
+            }
             fs.inlineRenaming = {
                 id: note.id,
                 type: "note",
@@ -795,6 +815,13 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
             });
             await loadNotes();
             openNoteInNewTab(note);
+            if (settings.llmEnabled) {
+                invoke("index_note", {
+                    noteId: note.id,
+                    title: note.title,
+                    content: note.content ?? "",
+                }).catch(() => {});
+            }
         } catch (e) {
             err.showError(e);
         }
@@ -811,6 +838,13 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
     async function handleVersionRestore(restoredNote) {
         ns.applyRestoredNote(restoredNote);
         await loadNotes();
+        if (settings.llmEnabled) {
+            invoke("index_note", {
+                noteId: restoredNote.id,
+                title: restoredNote.title,
+                content: restoredNote.content ?? "",
+            }).catch(() => {});
+        }
     }
 
     async function convertMention(mention) {
@@ -856,7 +890,9 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         await vault.onVaultUnlocked(async () => {
             if (!installationWizardOpen) {
                 await loadMainShellAfterUnlock();
-                invoke("reindex_all").catch(() => {});
+                if (settings.llmEnabled) {
+                    invoke("reindex_all").catch(() => {});
+                }
                 await refreshVaultReindexBanner();
             }
         });
@@ -947,7 +983,7 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         <div class="error-banner" role="alert">{err.errorMsg}</div>
     {/if}
 
-    {#if vaultReindexBanner && !ns.isReindexing}
+    {#if vaultReindexBanner && !ns.isReindexing && settings.llmEnabled}
         <div class="vault-reindex-banner" role="status">
             <span>
                 Semantic search re-index is incomplete:

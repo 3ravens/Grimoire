@@ -17,6 +17,8 @@
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "@tauri-apps/cli": "^2.10.1",
+    "@types/dompurify": "^3.0.5",
+    "jsdom": "^29.1.1",
     "license-checker-rseidelsohn": "^5.0.1",
     "rollup-plugin-visualizer": "^6.0.5",
     "svelte": "^5.53.12",
@@ -28,6 +30,7 @@
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "d3-force": "^3.0.0",
+    "dompurify": "^3.4.11",
     "marked": "^17.0.6"
   }
 }

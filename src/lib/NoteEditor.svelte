@@ -1,6 +1,6 @@
 <!-- Copyright (C) 2026 Wim Palland — see App.svelte for license header. -->
 <script>
-    import { getContext } from "svelte";
+    import { getContext, tick } from "svelte";
     import NoteProperties from "./NoteProperties.svelte";
     import DiffView from "./DiffView.svelte";
     import ImprovePopover from "./ImprovePopover.svelte";
@@ -15,6 +15,14 @@
     const ts = getContext("ts");
     const is = getContext("is");
     const fs = getContext("fs");
+    const settings = getContext("settings");
+
+    const llmImproveDisabled = $derived(!settings.llmEnabled);
+    const improveTooltip = $derived(
+        llmImproveDisabled
+            ? "AI features are disabled for this hardware — enable in Settings → Hardware"
+            : "Suggest improvements",
+    );
 
     // ── Composed callbacks (still provided by the coordinator) ────────────────
     let {
@@ -33,9 +41,44 @@
 
     /** @type {HTMLDetailsElement | null} */
     let exportDetailsEl = $state(null);
+    let exportMenuOpen = $state(false);
+    let exportFocusPos = $state(0);
 
     function closeExportMenu() {
         if (exportDetailsEl) exportDetailsEl.open = false;
+        exportMenuOpen = false;
+    }
+
+    async function handleExportMenuToggle(e) {
+        exportMenuOpen = exportDetailsEl?.open ?? false;
+        if (exportMenuOpen) {
+            exportFocusPos = 0;
+            await tick();
+            exportDetailsEl?.querySelector('[role="menuitem"]')?.focus();
+        }
+    }
+
+    async function handleExportMenuKeydown(e) {
+        const items = Array.from(
+            exportDetailsEl?.querySelectorAll('[role="menuitem"]') ?? [],
+        );
+        if (items.length === 0) return;
+
+        if (e.key === "ArrowDown") {
+            e.preventDefault();
+            exportFocusPos = (exportFocusPos + 1) % items.length;
+            await tick();
+            /** @type {HTMLElement} */ (items[exportFocusPos])?.focus();
+        } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            exportFocusPos = (exportFocusPos - 1 + items.length) % items.length;
+            await tick();
+            /** @type {HTMLElement} */ (items[exportFocusPos])?.focus();
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            closeExportMenu();
+            exportDetailsEl?.querySelector("summary")?.focus();
+        }
     }
 
     // ── Local derived / state ─────────────────────────────────────────────────
@@ -199,9 +242,9 @@
         <button
             class="graph-toggle"
             aria-label="Suggest improvements"
-            title="Suggest improvements"
+            title={improveTooltip}
             onclick={is.startImprove}
-            disabled={is.improveState.status !== "idle" || !ns.editorContent}
+            disabled={llmImproveDisabled || is.improveState.status !== "idle" || !ns.editorContent}
         >
             Improve
         </button>
@@ -209,15 +252,17 @@
             <details
                 class="toolbar-export"
                 bind:this={exportDetailsEl}
+                ontoggle={handleExportMenuToggle}
             >
                 <summary
                     class="graph-toggle export-summary"
                     aria-haspopup="menu"
+                    aria-expanded={exportMenuOpen}
                     aria-label="Export note"
                     title="Export note"
                     >Export</summary
                 >
-                <div class="toolbar-export-menu" role="menu">
+                <div class="toolbar-export-menu" role="menu" tabindex="-1" onkeydown={handleExportMenuKeydown}>
                     <button
                         type="button"
                         role="menuitem"

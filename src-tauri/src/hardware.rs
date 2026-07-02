@@ -58,6 +58,18 @@ pub enum LlmCapability {
     Insufficient,
 }
 
+/// Startup hardware tier used for LLM gating (avoids re-detecting on every command).
+#[derive(Clone)]
+pub struct HardwareCapability(pub LlmCapability);
+
+/// True when chat/RAG embedding features may run (full hardware or user opt-in).
+pub fn llm_features_enabled(config: &crate::config::AppConfig, capability: LlmCapability) -> bool {
+    capability == LlmCapability::Full || config.llm_force_enabled
+}
+
+pub const LLM_GATE_MESSAGE: &str =
+    "LLM features are disabled for this hardware. Enable them in Settings → Hardware to use AI features.";
+
 /// Information about a single GPU/display adapter.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

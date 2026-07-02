@@ -19,7 +19,9 @@
  *   startNoteInline: (templateId?: number) => void,
  *   lockVault: () => void,
  *   sendSelectionToChat: () => void,
+ *   sendSelectionToChat: () => void,
  *   deleteNote: (id: any) => void,
+ *   openContextMenuFromFocus: () => void,
  * }} deps
  */
 export function createKeyboardService(deps) {
@@ -27,7 +29,25 @@ export function createKeyboardService(deps) {
   function handle(e) {
     const { ns, ts, fs, vault, layout, ui, tmpl,
             activateTab, closeTab, saveNote, newTab,
-            startNoteInline, lockVault, sendSelectionToChat, deleteNote } = deps;
+            startNoteInline, lockVault, sendSelectionToChat, deleteNote,
+            openContextMenuFromFocus } = deps;
+    // Shift+F10 / ContextMenu — keyboard context menu on focused items
+    if (
+      (e.key === "F10" && e.shiftKey) ||
+      (e.key === "ContextMenu" && !e.ctrlKey && !e.metaKey && !e.altKey)
+    ) {
+      const tag =
+        /** @type {HTMLElement} */ (document.activeElement)?.tagName ?? "";
+      const isEditing =
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        /** @type {HTMLElement} */ (document.activeElement)?.isContentEditable;
+      if (!isEditing) {
+        e.preventDefault();
+        openContextMenuFromFocus?.();
+      }
+    }
     // Ctrl+P — Quick switcher
     if (
       (e.ctrlKey || e.metaKey) &&

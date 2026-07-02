@@ -135,11 +135,11 @@ along with Grimoire. If not, see <https://www.gnu.org/licenses/>. -->
         </div>
       {/if}
       {#if statusLine}
-        <div class="pull-status">{statusLine}</div>
+        <div class="pull-status" role="status" aria-live="polite">{statusLine}</div>
       {/if}
       {#if pct !== null}
         <div class="progress-wrap">
-          <div class="progress-bar" aria-valuenow={pct} aria-valuemin="0" aria-valuemax="100" role="progressbar">
+          <div class="progress-bar" aria-label="Model download progress" aria-valuenow={pct} aria-valuemin="0" aria-valuemax="100" role="progressbar">
             <div class="progress-fill" style="width: {pct}%"></div>
           </div>
         </div>

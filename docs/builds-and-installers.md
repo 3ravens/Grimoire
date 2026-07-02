@@ -155,7 +155,7 @@ src-tauri/target/release/bundle/
 | **Ollama** | Installation wizard or manual install |
 | **LLM models** | `ollama pull` / wizard |
 | **Wikipedia ZIM files** | Settings → Wikipedia download |
-| **Note vault** | User-chosen folder at first run; **never deleted on uninstall** |
+| **Note vault** | Stored in SQLite under the app data directory; **preserved on default uninstall** (Windows: optional checkbox to delete all notes, settings, and history) |
 
 App data (SQLite, LanceDB index) lives under the OS app data path for `com.grimoire.app` — see [README](../README.md#where-app-data-lives).
 

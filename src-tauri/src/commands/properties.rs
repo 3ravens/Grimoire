@@ -279,6 +279,7 @@ pub async fn set_note_property(
     .execute(pool.inner())
     .await
     ?;
+    // TODO(post-launch): property-only edits can leave stale "Properties:" suffix in embeddings.
     Ok(())
 }
 
