@@ -1,4 +1,3 @@
-<!-- Copyright (C) 2026 Wim Palland — see App.svelte for license header. -->
 <script>
     import { getContext, tick } from "svelte";
     import NoteProperties from "./NoteProperties.svelte";

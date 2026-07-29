@@ -1,5 +1,3 @@
-// Copyright (C) 2026 Wim Palland — see App.svelte for license header.
-
 // Pure utility functions for folder tree structure — no reactivity, no side effects.
 
 /**

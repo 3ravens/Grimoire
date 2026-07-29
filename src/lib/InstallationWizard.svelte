@@ -1,6 +1,3 @@
-<!-- Copyright (C) 2026 Wim Palland
-     Part of Grimoire — GPL-3.0 or later. -->
-
 <script>
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';

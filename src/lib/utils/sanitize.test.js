@@ -1,5 +1,4 @@
 // @vitest-environment jsdom
-// Copyright (C) 2026 Wim Palland
 import { describe, expect, it } from 'vitest';
 import {
   sanitizeNoteHtml,

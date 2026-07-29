@@ -1,5 +1,3 @@
-// Copyright (C) 2026 Wim Palland
-//
 // Test-data generator for debug builds.
 //
 // Invocable from Settings → Developer in dev builds.  Populates the vault

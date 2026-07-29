@@ -1,7 +1,3 @@
-// Copyright (C) 2026 Wim Palland
-//
-// This file is part of Grimoire — licensed under GPL-3.0 or later.
-
 import { CURATED_CHAT_MODELS } from '../constants/chatModels.js';
 
 /**

@@ -1,6 +1,3 @@
-<!-- Copyright (C) 2026 Wim Palland
-This file is part of Grimoire — licensed under GPL-3.0 or later. -->
-
 <script>
   import { getContext } from 'svelte';
 

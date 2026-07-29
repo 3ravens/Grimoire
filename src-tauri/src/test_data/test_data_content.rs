@@ -1,5 +1,3 @@
-// Copyright (C) 2026 Wim Palland
-//
 // Curated sentence pools for the debug test-data generator.
 // Each domain contains short paragraphs (2–4 sentences each) that can be
 // assembled into plausible, varied notes.  Content is deliberately realistic

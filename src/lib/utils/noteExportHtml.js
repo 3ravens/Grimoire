@@ -1,6 +1,3 @@
-// Copyright (C) 2026 Wim Palland
-// This file is part of Grimoire — licensed under GPL-3.0 or later.
-
 import { renderTransclusionMarkdownToHtml } from './transclusion.js';
 
 /** Mirrors `.read-mode-content` in editor.css for standalone HTML/PDF export. */

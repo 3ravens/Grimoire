@@ -74,7 +74,6 @@ Notes:
 - Parameterized SQL only (sqlx binds or `QueryBuilder`); never interpolate strings into SQL.
 - Schema changes require a new numbered migration in `src-tauri/migrations/` (forward-only, run at startup). No ad-hoc schema mutation in command handlers. Watch for migrations/triggers that could write plaintext of locked/encrypted notes into FTS.
 - Don't hold locks across `.await` points; don't block the async runtime.
-- Every Rust source file starts with the GPL v3 header block — copy it into new files.
 - Long-running indexing supports cancellation (`CancelMap`, `FolderUnlockReindexCoordinator`, `VaultReindexGate` in `commands/mod.rs`) — wire new bulk operations into these patterns.
 
 ### Search / RAG (highest scrutiny: `commands/rag.rs`, `commands/search.rs`, `vector/`)

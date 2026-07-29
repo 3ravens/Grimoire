@@ -1,4 +1,3 @@
-<!-- Copyright (C) 2026 Wim Palland — see App.svelte for license header. -->
 <script>
     import { invoke } from "@tauri-apps/api/core";
     import { tick, getContext } from "svelte";
