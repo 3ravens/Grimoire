@@ -155,18 +155,19 @@ see the app documentation for old folder names."
                             .map(|p| format!("{}-shm", p.display()))
                             .unwrap_or_default();
                         format!(
-                            "\n\nThat means this database was migrated with an older copy of a migration file than \
+                            "\n\nThat means this database was migrated with different migration SQL bytes than \
 what is in your source tree now (SQLx stores a checksum per version).\n\
-Dev fix: quit Grimoire, delete the SQLite files below, then start again (migrations re-run).\n\
-  Main DB: {path_ps}\n\
-  WAL:     {wal_ps}\n\
-  SHM:     {shm_ps}\n\
-PowerShell (copy/paste):\n\
-  Remove-Item -LiteralPath \"{path_ps}\" -Force -ErrorAction SilentlyContinue; \
-Remove-Item -LiteralPath \"{wal_ps}\" -Force -ErrorAction SilentlyContinue; \
-Remove-Item -LiteralPath \"{shm_ps}\" -Force -ErrorAction SilentlyContinue\n\
-To keep this database: repair `_sqlx_migrations.checksum` for the listed migration version, or restore the migration \
-SQL file to the exact bytes that were applied originally."
+IMPORTANT: Do not delete the database — that deletes your notes. Prefer these safe steps:\n\
+  1. Quit Grimoire (installed app and `tauri dev`).\n\
+  2. Back up these files first:\n\
+       Main DB: {path_ps}\n\
+       WAL:     {wal_ps}\n\
+       SHM:     {shm_ps}\n\
+  3. Common Windows cause: CRLF vs LF in `src-tauri/migrations/*.sql`. \
+Normalize those files to LF (repo `.gitattributes` already asks for this), then rebuild.\n\
+  4. If checksums still differ: repair `_sqlx_migrations.checksum` for the listed version, \
+or restore the migration SQL to the exact bytes that were applied originally.\n\
+Only delete the DB files as a last resort when you intentionally want an empty vault."
                         )
                     } else {
                         String::new()

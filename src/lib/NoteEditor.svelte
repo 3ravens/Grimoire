@@ -10,6 +10,7 @@
         exportNoteMarkdown,
         exportNotePdfPrint,
     } from "./utils/noteExportActions.js";
+    import { applyEditorTab } from "./utils/editorIndent.js";
 
     const ns = getContext("ns");
     const ts = getContext("ts");
@@ -134,11 +135,27 @@
         };
     });
 
-    // ── Editor keydown (wiki-link brackets) ───────────────────────────────────
+    // ── Editor keydown (Tab indent + wiki-link brackets) ──────────────────────
     function handleEditorKeydown(e) {
-        if (e.key !== "[") return;
         const el = /** @type {HTMLTextAreaElement} */ (e.currentTarget);
         const { selectionStart: start, selectionEnd: end, value } = el;
+
+        // Tab / Shift+Tab: indent in the note instead of leaving the textarea.
+        if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            e.preventDefault();
+            const next = applyEditorTab(value, start, end, {
+                shiftKey: e.shiftKey,
+            });
+            ns.editorContent = next.value;
+            ns.markDirty();
+            requestAnimationFrame(() => {
+                el.selectionStart = next.selectionStart;
+                el.selectionEnd = next.selectionEnd;
+            });
+            return;
+        }
+
+        if (e.key !== "[") return;
         const prevChar = value[start - 1];
         e.preventDefault();
         if (prevChar === "[") {

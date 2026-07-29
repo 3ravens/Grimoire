@@ -36,3 +36,6 @@ src-tauri/nsis-dll-staging/
 
 # Cursor files
 .cursor/*
+
+# Local DB safety copies (never commit)
+.db-backup-*/

@@ -148,6 +148,7 @@
   color: var(--text-h);
   background: var(--bg);
   outline: none;
+  tab-size: 4;
 }
 
 .read-mode-content {
