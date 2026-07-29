@@ -71,6 +71,14 @@
   width: 280px;
 }
 
+.lock-logo {
+  display: block;
+  width: 64px;
+  max-width: 100%;
+  height: auto;
+  margin-bottom: 4px;
+}
+
 .lock-title {
   font: 600 22px/1 var(--sans);
   color: var(--text-h);

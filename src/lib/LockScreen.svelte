@@ -1,5 +1,6 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
+  import grimoireLogo from '../assets/brand/grimoire-logo.png';
 
   // Props
   let { onUnlocked } = $props();
@@ -38,6 +39,7 @@
 
 <div class="lock-screen">
   <div class="lock-box">
+    <img class="lock-logo" src={grimoireLogo} alt="" width="64" height="45" />
     <h1 class="lock-title">Grimoire</h1>
     <p id="lock-subtitle" class="lock-subtitle">This vault is locked.</p>
 

@@ -12,6 +12,7 @@
     isPullInFlight,
   } from './services/chatModelSelection.js';
   import ModelDownloadModal from './ModelDownloadModal.svelte';
+  import grimoireLogo from '../assets/brand/grimoire-logo.png';
 
   /** @type {{ onCompleted: () => void }} */
   let { onCompleted } = $props();
@@ -459,6 +460,9 @@
       <p class="wiz-step-count" id="wiz-step-count">Step {wizardStepNumber.current} of {wizardStepNumber.total}</p>
     {/if}
     <div class="sr-only" aria-live="polite" aria-atomic="true">{wizardStatus || stepTitle}</div>
+    {#if mainStep === MS_TOUR}
+      <img class="wiz-logo" src={grimoireLogo} alt="" width="72" height="50" />
+    {/if}
     <h1 id="wiz-title" class="wiz-h1">{stepTitle}</h1>
     <p class="wiz-privacy">
       Grimoire is local-first: nothing here phones home. Network use is only what you explicitly start (for
@@ -664,6 +668,13 @@
   .wiz-h1 {
     font-size: 1.35rem;
     margin: 0 0 0.5rem;
+  }
+  .wiz-logo {
+    display: block;
+    width: 72px;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto 0.75rem;
   }
   .wiz-step-count {
     font-size: 0.8rem;
