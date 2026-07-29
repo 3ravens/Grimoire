@@ -2,7 +2,7 @@
 
 Single reference for how Grimoire is packaged, what CI produces, and how to fix common build failures. Maintainer checklist: [`.github/RELEASING.md`](../.github/RELEASING.md).
 
-**Last verified:** 2026-06-30 — tag `v1.0.0-rc.2` ([release workflow](https://github.com/wimpal/Grimoire/actions/runs/28448850281)). All platform installers present: Windows NSIS `.exe`, Linux `.deb` + `.rpm` + `.AppImage`, macOS Intel + ARM `.dmg`, and per-platform `checksums-*.txt`. Windows installer SHA-256 verified locally against `checksums-windows.txt`.
+**Last verified:** 2026-06-30 — tag `v1.0.0-rc.2` ([release workflow](https://github.com/3ravens/Grimoire/actions/runs/28448850281)). All platform installers present: Windows NSIS `.exe`, Linux `.deb` + `.rpm` + `.AppImage`, macOS Intel + ARM `.dmg`, and per-platform `checksums-*.txt`. Windows installer SHA-256 verified locally against `checksums-windows.txt`.
 
 ---
 

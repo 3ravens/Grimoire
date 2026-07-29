@@ -31,7 +31,7 @@ concurrency:
 
 env:
   # The public Grimoire application repository (owner/name).
-  APP_REPO: wimpal/Grimoire
+  APP_REPO: 3ravens/Grimoire
   # Where the deployed site serves static files from. Adjust to your framework:
   #   SvelteKit / static adapter → static/version.json
   #   Astro / Next.js            → public/version.json
