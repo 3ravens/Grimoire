@@ -21,11 +21,14 @@ fi
 install_once() {
   rustup toolchain install "$toolchain" --profile minimal
   rustup default "$toolchain"
-  local t
-  for t in "${targets[@]}"; do
-    [[ -z "$t" ]] && continue
-    rustup target add "$t" --toolchain "$toolchain"
-  done
+  # Under `set -u`, empty `"${targets[@]}"` is unbound on bash <5.1 (macOS runners).
+  if ((${#targets[@]} > 0)); then
+    local t
+    for t in "${targets[@]}"; do
+      [[ -z "$t" ]] && continue
+      rustup target add "$t" --toolchain "$toolchain"
+    done
+  fi
   rustc -vV
   cargo -vV
 }
