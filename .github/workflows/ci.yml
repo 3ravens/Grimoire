@@ -153,11 +153,16 @@ jobs:
       - name: Run frontend tests
         run: npm test
 
-      # dtolnay/rust-toolchain@stable
+      # dtolnay/rust-toolchain@stable — retry rustup CDN/DNS flakes (common on macOS runners).
+      # Wandalen/wretry.action@v3.8.0
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        uses: Wandalen/wretry.action@e68c23e6309f2871ca8ae4763e7629b9c258e1ea
         with:
-          toolchain: stable
+          action: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+          attempt_limit: 3
+          attempt_delay: 30000
+          with: |
+            toolchain: stable
 
       - name: Build Rust tests
         working-directory: src-tauri
