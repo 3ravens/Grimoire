@@ -283,13 +283,13 @@ mv squashfs-root/usr/lib/libwayland-* /tmp/wayland-libs-backup/
 
 ## 11. Related roadmap items
 
-From Phase 4 of the project roadmap (local `.vscode/Guidelines/ROADMAP.md` when present):
+From the v1.0 release gate:
 
 - **Update notifications** — implemented as **opt-in, notify-only**: when the user enables
   the check in Settings, the app reads `https://grimoireapp.dev/version.json` on launch and
   shows a banner/badge linking to the download page. No network call is made unless the user
   opts in, and there is no silent in-app apply (the `tauri-plugin-updater` background apply is
-  deferred to Phase 5). The release process **must publish/update `version.json`** for the
+  deferred to v1.1). The release process **must publish/update `version.json`** for the
   check to detect a release — see [`.github/RELEASING.md`](../.github/RELEASING.md).
 - **Dependency license audit** — implemented: `cargo deny check licenses`
   ([`src-tauri/deny.toml`](../src-tauri/deny.toml)) and `npm run license:check`

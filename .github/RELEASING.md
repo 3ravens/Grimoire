@@ -70,6 +70,6 @@ Confirm uninstall does **not** delete user data when the Windows NSIS **“Delet
 
 - **Ollama** and models — user installs via wizard or manually.
 - **Code signing / notarization** — follow-up hardening; see builds doc.
-- **Silent in-app auto-update** — deferred to Phase 5. The shipped behaviour is **opt-in,
+- **Silent in-app auto-update** — deferred to v1.1 (installation wizard polish). The shipped behaviour is **opt-in,
   notify-only**: clients read `version.json` and link to the download page (hence the
   publish step above). No `tauri-plugin-updater` background apply yet.
