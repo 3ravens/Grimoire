@@ -1,5 +1,6 @@
 <script>
     import { getContext, tick } from "svelte";
+    import NoteBodyTextarea from "./NoteBodyTextarea.svelte";
     import NoteProperties from "./NoteProperties.svelte";
     import DiffView from "./DiffView.svelte";
     import ImprovePopover from "./ImprovePopover.svelte";
@@ -93,13 +94,15 @@
     const readingTime = $derived(Math.max(1, Math.round(wordCount / 200)));
 
     let propertiesReady = $state(!ns.activeNote?.folder_id);
+    let loadedNoteId = ns.activeNote?.id ?? null;
 
-    // Reset propertiesReady when the active note changes.
+    // Reset propertiesReady when the active note changes (by id, not object replacement on save).
     $effect(() => {
-        // reading ns.activeNote causes this to re-run on note change
-        if (ns.activeNote) {
-            propertiesReady = !ns.activeNote.folder_id;
-        }
+        const note = ns.activeNote;
+        if (!note) return;
+        if (note.id === loadedNoteId) return;
+        loadedNoteId = note.id;
+        propertiesReady = !note.folder_id;
     });
 
     function handlePropertiesLoad(defs) {
@@ -212,11 +215,10 @@
             </select>
         </label>
         <button
+            class="save-note-btn"
             onclick={onSave}
             disabled={!ns.isDirty}
             class:index-error={!ns.isDirty && ns.indexState === "error"}
-            aria-live="polite"
-            aria-atomic="true"
         >
             {ns.isDirty
                 ? "Save (Ctrl+S)"
@@ -226,6 +228,15 @@
                     ? "⚠ Index failed"
                     : "Saved"}
         </button>
+        <span class="sr-only" aria-live="polite" aria-atomic="true">
+            {ns.isDirty
+                ? "Unsaved changes"
+                : ns.indexState === "indexing"
+                  ? "Indexing"
+                  : ns.indexState === "error"
+                    ? "Index failed"
+                    : "Saved"}
+        </span>
         {#if fs.folderHasProperties}
             <button
                 class="graph-toggle"
@@ -394,14 +405,11 @@
             {@html readModeHtml}
         </div>
     {:else}
-        <textarea
-            class="content-area"
-            bind:this={ns.editorTextareaEl}
+        <NoteBodyTextarea
+            noteId={ns.activeNote.id}
             bind:value={ns.editorContent}
-            oninput={ns.markDirty}
             onkeydown={handleEditorKeydown}
-            placeholder="Write your note…"
-        ></textarea>
+        />
     {/if}
 {/if}
 

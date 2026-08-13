@@ -29,6 +29,16 @@ export function createNoteService({ onError, getLlmEnabled = () => true }) {
     isDirty = true;
   }
 
+  /** @param {string[]} a @param {string[]} b */
+  function sameStringList(a, b) {
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+  }
+
+  /** @param {{ id: unknown }[]} a @param {{ id: unknown }[]} b */
+  function sameIdList(a, b) {
+    return a.length === b.length && a.every((v, i) => v?.id === b[i]?.id);
+  }
+
   async function loadNotes(folderId, filterTag) {
     try {
       if (filterTag) {
@@ -101,9 +111,10 @@ export function createNoteService({ onError, getLlmEnabled = () => true }) {
         title: editorTitle,
         content: editorContent,
       });
-      activeNote = updated;
+      // Keep the open editor as-is: the textarea already has this title/body.
+      // Replacing activeNote (or bumping transclusionRefresh) re-renders the
+      // editor panel and Chromium may flash/reset textarea scroll.
       isDirty = false;
-      transclusionRefresh += 1;
       if (getLlmEnabled()) {
         indexState = "indexing";
         invoke("index_note", {
@@ -137,10 +148,10 @@ export function createNoteService({ onError, getLlmEnabled = () => true }) {
           ]),
         )
         .then(([tags, links, backlinks, mentions, updatedAllTags]) => {
-          noteTags = tags;
-          noteLinks = links;
-          noteBacklinks = backlinks;
-          unlinkedMentions = mentions;
+          if (!sameStringList(noteTags, tags)) noteTags = tags;
+          if (!sameIdList(noteLinks, links)) noteLinks = links;
+          if (!sameIdList(noteBacklinks, backlinks)) noteBacklinks = backlinks;
+          if (!sameIdList(unlinkedMentions, mentions)) unlinkedMentions = mentions;
           allTags = updatedAllTags;
         })
         .catch(() => {});

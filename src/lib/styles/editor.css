@@ -53,6 +53,11 @@
   cursor: pointer;
 }
 
+.save-note-btn {
+  min-width: 8.5rem;
+  text-align: center;
+}
+
 .toolbar-actions button:disabled {
   opacity: 0.4;
   cursor: default;
