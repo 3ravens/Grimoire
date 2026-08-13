@@ -22,6 +22,13 @@ export function createSettings() {
   // Loaded from the 'wikipedia_enabled' setting in SQLite on startup.
   let wikipediaEnabled = $state(false);
 
+  /** True when the user finished setup without configuring Ollama/models. */
+  let wizardAiSkipped = $state(false);
+
+  const chatEnabled = $derived(
+    (hwCapability === 'full' || llmForceEnabled) && !wizardAiSkipped,
+  );
+
   // Persist preferences to localStorage and apply theme to the DOM.
   $effect(() => {
     localStorage.setItem('keepModelInMemory', String(keepModelInMemory));
@@ -72,6 +79,9 @@ export function createSettings() {
     get hardwareReport() { return hardwareReport; },
     set hardwareReport(v) { hardwareReport = v; },
     get llmEnabled() { return llmEnabled; },
+    get wizardAiSkipped() { return wizardAiSkipped; },
+    set wizardAiSkipped(v) { wizardAiSkipped = v; },
+    get chatEnabled() { return chatEnabled; },
     get wikipediaEnabled() { return wikipediaEnabled; },
     set wikipediaEnabled(v) { wikipediaEnabled = v; },
   };

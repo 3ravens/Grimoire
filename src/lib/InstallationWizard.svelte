@@ -57,6 +57,7 @@
 
   let finishBusy = $state(false);
   let skipAi = $state(false);
+  let tourSkipped = $state(false);
   let wizardStatus = $state('');
 
   /** @type {null | { model: string, phase: 'confirm' | 'pulling' | 'error', confirmKind?: string, hardwareWarning?: unknown, statusLine: string, progress: { completed: number, total: number } | null, errorMessage: string }} */
@@ -111,6 +112,8 @@
   const skipModelsStep = $derived(
     ollamaOk === true && embedInstalled && chatInstalled,
   );
+  /** Deps step: advance only when Ollama is up or user chose notes-only setup. */
+  const depsCanAdvance = $derived(skipAi || ollamaOk === true);
 
   $effect(() => {
     const rows = curatedForWizard;
@@ -244,6 +247,7 @@
   }
 
   function skipTour() {
+    tourSkipped = true;
     mainStep = MS_STARTER;
   }
 
@@ -254,6 +258,7 @@
       return;
     }
     if (mainStep === MS_DEPS) {
+      if (!depsCanAdvance) return;
       mainStep = advanceFromDeps();
       return;
     }
@@ -408,6 +413,7 @@
         openWikipediaSettingsAfter: openWikiSettings,
         chatModel: chat,
         embeddingModel: embed,
+        aiSkipped: skipAi,
       });
       const o = /** @type {{ openWikipediaSettings?: boolean }} */ (res);
       if (o?.openWikipediaSettings) {
@@ -485,6 +491,12 @@
         </button>
       </div>
     {:else if mainStep === MS_STARTER}
+      {#if tourSkipped}
+        <p class="wiz-note wiz-skip-hint" role="status">
+          You skipped the tour — that is fine. Choose a workspace layout below (required), then finish setup to
+          start writing notes.
+        </p>
+      {/if}
       <p class="wiz-body">Pick a starting layout. You can change folders and notes freely afterwards.</p>
       <div class="wiz-options" role="radiogroup" aria-label="Starter workspace">
         {#each starterOptions as o}
@@ -502,12 +514,31 @@
     {:else if mainStep === MS_DEPS}
       {#if ollamaOk === null && ollamaCheckBusy}
         <p class="wiz-body">Checking local AI runtime…</p>
-      {:else if ollamaOk === false}
+      {:else if ollamaOk === true}
+        <p class="wiz-body" role="status">Ollama is running on this computer. You can pull models on the next step.</p>
+      {:else}
         <p class="wiz-body">
-          Grimoire uses <strong>Ollama</strong> on your machine for chat and embeddings. Install it, start
-          <code class="wiz-code">ollama serve</code>, then re-check.
+          Grimoire does <strong>not</strong> install Ollama for you. Chat and semantic search stay off until Ollama is
+          running and you pull models (here or later in Settings → LLM).
         </p>
-        <p class="wiz-warn" role="alert">Could not reach Ollama on this computer.</p>
+        <ol class="wiz-steps">
+          <li>
+            <strong>Install Ollama</strong> from the official site
+            <button type="button" class="wiz-link" onclick={openOllamaDownload}>ollama.com/download</button>
+            (opens in your browser).
+          </li>
+          <li>
+            <strong>Start the Ollama service.</strong> On most systems it runs automatically after install; otherwise
+            run <code class="wiz-code">ollama serve</code> in a terminal.
+          </li>
+          <li>
+            <strong>Check connection</strong> — Grimoire must reach Ollama on this machine before you continue with AI
+            setup.
+          </li>
+        </ol>
+        {#if ollamaOk === false}
+          <p class="wiz-warn" role="alert">Could not reach Ollama on this computer.</p>
+        {/if}
         <div class="wiz-row">
           <button type="button" class="wiz-btn secondary" onclick={openOllamaDownload}>Open Ollama download</button>
           <button type="button" class="wiz-btn secondary" onclick={checkOllama} disabled={ollamaCheckBusy}
@@ -520,7 +551,14 @@
       </div>
       <div class="wiz-row">
         <button type="button" class="wiz-btn secondary" onclick={stepBack}>Back</button>
-        <button type="button" class="wiz-btn primary" onclick={stepNext}>Next</button>
+        <button
+          type="button"
+          class="wiz-btn primary"
+          onclick={stepNext}
+          disabled={!depsCanAdvance}
+          title={depsCanAdvance ? '' : 'Install and start Ollama, then check again — or continue without AI features'}
+          >Next</button
+        >
       </div>
     {:else if mainStep === MS_HW}
       {#if hwBusy}
@@ -604,8 +642,8 @@
       </div>
     {:else if mainStep === MS_WIKI}
       <p class="wiz-body">
-        Wikipedia is fully offline after download. Bundles can be large — configure downloads later in Settings if you
-        prefer.
+        Wikipedia is fully offline after download. Nothing is downloaded during setup — enabling here only turns the
+        reader on. Bundles are large; fetch them later from Settings → Wikipedia when you are ready (explicit download).
       </p>
       <label class="wiz-check">
         <input type="checkbox" bind:checked={wikipediaEnable} />
@@ -820,5 +858,23 @@
   }
   .wiz-model-actions {
     margin: 0.5rem 0 0.75rem;
+  }
+  .wiz-skip-hint {
+    margin: 0 0 0.75rem;
+    padding: 0.5rem 0.65rem;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-subtle, #444);
+  }
+  .wiz-steps {
+    margin: 0 0 1rem 1.1rem;
+    padding: 0;
+    line-height: 1.55;
+  }
+  .wiz-steps li {
+    margin-bottom: 0.65rem;
+  }
+  .wiz-steps li:last-child {
+    margin-bottom: 0;
   }
 </style>

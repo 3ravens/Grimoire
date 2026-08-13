@@ -145,7 +145,9 @@
       {/if}
     </li>
   {:else}
-    <li class="empty" role="status">No notes here</li>
+    <li class="empty" role="status">
+      No notes here yet. Use the <strong>new note</strong> button in the folder column to create your first note.
+    </li>
   {/each}
 </ul>
 

@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::SqlitePool;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+
+use crate::app_paths::resolve_app_data_dir;
 
 fn app_sqlite_options(db_path: &std::path::Path) -> Result<SqliteConnectOptions, sqlx::Error> {
     let url = format!("sqlite://{}?mode=rwc", db_path.to_string_lossy());
@@ -75,7 +77,7 @@ impl From<sqlx::migrate::MigrateError> for DbInitError {
 pub async fn init_db(app: &AppHandle) -> Result<SqlitePool, DbInitError> {
     // Resolve a path inside the app's data directory, e.g.:
     // Windows: C:\Users\<user>\AppData\Roaming\com.grimoire.app\grimoire.db
-    let app_dir = app.path().app_data_dir()?;
+    let app_dir = resolve_app_data_dir(app)?;
 
     std::fs::create_dir_all(&app_dir)?;
 

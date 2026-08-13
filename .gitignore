@@ -38,4 +38,8 @@ src-tauri/nsis-dll-staging/
 .cursor/*
 
 # Local DB safety copies (never commit)
+*.db.bak
+
+# Wizard / first-run sandbox (scripts/wizard-sandbox.mjs)
+scripts/.local-sandboxes/
 .db-backup-*/

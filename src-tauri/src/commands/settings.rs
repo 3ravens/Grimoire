@@ -7,9 +7,9 @@
 use std::fs;
 
 use sqlx::SqlitePool;
-use tauri::AppHandle;
-use tauri::Manager;
-use tauri::State;
+use tauri::{AppHandle, State};
+
+use crate::app_paths::resolve_app_data_dir;
 
 use crate::app_data_migration::{MIGRATION_SENTINEL_FILE, SETTING_MIGRATION_BANNER_DISMISSED};
 use crate::config::SharedConfig;
@@ -65,10 +65,7 @@ pub async fn get_app_data_migration_banner(
         return Ok(None);
     }
 
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(e.to_string()))?;
+    let dir = resolve_app_data_dir(&app).map_err(|e| AppError::Io(e.to_string()))?;
     let path = dir.join(MIGRATION_SENTINEL_FILE);
     if !path.is_file() {
         return Ok(None);

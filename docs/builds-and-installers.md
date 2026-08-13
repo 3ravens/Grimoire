@@ -157,7 +157,7 @@ src-tauri/target/release/bundle/
 | **Wikipedia ZIM files** | Settings → Wikipedia download |
 | **Note vault** | Stored in SQLite under the app data directory; **preserved on default uninstall** (Windows: optional checkbox to delete all notes, settings, and history) |
 
-App data (SQLite, LanceDB index) lives under the OS app data path for `com.grimoire.app` — see [README](../README.md#where-app-data-lives).
+App data (SQLite, LanceDB index) lives under the OS app data path for `com.grimoire.app` — see [README](../README.md#where-app-data-lives) and [first-run guide](./first-run.md).
 
 ---
 

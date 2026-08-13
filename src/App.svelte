@@ -396,6 +396,12 @@
             })
             .catch(() => {});
 
+        invoke("get_setting", { key: "wizard_ai_skipped" })
+            .then((v) => {
+                settings.wizardAiSkipped = v === "true";
+            })
+            .catch(() => {});
+
         void refreshVaultReindexBanner();
         void refreshAppDataMigrationBanner();
         void refreshUpdateBanner();
@@ -1577,6 +1583,9 @@
             onHardwareChange={(cap, force) => {
                 settings.hwCapability = cap;
                 settings.llmForceEnabled = force;
+                if (force) {
+                    settings.wizardAiSkipped = false;
+                }
                 invoke("get_hardware_info")
                     .then((hw) => {
                         settings.hardwareReport = hw;

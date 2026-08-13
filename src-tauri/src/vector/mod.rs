@@ -6,10 +6,10 @@ pub mod wiki;
 use std::sync::Arc;
 
 use arrow_schema::{DataType, Schema};
+use crate::app_paths::resolve_app_data_dir;
 use lancedb::Connection;
 #[cfg(debug_assertions)]
 use serde::Serialize;
-use tauri::Manager;
 
 // ---------------------------------------------------------------------------
 // App state
@@ -148,9 +148,7 @@ pub(crate) fn escape_like_pattern(s: &str) -> String {
 /// Connect to LanceDB, storing data in the same app-data directory as SQLite.
 /// Pre-creates the notes table so the first write doesn't pay the schema-creation cost.
 pub async fn init(app: &tauri::AppHandle) -> Result<Connection, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
+    let dir = resolve_app_data_dir(app)
         .map_err(|e| e.to_string())?
         .join("lancedb");
 

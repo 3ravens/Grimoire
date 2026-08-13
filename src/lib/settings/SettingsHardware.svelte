@@ -52,6 +52,9 @@
   async function handleForceToggle(e) {
     const val = e.currentTarget.checked;
     await invoke('set_setting', { key: 'llm_force_enabled', value: String(val) });
+    if (val) {
+      await invoke('set_setting', { key: 'wizard_ai_skipped', value: 'false' });
+    }
     hw = { ...hw, llmForceEnabled: val };
     onHardwareChange(hw.capability, val);
   }

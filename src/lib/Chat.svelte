@@ -36,6 +36,8 @@
   // Settings props replaced by context.
   const keepInMemory    = $derived(settings.keepModelInMemory);
   const llmEnabled      = $derived(settings.llmEnabled);
+  const chatEnabled   = $derived(settings.chatEnabled);
+  const wizardAiSkipped = $derived(settings.wizardAiSkipped);
   const wikipediaEnabled = $derived(settings.wikipediaEnabled);
   const hardwareReport  = $derived(settings.hardwareReport ?? null);
 
@@ -1008,7 +1010,13 @@
       onCancel={closeModelDownloadModal}
     />
   {/if}
-  {#if !llmEnabled}
+  {#if wizardAiSkipped}
+    <div class="chat-hw-banner">
+      <strong>Chat is off.</strong>
+      You chose to skip AI setup. Install Ollama, pull models, and configure chat in
+      <strong>Settings → LLM</strong> (or enable override in <strong>Settings → Hardware</strong>).
+    </div>
+  {:else if !llmEnabled}
     <div class="chat-hw-banner">
       <strong>LLM features unavailable.</strong>
       Your hardware doesn’t meet the minimum requirements for chat. You can override this in
@@ -1022,7 +1030,7 @@
       variant="chat"
       selected={modelSelectUi}
       options={chatModelSelectOptions}
-      disabled={selectModelBusy || isPullInFlight() || !!uninstallBusy || !llmEnabled}
+      disabled={selectModelBusy || isPullInFlight() || !!uninstallBusy || !chatEnabled}
       ariaLabel="Chat model (Ollama)"
       onOpenChange={(o) => {
         if (o) {
@@ -1182,8 +1190,8 @@
       placeholder={inputPlaceholder}
       aria-label="Message"
       rows="6"
-      disabled={isLoading || !llmEnabled}
+      disabled={isLoading || !chatEnabled}
     ></textarea>
-    <button onclick={send} disabled={isLoading || !input.trim() || !llmEnabled} aria-busy={isLoading}>Send</button>
+    <button onclick={send} disabled={isLoading || !input.trim() || !chatEnabled} aria-busy={isLoading}>Send</button>
   </div>
 </aside>

@@ -1,5 +1,6 @@
 mod access_filter;
 pub mod app_data_migration;
+pub mod app_paths;
 mod audit;
 mod auth;
 mod chunking;
@@ -106,19 +107,18 @@ pub fn run() {
 
             let app_handle = app.handle().clone();
             tauri::async_runtime::block_on(async move {
+                crate::app_paths::log_sandbox_banner_if_active();
+
                 app_data_migration::migrate_legacy_app_data_if_needed(&app_handle).unwrap_or_else(
                     |e| {
-                        panic!(
-                            "Failed to migrate app data from a preview install: {e}\n\
-Your note vault on disk is unchanged. Preview app data was not deleted — \
-see the app documentation for old folder names."
+                        log::error!(
+                            "Failed to migrate app data from a preview install: {e}. \
+Starting with a fresh app data folder; preview folders were not deleted."
                         );
                     },
                 );
 
-                let grimoire_db = app_handle
-                    .path()
-                    .app_data_dir()
+                let grimoire_db = crate::app_paths::resolve_app_data_dir(&app_handle)
                     .ok()
                     .map(|dir| dir.join("grimoire.db"));
 

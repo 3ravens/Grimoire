@@ -13,6 +13,7 @@ use crate::commands::rag::index_note_vectors_inner;
 
 pub(crate) const KEY_WIZARD_DONE: &str = "wizard_v1_completed";
 pub(crate) const KEY_STARTER_PACK: &str = "wizard_starter_pack_id";
+pub(crate) const KEY_AI_SKIPPED: &str = "wizard_ai_skipped";
 
 async fn get_setting_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
@@ -140,6 +141,7 @@ pub async fn wizard_finish_impl(
     open_wikipedia_settings_after: bool,
     chat_model: Option<String>,
     embedding_model: Option<String>,
+    ai_skipped: bool,
 ) -> AppResult<WizardFinishResult> {
     maybe_backfill_wizard_completed(pool).await?;
 
@@ -180,6 +182,18 @@ pub async fn wizard_finish_impl(
         if !t.is_empty() {
             upsert_setting_tx(&mut tx, "embedding_model", t).await?;
         }
+    }
+
+    let models_configured = chat_model
+        .as_ref()
+        .is_some_and(|m| !m.trim().is_empty())
+        || embedding_model
+            .as_ref()
+            .is_some_and(|m| !m.trim().is_empty());
+    if ai_skipped && !models_configured {
+        upsert_setting_tx(&mut tx, KEY_AI_SKIPPED, "true").await?;
+    } else if models_configured {
+        upsert_setting_tx(&mut tx, KEY_AI_SKIPPED, "false").await?;
     }
 
     tx.commit().await?;
@@ -250,6 +264,7 @@ pub async fn wizard_finish(
     open_wikipedia_settings_after: bool,
     chat_model: Option<String>,
     embedding_model: Option<String>,
+    ai_skipped: bool,
 ) -> AppResult<WizardFinishResult> {
     wizard_finish_impl(
         pool.inner(),
@@ -261,6 +276,7 @@ pub async fn wizard_finish(
         open_wikipedia_settings_after,
         chat_model,
         embedding_model,
+        ai_skipped,
     )
     .await
 }

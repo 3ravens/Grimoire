@@ -16,7 +16,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use tauri::{AppHandle, Emitter, State};
-use tauri::Manager;
 use chrono::{SecondsFormat, Utc};
 use futures_util::StreamExt;
 use rayon::prelude::*;
@@ -26,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
+use crate::app_paths::resolve_app_data_dir;
 use crate::{AppError, AppResult};
 use crate::config::SharedConfig;
 
@@ -243,7 +243,7 @@ pub async fn wikipedia_fts_initial_sync(pool: &SqlitePool, conn: &lancedb::Conne
 }
 
 fn resolve_wiki_perf_log_path(app: &AppHandle) -> Option<PathBuf> {
-    let base = app.path().app_data_dir().ok()?;
+    let base = resolve_app_data_dir(app).ok()?;
     let logs = base.join("logs");
     let _ = std::fs::create_dir_all(&logs);
     Some(logs.join("wiki-index-perf.log"))

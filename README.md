@@ -35,6 +35,8 @@ npm run tauri:build   # release bundles under src-tauri/target/release/bundle/
 - SQLite (`grimoire.db`), LanceDB (`lancedb/`), encrypted note content, settings, and migration markers live under the OS app data directory for the bundle id **`com.grimoire.app`** (for example `%APPDATA%\com.grimoire.app` on Windows). Notes are stored in SQLite, not a separate vault folder. Default uninstall preserves this directory; on Windows, checking **Permanently delete all notes, settings, and history** during uninstall removes it.
 - Preview builds may have used **`com.tauri.dev`**, **`dev.grimoireapp.grimoire`**, or **`app.grimoire.grimoire`** under the same kinds of paths. On first launch after upgrading the bundle identifier, Grimoire **copies** the database and vector index from a matching preview folder if the new location is still empty; old preview folders are left on disk.
 
+See **[`docs/first-run.md`](docs/first-run.md)** for the installation wizard, reinstall behaviour, and a maintainer test matrix.
+
 ## Tests
 
 - **Rust** (library + `src-tauri/tests/` integration): from `src-tauri`, run `cargo test`. Optional ignored tests (e.g. LanceDB smoke): `cargo test -- --ignored`.

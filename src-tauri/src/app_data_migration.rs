@@ -6,7 +6,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use tauri::AppHandle;
-use tauri::Manager;
+
+use crate::app_paths::{legacy_migration_from_for_sandbox, resolve_app_data_dir};
 
 /// Written after a successful migration (support + UI banner).
 pub const MIGRATION_SENTINEL_FILE: &str = "app_data_migrated_from.txt";
@@ -24,7 +25,7 @@ static LEGACY_BUNDLE_IDS: &[&str] = &[
 /// If the new app data dir has no `grimoire.db`, copy from the first matching legacy
 /// tree (database + `lancedb/` + optional `logs/`). Legacy folders are left in place.
 pub fn migrate_legacy_app_data_if_needed(app: &AppHandle) -> Result<(), String> {
-    let new_root = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let new_root = resolve_app_data_dir(app).map_err(|e| e.to_string())?;
 
     if new_root.join("grimoire.db").is_file() {
         return Ok(());
@@ -53,11 +54,17 @@ pub fn run_migration_from_legacy_to_new(legacy_root: &Path, new_root: &Path) -> 
 
     let db_dst_tmp = new_root.join("grimoire.db.partial");
     let db_dst_final = new_root.join("grimoire.db");
+    let wal_src = legacy_root.join("grimoire.db-wal");
+    let shm_src = legacy_root.join("grimoire.db-shm");
+    let wal_dst = new_root.join("grimoire.db-wal");
+    let shm_dst = new_root.join("grimoire.db-shm");
 
     let existed_lancedb = new_root.join("lancedb").exists();
     let existed_logs = new_root.join("logs").exists();
     let existed_db_dst_tmp = db_dst_tmp.exists();
     let existed_db_dst_final = db_dst_final.exists();
+    let existed_wal_dst = wal_dst.exists();
+    let existed_shm_dst = shm_dst.exists();
     let existed_sentinel = new_root.join(MIGRATION_SENTINEL_FILE).exists();
 
     let cleanup_new_side = || {
@@ -66,6 +73,12 @@ pub fn run_migration_from_legacy_to_new(legacy_root: &Path, new_root: &Path) -> 
         }
         if !existed_db_dst_final {
             let _ = fs::remove_file(&db_dst_final);
+        }
+        if !existed_wal_dst {
+            let _ = fs::remove_file(&wal_dst);
+        }
+        if !existed_shm_dst {
+            let _ = fs::remove_file(&shm_dst);
         }
         if !existed_lancedb {
             let _ = fs::remove_dir_all(new_root.join("lancedb"));
@@ -96,6 +109,9 @@ pub fn run_migration_from_legacy_to_new(legacy_root: &Path, new_root: &Path) -> 
         cleanup_new_side();
         e.to_string()
     })?;
+
+    copy_optional_file(&wal_src, &wal_dst, &cleanup_new_side, "grimoire.db-wal")?;
+    copy_optional_file(&shm_src, &shm_dst, &cleanup_new_side, "grimoire.db-shm")?;
 
     let lance_src = legacy_root.join("lancedb");
     if lance_src.is_dir() {
@@ -135,6 +151,16 @@ fn write_sentinel(new_root: &Path, legacy_root: &Path) -> Result<(), String> {
 }
 
 fn find_first_legacy_data_root(new_root: &Path) -> Option<PathBuf> {
+    if let Some(legacy_root) = legacy_migration_from_for_sandbox() {
+        if paths_refer_to_same_dir(&legacy_root, new_root) {
+            return None;
+        }
+        if legacy_root.join("grimoire.db").is_file() {
+            return Some(legacy_root);
+        }
+        return None;
+    }
+
     for legacy_id in LEGACY_BUNDLE_IDS {
         for root in candidate_roots_for_legacy_id(legacy_id) {
             if paths_refer_to_same_dir(&root, new_root) {
@@ -193,6 +219,22 @@ fn candidate_roots_for_legacy_id(legacy_id: &str) -> Vec<PathBuf> {
     v
 }
 
+fn copy_optional_file(
+    src: &Path,
+    dst: &Path,
+    cleanup: &dyn Fn(),
+    label: &str,
+) -> Result<(), String> {
+    if !src.is_file() {
+        return Ok(());
+    }
+    fs::copy(src, dst).map_err(|e| {
+        cleanup();
+        format!("copy {label}: {e}")
+    })?;
+    Ok(())
+}
+
 fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
@@ -239,6 +281,27 @@ mod tests {
         let sent = fs::read_to_string(new_root.path().join(MIGRATION_SENTINEL_FILE)).unwrap();
         assert!(sent.contains("migrated_from="));
         assert!(sent.contains("migrated_at="));
+    }
+
+    #[test]
+    fn migration_copies_wal_and_shm_when_present() {
+        let legacy = tempdir().unwrap();
+        let new_root = tempdir().unwrap();
+
+        fs::write(legacy.path().join("grimoire.db"), b"sqlite").unwrap();
+        fs::write(legacy.path().join("grimoire.db-wal"), b"wal").unwrap();
+        fs::write(legacy.path().join("grimoire.db-shm"), b"shm").unwrap();
+
+        run_migration_from_legacy_to_new(legacy.path(), new_root.path()).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(new_root.path().join("grimoire.db-wal")).unwrap(),
+            "wal"
+        );
+        assert_eq!(
+            fs::read_to_string(new_root.path().join("grimoire.db-shm")).unwrap(),
+            "shm"
+        );
     }
 
     #[test]

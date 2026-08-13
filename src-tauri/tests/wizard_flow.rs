@@ -35,6 +35,7 @@ async fn wizard_finish_then_idempotent() {
         false,
         None,
         None,
+        false,
     )
     .await
     .unwrap();
@@ -56,6 +57,7 @@ async fn wizard_finish_then_idempotent() {
         false,
         None,
         None,
+        false,
     )
     .await
     .unwrap();
@@ -86,6 +88,7 @@ async fn wizard_finish_para_creates_folders() {
         false,
         None,
         None,
+        false,
     )
     .await
     .unwrap();
@@ -128,6 +131,7 @@ async fn starter_apply_transaction_rolls_back_on_invalid_pack() {
         false,
         None,
         None,
+        false,
     )
     .await
     .unwrap_err();
@@ -147,4 +151,123 @@ async fn starter_apply_transaction_rolls_back_on_invalid_pack() {
             .unwrap()
             .unwrap_or_default();
     assert_ne!(done, "true");
+}
+
+#[tokio::test]
+async fn backfill_hides_wizard_when_notes_exist() {
+    let pool = test_pool().await;
+    sqlx::query("INSERT INTO notes (title, content, folder_id) VALUES ('x', 'y', NULL)")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let s = wizard_status_impl(&pool).await.unwrap();
+    assert!(!s.show_wizard);
+
+    let pack: String = sqlx::query_scalar(
+        "SELECT value FROM settings WHERE key = 'wizard_starter_pack_id' LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap()
+    .unwrap_or_default();
+    assert_eq!(pack, "legacy");
+}
+
+#[tokio::test]
+async fn backfill_hides_wizard_when_folders_exist() {
+    let pool = test_pool().await;
+    sqlx::query("INSERT INTO folders (name, parent_id) VALUES ('Inbox', NULL)")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let s = wizard_status_impl(&pool).await.unwrap();
+    assert!(!s.show_wizard);
+}
+
+#[tokio::test]
+async fn backfill_does_not_overwrite_existing_starter_pack() {
+    let pool = test_pool().await;
+    sqlx::query("INSERT INTO settings (key, value) VALUES ('wizard_starter_pack_id', 'para')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO notes (title, content, folder_id) VALUES ('x', 'y', NULL)")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let _ = wizard_status_impl(&pool).await.unwrap();
+
+    let pack: String = sqlx::query_scalar(
+        "SELECT value FROM settings WHERE key = 'wizard_starter_pack_id' LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pack, "para");
+}
+
+#[tokio::test]
+async fn wizard_finish_with_ai_skipped_persists_setting() {
+    let pool = test_pool().await;
+    let ks = shared_keystore();
+    let cfg = Arc::new(RwLock::new(AppConfig::load(&pool).await.unwrap()));
+    let dir = tempfile::tempdir().unwrap();
+    let conn = connect_dir(dir.path()).await.unwrap();
+
+    wizard_finish_impl(
+        &pool,
+        &ks,
+        &cfg,
+        &conn,
+        "empty".into(),
+        false,
+        false,
+        None,
+        None,
+        true,
+    )
+    .await
+    .unwrap();
+
+    let skipped: String = sqlx::query_scalar(
+        "SELECT value FROM settings WHERE key = 'wizard_ai_skipped' LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap()
+    .unwrap_or_default();
+    assert_eq!(skipped, "true");
+
+    let s = wizard_status_impl(&pool).await.unwrap();
+    assert!(!s.show_wizard);
+}
+
+#[tokio::test]
+async fn wizard_does_not_rerun_after_completion() {
+    let pool = test_pool().await;
+    let ks = shared_keystore();
+    let cfg = Arc::new(RwLock::new(AppConfig::load(&pool).await.unwrap()));
+    let dir = tempfile::tempdir().unwrap();
+    let conn = connect_dir(dir.path()).await.unwrap();
+
+    wizard_finish_impl(
+        &pool,
+        &ks,
+        &cfg,
+        &conn,
+        "empty".into(),
+        false,
+        false,
+        None,
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+
+    let s = wizard_status_impl(&pool).await.unwrap();
+    assert!(!s.show_wizard);
 }

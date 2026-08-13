@@ -586,6 +586,10 @@
 
     {#each folderTree as node}
         {@render renderFolder(node)}
+    {:else}
+        <li class="folder-empty" role="status">
+            No folders yet. Use <strong>New folder</strong> or <strong>New note</strong> in the toolbar above.
+        </li>
     {/each}
 </ul>
 

@@ -28,6 +28,14 @@
   color: var(--text-h);
 }
 
+.folder-list li.folder-empty {
+  padding: 0.5rem 0.35rem;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-m, #aaa);
+  cursor: default;
+}
+
 .folder-row {
   position: relative;
   display: flex;

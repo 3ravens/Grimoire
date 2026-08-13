@@ -40,8 +40,8 @@ src-tauri/                Rust backend (run all cargo commands from here — no 
   tests/                  Rust integration tests (lock/search/RAG/migration flows)
   installer/installer.nsi Custom NSIS template (Windows data-deletion opt-in lives here)
 vendor/                   Vendored zim-rs / zim-sys (libzim bindings) — do not review or churn
-scripts/ci/               CI helper scripts; has its own AGENTS.md (read it before touching CI)
-docs/                     builds-and-installers.md, performance-faq.md, search-quality.md
+scripts/                  wizard-sandbox.mjs (isolated first-run testing); ci/ has its own AGENTS.md
+docs/                     builds-and-installers.md, first-run.md, performance-faq.md, search-quality.md
 benchmarks/               Wikipedia indexing baseline JSON (schema v2)
 ```
 
@@ -52,6 +52,7 @@ Run `npm` from the repo root and `cargo` from `src-tauri/`.
 | Task | Command |
 |---|---|
 | Dev app | `npm run tauri dev` |
+| **Wizard / first-run sandbox** (isolated app data; safe vs real vault) | `npm run tauri:wizard-sandbox:fresh` — see [Testing the installation wizard](#testing-the-installation-wizard) |
 | Frontend build | `npm run build` |
 | Frontend tests (Vitest) | `npm test` (watch: `npm run test:watch`) |
 | Frontend build + tests | `npm run check:frontend` |
@@ -103,12 +104,30 @@ Must preserve unless the task is explicitly about changing them:
 - Backend features get Rust integration tests in `src-tauri/tests/`, especially for lock/search/RAG edge cases. Never delete tests guarding locked-folder leakage or index consistency unless the behavior intentionally changed.
 - Before finishing: run `npm test` and, if you touched Rust, `cargo test` from `src-tauri`. If you touched indexing/search, also sanity-check with the search-quality harness when feasible.
 
+### Testing the installation wizard
+
+When changing the installation wizard, first-run flow, setup tour copy, starter packs, Ollama deps step, or related Rust (`commands/wizard.rs`, `app_data_migration.rs`, `app_paths.rs`):
+
+**Do not** tell users to delete `%APPDATA%\com.grimoire.app` or reset wizard flags in their real vault. Use the **wizard sandbox** instead — it sets `GRIMOIRE_APP_DATA_DIR` to an isolated folder under `scripts/.local-sandboxes/` (gitignored) and never touches the production install.
+
+| Goal | Command (repo root) |
+|------|---------------------|
+| Brand-new first run | `npm run tauri:wizard-sandbox:fresh` |
+| Continue same sandbox session | `npm run tauri:wizard-sandbox` |
+| Preview migration banner | `npm run tauri:wizard-sandbox:migration` |
+
+Automated (no UI): `cd src-tauri && cargo test --locked --test wizard_flow --test app_data_migration_flow`.
+
+User/maintainer details and manual scenarios: [`docs/first-run.md`](docs/first-run.md). Implementation: [`scripts/wizard-sandbox.mjs`](scripts/wizard-sandbox.mjs), [`src-tauri/src/app_paths.rs`](src-tauri/src/app_paths.rs).
+
+**Note:** the spotlight / coach-mark tour (post-wizard UI highlights) is a separate roadmap item; wizard sandbox still applies when that work touches first-run state or overlaps the wizard shell.
+
 ## Other agent-facing docs
 
 - `.cursor/rules/*.mdc` — scoped rules (core invariants, Rust backend, SQL migrations, Svelte frontend, CSS/RTL); this file consolidates them but they remain authoritative for their globs.
 - `.coderabbit.yaml` — the PR reviewer enforces the same invariants; keep it in sync when conventions change.
 - `scripts/ci/AGENTS.md` — required reading before touching CI scripts (vendored linuxdeploy GTK plugin has a sync rule on Tauri bumps).
-- `.github/RELEASING.md`, `docs/builds-and-installers.md` — release/tag flow and native build prerequisites.
+- `.github/RELEASING.md`, `docs/builds-and-installers.md`, `docs/first-run.md` — release/tag flow, native build prerequisites, first-run / wizard testing
 
 ## Final checklist before finishing any change
 
