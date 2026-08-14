@@ -51,9 +51,17 @@
 }
 
 .note-list li.empty {
+  display: block;
   color: var(--text);
   cursor: default;
   font-style: italic;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.note-list li.empty strong {
+  font-style: normal;
+  font-weight: 600;
 }
 
 .note-title {

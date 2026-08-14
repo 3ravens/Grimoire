@@ -1,0 +1,107 @@
+.first-start-tour-root {
+  position: fixed;
+  inset: 0;
+  z-index: 9600;
+  pointer-events: none;
+}
+
+.first-start-tour-spotlight {
+  position: absolute;
+  border-radius: 8px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  transition: top 0.15s ease, left 0.15s ease, width 0.15s ease, height 0.15s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .first-start-tour-spotlight {
+    transition: none;
+  }
+}
+
+.first-start-tour-callout {
+  position: absolute;
+  width: min(320px, calc(100vw - 24px));
+  padding: 1rem 1.1rem;
+  background: var(--bg2, #201a1a);
+  color: var(--text-h, #f0e8e8);
+  border: 1px solid var(--border, #352828);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+
+.first-start-tour-step-count {
+  font-size: 0.8rem;
+  opacity: 0.75;
+  margin: 0 0 0.35rem;
+}
+
+.first-start-tour-title {
+  font-size: 1.05rem;
+  margin: 0 0 0.5rem;
+  color: var(--text-h, #f0e8e8);
+}
+
+.first-start-tour-body {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 0 0 0.85rem;
+  color: var(--text, #9e8f8f);
+}
+
+.first-start-tour-error {
+  font-size: 0.85rem;
+  color: var(--danger, #e06060);
+  margin: 0 0 0.65rem;
+}
+
+.first-start-tour-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.first-start-tour-spacer {
+  flex: 1;
+}
+
+.first-start-tour-btn {
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid var(--border, #352828);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.first-start-tour-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.first-start-tour-btn.primary {
+  background: var(--accent, #c0443a);
+  border-color: var(--accent, #c0443a);
+  color: #fff;
+}
+
+.first-start-tour-btn.secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.first-start-tour-missing {
+  position: fixed;
+  inset-inline: 1rem;
+  bottom: 1rem;
+  z-index: 9601;
+  padding: 0.75rem 1rem;
+  background: var(--bg2, #201a1a);
+  border: 1px solid var(--border, #352828);
+  border-radius: 8px;
+  pointer-events: auto;
+  max-width: 28rem;
+  margin-inline: auto;
+}

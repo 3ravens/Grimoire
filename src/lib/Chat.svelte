@@ -996,7 +996,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <svelte:window onclick={(e) => { if (chatOptsOpen && !(/** @type {Element} */ (e.target)).closest('.chat-opts-wrap')) chatOptsOpen = false; }} />
 
-<aside class="chat-panel">
+<aside class="chat-panel" data-tour="chat">
   {#if modelDownloadModal}
     <ModelDownloadModal
       model={modelDownloadModal.model}

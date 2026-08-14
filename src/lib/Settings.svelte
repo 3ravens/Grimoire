@@ -16,6 +16,7 @@
 
   let {
     onClose,
+    onReplayTour = () => {},
     /** When set, switch to this section once when the overlay opens (then cleared via callback). */
     initialSection = null,
     onInitialSectionConsumed = () => {},
@@ -117,7 +118,7 @@
         {:else if activeSection === 'keybinds'}
           <SettingsKeybinds />
         {:else if activeSection === 'help'}
-          <SettingsHelp />
+          <SettingsHelp onReplayTour={onReplayTour} />
         {:else if activeSection === 'developer'}
           <SettingsDeveloper {devNativeContextMenu} {onDevNativeContextMenuChange} />
         {/if}

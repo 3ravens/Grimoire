@@ -2,7 +2,7 @@
 
 User-facing guide to Grimoire’s first launch, installation wizard, and where your data lives. Maintainer packaging details: [`builds-and-installers.md`](./builds-and-installers.md).
 
-**Last verified:** 2026-08-13 — installation wizard polish (guided Ollama setup, skip-AI persistence, empty-vault copy, preview migration WAL copy, backfill tests).
+**Last verified:** 2026-08-14 — first-start spotlight tour (post-wizard UI highlights, Settings → Help replay).
 
 ---
 
@@ -58,12 +58,13 @@ If migration fails, Grimoire logs an error and starts with an empty app data fol
 
 The wizard runs once on first launch (unless backfill detects an existing vault — see below). Every step is also available later in **Settings**.
 
-1. **Tour (skippable)** — four short text slides about notes, chat, search, and settings. Skipping the tour still requires choosing a workspace layout.
-2. **Workspace starter (required)** — Empty, PKM, Bullet journal, or PARA. Creates local folders/templates only; nothing leaves your machine.
-3. **Local AI runtime** — Checks for Ollama. Grimoire does **not** install Ollama for you. Guided steps: download from ollama.com → start the service → **Check again**. **Next** is disabled until Ollama responds or you choose **Continue without AI features**.
-4. **Hardware** — RAM/CPU/GPU scan and tier hint (AMD Vulkan note when relevant).
-5. **Models** — Curated chat + embedding pulls (skipped if you continued without AI or models are already present).
-6. **Wikipedia (optional)** — Enable the reader; actual ZIM download is a separate, user-initiated action in Settings → Wikipedia.
+1. **Workspace starter (required)** — Empty, PKM, Bullet journal, or PARA. Creates local folders/templates only; nothing leaves your machine.
+2. **Local AI runtime** — Checks for Ollama. Grimoire does **not** install Ollama for you. Guided steps: download from ollama.com → start the service → **Check again**. **Next** is disabled until Ollama responds or you choose **Continue without AI features**.
+3. **Hardware** — RAM/CPU/GPU scan and tier hint (AMD Vulkan note when relevant).
+4. **Models** — Curated chat + embedding pulls (skipped if you continued without AI or models are already present).
+5. **Wikipedia (optional)** — Enable the reader; actual ZIM download is a separate, user-initiated action in Settings → Wikipedia.
+
+After you finish setup, a **spotlight tour** (skippable) highlights the live UI: folder panel, note editor, chat sidebar, Search on the activity bar, and Settings. Skip or Done persists in SQLite (`first_start_tour_v1_completed`) so the tour does not run again. Replay it anytime from **Settings → Help → Replay UI tour**.
 
 **Continue without AI:** chat and semantic search stay off until you install Ollama, pull models, and configure Settings → LLM (or enable override in Settings → Hardware).
 
@@ -79,8 +80,9 @@ If you already had notes or folders before the wizard shipped (e.g. upgraded fro
 
 | Scenario | Expected |
 |----------|----------|
-| Fresh install | Wizard appears; empty starter → empty folder list + “create note” hint |
-| Skip tour → empty → finish without Ollama | Notes work; chat shows “skipped AI setup” banner |
+| Fresh install | Wizard appears; after finish, spotlight tour runs once; empty starter → empty folder list + “create note” hint |
+| Empty starter → finish without Ollama | Notes work; chat shows “skipped AI setup” banner; tour still runs after wizard |
+| Spotlight tour skip / done | Tour does not reappear on restart; replay from Settings → Help |
 | Ollama missing on deps step | Numbered guide; Next disabled until check passes or skip AI |
 | Ollama OK, models pulled | Models step may be skipped; chat works after finish |
 | Reinstall, data preserved | No wizard; existing notes visible |
@@ -121,8 +123,8 @@ To wipe only the sandbox: delete `scripts/.local-sandboxes/` or run `:fresh` aga
 
 Verified against current code and the matrix above:
 
-- [x] First-start guide (skippable text slides)
-- [x] Workspace starter choice required even when tour skipped
+- [x] First-start guide — spotlight tour on the live UI after setup (skippable; replay from Settings → Help)
+- [x] Workspace starter choice required at wizard start
 - [x] Dependency check — Ollama detected; guided install (no silent auto-install)
 - [x] Hardware detection and tier messaging
 - [x] LLM selection (~5 curated + custom id + disclaimer)

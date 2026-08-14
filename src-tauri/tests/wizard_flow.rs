@@ -246,6 +246,88 @@ async fn wizard_finish_with_ai_skipped_persists_setting() {
 }
 
 #[tokio::test]
+async fn wizard_finish_does_not_set_first_start_tour_flag() {
+    let pool = test_pool().await;
+    let ks = shared_keystore();
+    let cfg = Arc::new(RwLock::new(AppConfig::load(&pool).await.unwrap()));
+    let dir = tempfile::tempdir().unwrap();
+    let conn = connect_dir(dir.path()).await.unwrap();
+
+    wizard_finish_impl(
+        &pool,
+        &ks,
+        &cfg,
+        &conn,
+        "empty".into(),
+        false,
+        false,
+        None,
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+
+    let tour: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM settings WHERE key = 'first_start_tour_v1_completed' LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(tour.is_none() || tour.as_deref() == Some(""));
+}
+
+#[tokio::test]
+async fn backfill_sets_first_start_tour_for_legacy_vault() {
+    let pool = test_pool().await;
+    sqlx::query("INSERT INTO notes (title, content, folder_id) VALUES ('x', 'y', NULL)")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let _ = wizard_status_impl(&pool).await.unwrap();
+
+    let tour: String = sqlx::query_scalar(
+        "SELECT value FROM settings WHERE key = 'first_start_tour_v1_completed' LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tour, "true");
+}
+
+#[tokio::test]
+async fn migration_0023_backfills_tour_for_completed_wizard() {
+    let pool = test_pool().await;
+
+    let tour_before: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM settings WHERE key = 'first_start_tour_v1_completed' LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(tour_before.is_none() || tour_before.as_deref() == Some(""));
+
+    sqlx::query("INSERT INTO settings (key, value) VALUES ('wizard_v1_completed', 'true')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    sqlx::query(include_str!("../migrations/0023_first_start_tour.sql"))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let tour: String = sqlx::query_scalar(
+        "SELECT value FROM settings WHERE key = 'first_start_tour_v1_completed' LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tour, "true");
+}
+
+#[tokio::test]
 async fn wizard_does_not_rerun_after_completion() {
     let pool = test_pool().await;
     let ks = shared_keystore();

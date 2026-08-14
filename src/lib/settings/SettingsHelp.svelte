@@ -2,6 +2,9 @@
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
 
+  /** @type {{ onReplayTour?: () => void }} */
+  let { onReplayTour = () => {} } = $props();
+
   let bugStatus = $state('');
   let siteLinkError = $state('');
 
@@ -127,6 +130,21 @@
 </div>
 
 <h3>Help</h3>
+
+<div class="setting-row">
+  <div class="setting-label">
+    <span class="setting-name">Replay UI tour</span>
+    <span class="setting-desc">
+      Walk through a short spotlight tour of the folder panel, note editor, chat sidebar, search, and
+      settings. Skippable at any time.
+    </span>
+  </div>
+  <div class="setting-actions">
+    <button type="button" class="settings-action-btn" onclick={onReplayTour}>
+      Replay UI tour
+    </button>
+  </div>
+</div>
 
 <div class="setting-row">
   <div class="setting-label">

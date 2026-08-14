@@ -22,15 +22,13 @@
   /** @type {{ settingsPendingSection?: string | null } | undefined} */
   const ui = getContext('ui');
 
-  const MS_TOUR = 0;
-  const MS_STARTER = 1;
-  const MS_DEPS = 2;
-  const MS_HW = 3;
-  const MS_MODELS = 4;
-  const MS_WIKI = 5;
+  const MS_STARTER = 0;
+  const MS_DEPS = 1;
+  const MS_HW = 2;
+  const MS_MODELS = 3;
+  const MS_WIKI = 4;
 
-  let mainStep = $state(MS_TOUR);
-  let tourSlide = $state(0);
+  let mainStep = $state(MS_STARTER);
 
   /** @type {'empty' | 'pkm' | 'bullet_journal' | 'para'} */
   let starterPack = $state('empty');
@@ -57,31 +55,11 @@
 
   let finishBusy = $state(false);
   let skipAi = $state(false);
-  let tourSkipped = $state(false);
   let wizardStatus = $state('');
 
   /** @type {null | { model: string, phase: 'confirm' | 'pulling' | 'error', confirmKind?: string, hardwareWarning?: unknown, statusLine: string, progress: { completed: number, total: number } | null, errorMessage: string }} */
   let dlModal = $state(null);
   let unsubPull = /** @type {null | (() => void)} */ (null);
-
-  const tourSlides = [
-    {
-      title: 'Notes and folders',
-      body: 'Write Markdown notes, organise them in the folder tree, and use tags plus `[[wiki-links]]` between ideas.',
-    },
-    {
-      title: 'Chat with your vault',
-      body: 'The chat sidebar uses a local Ollama model. Grimoire never sends your notes to the cloud — retrieval and inference stay on this machine.',
-    },
-    {
-      title: 'Search',
-      body: 'Use Search (Ctrl+F) for full-text and semantic search across unlocked notes.',
-    },
-    {
-      title: 'Settings',
-      body: 'All models, privacy tools, and optional sources like Wikipedia are configured in Settings — the same place you can change anything later.',
-    },
-  ];
 
   const starterOptions = [
     { id: 'empty', label: 'Empty workspace', hint: 'No folders or starter notes — just a blank vault.' },
@@ -234,21 +212,22 @@
     return MS_STARTER;
   }
 
-  function tourNext() {
-    if (tourSlide < tourSlides.length - 1) {
-      tourSlide += 1;
-    } else {
+  function stepBack() {
+    if (mainStep === MS_WIKI) {
+      mainStep = retreatFromWiki();
+      return;
+    }
+    if (mainStep === MS_MODELS) {
+      mainStep = retreatFromModels();
+      return;
+    }
+    if (mainStep === MS_HW) {
+      mainStep = retreatFromHw();
+      return;
+    }
+    if (mainStep === MS_DEPS) {
       mainStep = MS_STARTER;
     }
-  }
-
-  function tourBack() {
-    if (tourSlide > 0) tourSlide -= 1;
-  }
-
-  function skipTour() {
-    tourSkipped = true;
-    mainStep = MS_STARTER;
   }
 
   async function stepNext() {
@@ -267,29 +246,6 @@
       return;
     }
     if (mainStep < MS_WIKI) mainStep += 1;
-  }
-
-  function stepBack() {
-    if (mainStep === MS_WIKI) {
-      mainStep = retreatFromWiki();
-      return;
-    }
-    if (mainStep === MS_MODELS) {
-      mainStep = retreatFromModels();
-      return;
-    }
-    if (mainStep === MS_HW) {
-      mainStep = retreatFromHw();
-      return;
-    }
-    if (mainStep === MS_DEPS) {
-      mainStep = MS_STARTER;
-      return;
-    }
-    if (mainStep === MS_STARTER) {
-      mainStep = MS_TOUR;
-      tourSlide = tourSlides.length - 1;
-    }
   }
 
   function openOllamaDownload() {
@@ -428,8 +384,7 @@
   }
 
   let stepTitle = $derived.by(() => {
-    if (mainStep === MS_TOUR) return 'Welcome to Grimoire';
-    if (mainStep === MS_STARTER) return 'Workspace starter';
+    if (mainStep === MS_STARTER) return 'Welcome to Grimoire';
     if (mainStep === MS_DEPS) return 'Local AI runtime';
     if (mainStep === MS_HW) return 'Your hardware';
     if (mainStep === MS_MODELS) return 'Models';
@@ -466,7 +421,7 @@
       <p class="wiz-step-count" id="wiz-step-count">Step {wizardStepNumber.current} of {wizardStepNumber.total}</p>
     {/if}
     <div class="sr-only" aria-live="polite" aria-atomic="true">{wizardStatus || stepTitle}</div>
-    {#if mainStep === MS_TOUR}
+    {#if mainStep === MS_STARTER}
       <img class="wiz-logo" src={grimoireLogo} alt="" width="72" height="50" />
     {/if}
     <h1 id="wiz-title" class="wiz-h1">{stepTitle}</h1>
@@ -475,28 +430,7 @@
       example pulling an Ollama model or downloading Wikipedia later).
     </p>
 
-    {#if mainStep === MS_TOUR}
-      <div class="wiz-tour">
-        <h2 class="wiz-h2">{tourSlides[tourSlide]?.title}</h2>
-        <p class="wiz-body">{tourSlides[tourSlide]?.body}</p>
-      </div>
-      <div class="wiz-row">
-        <button type="button" class="wiz-btn secondary" onclick={skipTour}>Skip tour</button>
-        <div class="wiz-spacer"></div>
-        {#if tourSlide > 0}
-          <button type="button" class="wiz-btn secondary" onclick={tourBack}>Back</button>
-        {/if}
-        <button type="button" class="wiz-btn primary" onclick={tourNext}>
-          {tourSlide < tourSlides.length - 1 ? 'Next' : 'Continue'}
-        </button>
-      </div>
-    {:else if mainStep === MS_STARTER}
-      {#if tourSkipped}
-        <p class="wiz-note wiz-skip-hint" role="status">
-          You skipped the tour — that is fine. Choose a workspace layout below (required), then finish setup to
-          start writing notes.
-        </p>
-      {/if}
+    {#if mainStep === MS_STARTER}
       <p class="wiz-body">Pick a starting layout. You can change folders and notes freely afterwards.</p>
       <div class="wiz-options" role="radiogroup" aria-label="Starter workspace">
         {#each starterOptions as o}
@@ -508,7 +442,6 @@
         {/each}
       </div>
       <div class="wiz-row">
-        <button type="button" class="wiz-btn secondary" onclick={stepBack}>Back</button>
         <button type="button" class="wiz-btn primary" onclick={stepNext}>Next</button>
       </div>
     {:else if mainStep === MS_DEPS}
@@ -744,9 +677,6 @@
     line-height: 1.5;
     margin: 0 0 1rem;
   }
-  .wiz-tour {
-    min-height: 7rem;
-  }
   .wiz-row {
     display: flex;
     flex-wrap: wrap;
@@ -858,13 +788,6 @@
   }
   .wiz-model-actions {
     margin: 0.5rem 0 0.75rem;
-  }
-  .wiz-skip-hint {
-    margin: 0 0 0.75rem;
-    padding: 0.5rem 0.65rem;
-    border-radius: 6px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid var(--border-subtle, #444);
   }
   .wiz-steps {
     margin: 0 0 1rem 1.1rem;

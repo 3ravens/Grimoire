@@ -120,7 +120,7 @@ Automated (no UI): `cd src-tauri && cargo test --locked --test wizard_flow --tes
 
 User/maintainer details and manual scenarios: [`docs/first-run.md`](docs/first-run.md). Implementation: [`scripts/wizard-sandbox.mjs`](scripts/wizard-sandbox.mjs), [`src-tauri/src/app_paths.rs`](src-tauri/src/app_paths.rs).
 
-**Note:** the spotlight / coach-mark tour (post-wizard UI highlights) is a separate roadmap item; wizard sandbox still applies when that work touches first-run state or overlaps the wizard shell.
+**Note:** the wizard sandbox still applies when changing first-run state or the wizard shell.
 
 ## Other agent-facing docs
 

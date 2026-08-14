@@ -14,6 +14,7 @@ use crate::commands::rag::index_note_vectors_inner;
 pub(crate) const KEY_WIZARD_DONE: &str = "wizard_v1_completed";
 pub(crate) const KEY_STARTER_PACK: &str = "wizard_starter_pack_id";
 pub(crate) const KEY_AI_SKIPPED: &str = "wizard_ai_skipped";
+pub(crate) const KEY_FIRST_START_TOUR_DONE: &str = "first_start_tour_v1_completed";
 
 async fn get_setting_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
@@ -71,6 +72,10 @@ pub async fn maybe_backfill_wizard_completed(pool: &SqlitePool) -> AppResult<()>
         let existing_pack = get_setting_tx(&mut tx, KEY_STARTER_PACK).await?;
         if existing_pack.is_empty() {
             upsert_setting_tx(&mut tx, KEY_STARTER_PACK, "legacy").await?;
+        }
+        let tour_done = get_setting_tx(&mut tx, KEY_FIRST_START_TOUR_DONE).await?;
+        if tour_done.is_empty() {
+            upsert_setting_tx(&mut tx, KEY_FIRST_START_TOUR_DONE, "true").await?;
         }
         tx.commit().await?;
     }

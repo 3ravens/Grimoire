@@ -17,6 +17,7 @@
     import DatabaseView from "./lib/DatabaseView.svelte";
     import Settings from "./lib/Settings.svelte";
     import InstallationWizard from "./lib/InstallationWizard.svelte";
+    import FirstStartTour from "./lib/FirstStartTour.svelte";
     import Search from "./lib/Search.svelte";
     import ConfirmModal from "./lib/ConfirmModal.svelte";
     import QuickSwitcher from "./lib/QuickSwitcher.svelte";
@@ -38,6 +39,10 @@
     import { createContextMenuService } from "./lib/services/contextMenuService.svelte.js";
     import { folderSubtreeIds } from "./lib/utils/folderTree.js";
     import { createKeyboardService } from "./lib/services/keyboardService.svelte.js";
+    import {
+        FIRST_START_TOUR_SETTING_KEY,
+        FIRST_START_TOUR_STEPS,
+    } from "./lib/utils/firstStartTour.js";
 
     const appWindow = getCurrentWindow();
 
@@ -92,6 +97,14 @@
     let installationWizardOpen = $state(false);
     /** False until `wizard_status` resolves (avoids a one-frame flash of the main shell). */
     let wizardCheckDone = $state(false);
+
+    let firstStartTourActive = $state(false);
+    let firstStartTourStepIndex = $state(0);
+    let firstStartTourPersistBusy = $state(false);
+    let firstStartTourPersistError = $state("");
+    let firstStartTourIsReplay = $state(false);
+    /** @type {null | { foldersOpen: boolean, notesOpen: boolean, chatOpen: boolean, searchOpen: boolean, tableViewOpen: boolean, activeTabId: string | null }} */
+    let firstStartTourLayoutSnapshot = $state(null);
 
     async function refreshInstallationWizardFromBackend() {
         try {
@@ -259,6 +272,7 @@
             );
             if (ctxTarget) ctx.openFromElement(ctxTarget);
         },
+        tourActive: () => firstStartTourActive,
     });
 
     // ── Core state ─────────────────────────────────────────────────────────────
@@ -407,14 +421,176 @@
         void refreshUpdateBanner();
     }
 
+    function snapshotTourLayout() {
+        return {
+            foldersOpen: layout.foldersOpen,
+            notesOpen: layout.notesOpen,
+            chatOpen: layout.chatOpen,
+            searchOpen: ts.searchOpen,
+            tableViewOpen: ts.tableViewOpen,
+            activeTabId: ts.activeTabId,
+        };
+    }
+
+    function restoreTourLayoutSnapshot() {
+        const snap = firstStartTourLayoutSnapshot;
+        if (!snap) return;
+        layout.foldersOpen = snap.foldersOpen;
+        layout.notesOpen = snap.notesOpen;
+        layout.chatOpen = snap.chatOpen;
+        ts.searchOpen = snap.searchOpen;
+        ts.tableViewOpen = snap.tableViewOpen;
+        if (snap.activeTabId) {
+            void activateTab(snap.activeTabId);
+        }
+        firstStartTourLayoutSnapshot = null;
+    }
+
+    function closeOverlaysForTour() {
+        ui.settingsOpen = false;
+        ui.quickSwitcherOpen = false;
+        ui.wikiSearchOpen = false;
+        ts.searchOpen = false;
+    }
+
+    function exitFocusModeIfNeeded() {
+        if (layout.focusMode) {
+            layout.toggleFocusMode();
+        }
+    }
+
+    function ensureNoteEditorTab() {
+        const noteTab = ts.tabs.find((t) => t.type === "note");
+        if (noteTab) {
+            void activateTab(noteTab.id);
+            return;
+        }
+        newTab();
+    }
+
+    async function prepareFirstStartTourStep(stepIndex) {
+        const step = FIRST_START_TOUR_STEPS[stepIndex];
+        if (!step) return;
+
+        closeOverlaysForTour();
+        exitFocusModeIfNeeded();
+
+        switch (step.id) {
+            case "folders":
+                layout.foldersOpen = true;
+                break;
+            case "editor":
+                ts.searchOpen = false;
+                ts.tableViewOpen = false;
+                ensureNoteEditorTab();
+                break;
+            case "chat":
+                ensureNoteEditorTab();
+                layout.chatOpen = true;
+                break;
+            case "search":
+            case "settings":
+                break;
+        }
+
+        await tick();
+        await new Promise((r) => requestAnimationFrame(r));
+    }
+
+    async function goToFirstStartTourStep(stepIndex) {
+        await prepareFirstStartTourStep(stepIndex);
+        firstStartTourStepIndex = stepIndex;
+    }
+
+    async function startFirstStartTour({ replay = false } = {}) {
+        if (
+            firstStartTourActive ||
+            vault.vaultLocked ||
+            installationWizardOpen
+        ) {
+            return;
+        }
+
+        firstStartTourIsReplay = replay;
+        firstStartTourPersistError = "";
+        firstStartTourStepIndex = 0;
+
+        if (replay) {
+            firstStartTourLayoutSnapshot = snapshotTourLayout();
+        }
+
+        closeOverlaysForTour();
+        exitFocusModeIfNeeded();
+        layout.foldersOpen = true;
+
+        firstStartTourActive = true;
+        await goToFirstStartTourStep(0);
+    }
+
+    async function completeFirstStartTour() {
+        if (firstStartTourPersistBusy) return;
+        firstStartTourPersistBusy = true;
+        firstStartTourPersistError = "";
+        try {
+            if (!firstStartTourIsReplay) {
+                await invoke("set_setting", {
+                    key: FIRST_START_TOUR_SETTING_KEY,
+                    value: "true",
+                });
+            }
+            firstStartTourActive = false;
+            if (firstStartTourIsReplay) {
+                restoreTourLayoutSnapshot();
+                firstStartTourIsReplay = false;
+            } else if (ui.settingsPendingSection) {
+                ui.settingsOpen = true;
+            }
+        } catch (e) {
+            firstStartTourPersistError = e?.message ?? String(e);
+        } finally {
+            firstStartTourPersistBusy = false;
+        }
+    }
+
+    async function maybeStartFirstStartTour() {
+        if (
+            firstStartTourActive ||
+            vault.vaultLocked ||
+            installationWizardOpen ||
+            !wizardCheckDone
+        ) {
+            return;
+        }
+        try {
+            const done = await invoke("get_setting", {
+                key: FIRST_START_TOUR_SETTING_KEY,
+            });
+            if (done === "true") {
+                if (ui.settingsPendingSection) {
+                    ui.settingsOpen = true;
+                }
+                return;
+            }
+            await startFirstStartTour({ replay: false });
+        } catch (e) {
+            err.showError(e);
+        }
+    }
+
+    function replayFirstStartTour() {
+        ui.settingsOpen = false;
+        void tick().then(() => startFirstStartTour({ replay: true }));
+    }
+
     async function onInstallationWizardDone() {
         installationWizardOpen = false;
         await loadMainShellAfterUnlock();
-        if (ui.settingsPendingSection) {
-            ui.settingsOpen = true;
-        }
         window.dispatchEvent(new CustomEvent("grimoire:vault-data-changed"));
         await tick();
+        await maybeStartFirstStartTour();
+        if (!firstStartTourActive && ui.settingsPendingSection) {
+            ui.settingsOpen = true;
+        }
         window.__GRIMOIRE_PERF_READY__ = true;
     }
 
@@ -442,6 +618,7 @@
                     await refreshInstallationWizardFromBackend();
                     if (!installationWizardOpen) {
                         await loadMainShellAfterUnlock();
+                        await maybeStartFirstStartTour();
                     }
                 } else {
                     wizardCheckDone = true;
@@ -883,6 +1060,7 @@
                     invoke("reindex_all").catch(() => {});
                 }
                 await refreshVaultReindexBanner();
+                await maybeStartFirstStartTour();
             }
         });
     }
@@ -968,6 +1146,11 @@
 {:else if installationWizardOpen}
     <InstallationWizard onCompleted={onInstallationWizardDone} />
 {:else}
+    <div
+        class="app-shell"
+        inert={firstStartTourActive}
+        aria-hidden={firstStartTourActive ? "true" : undefined}
+    >
     {#if err.errorMsg}
         <div class="error-banner" role="alert">{err.errorMsg}</div>
     {/if}
@@ -1303,7 +1486,7 @@
 
     <div class="layout" style:grid-template-columns={layout.gridCols}>
         <!-- Sidebar: Folders -->
-        <aside class="sidebar" class:collapsed={!layout.foldersOpen}>
+        <aside class="sidebar" class:collapsed={!layout.foldersOpen} data-tour="folders">
             {#if layout.foldersOpen}
                 <FolderSidebar
                     isDragging={fs.isDragging}
@@ -1389,7 +1572,7 @@
         ></button>
 
         <!-- Editor -->
-        <main class="editor">
+        <main class="editor" data-tour="editor">
             <div style="display: {ts.searchOpen ? 'contents' : 'none'};">
                 <Search
                     onSelectNote={(id) => {
@@ -1559,6 +1742,7 @@
     {#if ui.settingsOpen}
         <Settings
             onClose={() => (ui.settingsOpen = false)}
+            onReplayTour={replayFirstStartTour}
             initialSection={ui.settingsPendingSection}
             onInitialSectionConsumed={() => {
                 ui.settingsPendingSection = null;
@@ -1603,6 +1787,18 @@
             y={ctx.ctxMenu.y}
             items={ctx.ctxMenu.items}
             onClose={ctx.close}
+        />
+    {/if}
+    </div>
+
+    {#if firstStartTourActive}
+        <FirstStartTour
+            stepIndex={firstStartTourStepIndex}
+            persistError={firstStartTourPersistError}
+            persistBusy={firstStartTourPersistBusy}
+            onNext={() => goToFirstStartTourStep(firstStartTourStepIndex + 1)}
+            onBack={() => goToFirstStartTourStep(firstStartTourStepIndex - 1)}
+            onComplete={() => completeFirstStartTour()}
         />
     {/if}
 {/if}

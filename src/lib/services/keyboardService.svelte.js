@@ -22,11 +22,13 @@
  *   sendSelectionToChat: () => void,
  *   deleteNote: (id: any) => void,
  *   openContextMenuFromFocus: () => void,
+ *   tourActive?: () => boolean,
  * }} deps
  */
 export function createKeyboardService(deps) {
   /** @param {KeyboardEvent} e */
   function handle(e) {
+    if (deps.tourActive?.()) return;
     const { ns, ts, fs, vault, layout, ui, tmpl,
             activateTab, closeTab, saveNote, newTab,
             startNoteInline, lockVault, sendSelectionToChat, deleteNote,
