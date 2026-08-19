@@ -37,6 +37,7 @@
     import { createUiService } from "./lib/services/uiService.svelte.js";
     import { createErrorService } from "./lib/services/errorService.svelte.js";
     import { createContextMenuService } from "./lib/services/contextMenuService.svelte.js";
+    import { createChatSessionService } from "./lib/services/chatSessionService.svelte.js";
     import { folderSubtreeIds } from "./lib/utils/folderTree.js";
     import { createKeyboardService } from "./lib/services/keyboardService.svelte.js";
     import {
@@ -78,6 +79,7 @@
         getActiveNote: () => ns.activeNote,
     });
     const ui = createUiService();
+    const chatSession = createChatSessionService();
     const vault = createVaultService({ onError: err.showError, ns, ts, fs });
 
     let vaultReindexBannerDismissed = $state(false);
@@ -372,6 +374,7 @@
     setContext("ui", ui);
     setContext("err", err);
     setContext("ctx", ctx);
+    setContext("chatSession", chatSession);
 
     // ── Error banner — errorMsg and showError live in errorService (err).
 
@@ -1067,6 +1070,7 @@
 
     async function lockVault() {
         await vault.lockVault();
+        chatSession.clearConversation({ force: true });
     }
 
     async function handleVaultPwSubmit(password) {

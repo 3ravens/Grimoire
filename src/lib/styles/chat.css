@@ -41,6 +41,28 @@
   flex-shrink: 0;
 }
 
+.chat-clear-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text);
+  opacity: 0.45;
+  padding: 2px 4px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+}
+
+.chat-clear-btn:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.chat-clear-btn:disabled {
+  opacity: 0.25;
+  cursor: not-allowed;
+}
+
 .chat-close-btn {
   flex-shrink: 0;
   margin-left: auto;

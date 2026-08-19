@@ -1,6 +1,6 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
+
   import { untrack, tick, onMount, getContext } from 'svelte';
   import { FEATURE_GUIDE } from './utils/featureGuide.js';
   import { CURATED_CHAT_MODELS, DEFAULT_CHAT_MODEL, isExtraInstalledModel, statsForAnyModelId, isEmbeddingModelId } from './constants/chatModels.js';
@@ -13,6 +13,7 @@
     isPullInFlight,
     deleteOllamaModel,
   } from './services/chatModelSelection.js';
+  import { CLEAR_CONVERSATION_LABEL } from './services/chatSessionService.svelte.js';
   import ModelDownloadModal from './ModelDownloadModal.svelte';
   import ChatModelCombobox from './ChatModelCombobox.svelte';
 
@@ -20,6 +21,7 @@
   const ts       = getContext('ts');
   const fs       = getContext('fs');
   const settings = getContext('settings');
+  const chatSession = getContext('chatSession');
 
   // ── Props ──────────────────────────────────────────────────────────────────
 
@@ -90,8 +92,6 @@
 
   const inputPlaceholder = PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)];
 
-  // Each message: { role: 'user' | 'assistant', content: string }
-  let messages = $state([]);
   let input = $state('');
   /** Committed chat model id (persisted); used for Ollama chat requests. */
   let model = $state(DEFAULT_CHAT_MODEL);
@@ -318,7 +318,6 @@
     modelDownloadModal = null;
   }
 
-  let isLoading = $state(false);
   let error = $state('');
   // Initialise toggles directly from localStorage so they are correct on first render,
   // avoiding the write-before-read race when effects run in definition order.
@@ -363,11 +362,6 @@
     inputEl?.focus();
   });
 
-  // Titles of notes injected as context for the most recent message.
-  // Empty when notes search is off, failed, or returned nothing.
-  let sourcesUsed = $state([]);
-  let wikiSourcesUsed = $state([]);
-  let notesError = $state('');
 
   // Reference to the scrollable messages container so we can auto-scroll.
   let messagesEl = $state(null);
@@ -376,7 +370,7 @@
   // tick() waits for Svelte to finish updating the DOM before measuring scrollHeight,
   // otherwise we'd scroll to the pre-update height and land one message short.
   $effect(() => {
-    if (messages.length && messagesEl) {
+    if (chatSession.messages.length && messagesEl) {
       tick().then(() => {
         messagesEl.scrollTop = messagesEl.scrollHeight;
       });
@@ -613,7 +607,7 @@
       try {
         matches = await invoke('search_notes', { query: notesSearchQuery });
       } catch (e) {
-        notesError = `Note search failed: ${fmtAppError(e)}`;
+        chatSession.notesError = `Note search failed: ${fmtAppError(e)}`;
       }
       const byTitle = {};
       const pinned = dailyNoteResolution?.note;
@@ -626,7 +620,7 @@
         byTitle[m.title].push(...m.excerpts);
       }
       if (Object.keys(byTitle).length > 0) {
-        sourcesUsed = Object.keys(byTitle);
+        chatSession.sourcesUsed = Object.keys(byTitle);
         const context = Object.entries(byTitle)
           .map(([title, excerpts]) => `[Note: "${title}"]\n${excerpts.join('\n')}`)
           .join('\n\n');
@@ -643,7 +637,7 @@
         // Wikipedia search is best-effort — don't surface errors in the UI.
       }
       if (wikiMatches.length > 0) {
-        wikiSourcesUsed = wikiMatches.map(m => ({
+        chatSession.wikiSourcesUsed = wikiMatches.map(m => ({
           title: m.title,
           bundleId: m.bundle_id,
           articlePath: m.article_id.includes('/') ? m.article_id.slice(m.article_id.indexOf('/') + 1) : m.article_id,
@@ -674,8 +668,8 @@
 
     // ── Assemble system message ──────────────────────────────────────────────
     if (systemParts.length > 0) {
-      const hasWikiContext  = wikiSourcesUsed.length > 0;
-      const hasNotesContext = sourcesUsed.length > 0;
+      const hasWikiContext  = chatSession.wikiSourcesUsed.length > 0;
+      const hasNotesContext = chatSession.sourcesUsed.length > 0;
       const hasFilesContext = fileMatches.length > 0;
       const hasAnyContext   = hasNotesContext || hasWikiContext || hasFilesContext;
 
@@ -763,37 +757,30 @@
       payload = [{ role: 'system', content }, ...history];
     }
 
-    // Push a placeholder assistant message filled in token by token.
-    messages = [...history, { role: 'assistant', content: '' }];
-
-    const unlisten = await listen('chat:token', (event) => {
-      messages = messages.map((m, i) =>
-        i === messages.length - 1
-          ? { ...m, content: m.content + event.payload }
-          : m
-      );
-    });
+    // Push a placeholder assistant message and subscribe to tokens via the session service.
+    await chatSession.beginStream(history);
 
     try {
       await invoke('chat', { model, messages: payload, keepInMemory, temperature, topP: top_p, topK: top_k, repeatPenalty: repeat_penalty, numCtx: num_ctx });
     } finally {
-      unlisten();
+      chatSession.endStream();
     }
   }
 
   async function send() {
     const text = input.trim();
-    if (!text || isLoading) return;
+    if (!text || chatSession.isLoading) return;
 
     // Append the user message before the await so the UI updates immediately.
-    const updated = [...messages, { role: 'user', content: text }];
-    messages = updated;
+    const updated = [...chatSession.messages, { role: 'user', content: text }];
+    chatSession.messages = updated;
     input = '';
-    isLoading = true;
+    chatSession.isLoading = true;
     error = '';
-    sourcesUsed = [];
-    wikiSourcesUsed = [];
-    notesError = '';
+    chatSession.streamError = '';
+    chatSession.sourcesUsed = [];
+    chatSession.wikiSourcesUsed = [];
+    chatSession.notesError = '';
 
     // Load inference params from settings so changes take effect immediately.
     let params = {};
@@ -821,35 +808,34 @@
     try {
       await streamResponse(updated, params);
     } catch (e) {
-      // Remove the empty placeholder if the request failed before any tokens arrived.
-      if (messages.length > 0 && messages[messages.length - 1].role === 'assistant'
-          && messages[messages.length - 1].content === '') {
-        messages = messages.slice(0, -1);
+      if (chatSession.messages.length > 0 && chatSession.messages[chatSession.messages.length - 1].role === 'assistant'
+          && chatSession.messages[chatSession.messages.length - 1].content === '') {
+        chatSession.messages = chatSession.messages.slice(0, -1);
       }
-      error = fmtAppError(e);
+      chatSession.streamError = fmtAppError(e);
     } finally {
-      isLoading = false;
+      chatSession.isLoading = false;
     }
   }
 
   function deleteMessage(index) {
-    if (isLoading) return;
-    messages = messages.filter((_, i) => i !== index);
+    if (chatSession.isLoading) return;
+    chatSession.messages = chatSession.messages.filter((_, i) => i !== index);
   }
 
   async function regenerate() {
-    if (isLoading) return;
-    // Strip the last assistant message so we end on a user message.
-    const history = messages[messages.length - 1]?.role === 'assistant'
-      ? messages.slice(0, -1)
-      : messages;
+    if (chatSession.isLoading) return;
+    const history = chatSession.messages[chatSession.messages.length - 1]?.role === 'assistant'
+      ? chatSession.messages.slice(0, -1)
+      : chatSession.messages;
     if (history.length === 0 || history[history.length - 1]?.role !== 'user') return;
 
-    isLoading = true;
+    chatSession.isLoading = true;
     error = '';
-    sourcesUsed = [];
-    wikiSourcesUsed = [];
-    notesError = '';
+    chatSession.streamError = '';
+    chatSession.sourcesUsed = [];
+    chatSession.wikiSourcesUsed = [];
+    chatSession.notesError = '';
 
     // Load inference params from settings (same as send()).
     let params = {};
@@ -877,13 +863,13 @@
     try {
       await streamResponse(history, params);
     } catch (e) {
-      if (messages.length > 0 && messages[messages.length - 1].role === 'assistant'
-          && messages[messages.length - 1].content === '') {
-        messages = messages.slice(0, -1);
+      if (chatSession.messages.length > 0 && chatSession.messages[chatSession.messages.length - 1].role === 'assistant'
+          && chatSession.messages[chatSession.messages.length - 1].content === '') {
+        chatSession.messages = chatSession.messages.slice(0, -1);
       }
-      error = fmtAppError(e);
+      chatSession.streamError = fmtAppError(e);
     } finally {
-      isLoading = false;
+      chatSession.isLoading = false;
     }
   }
 
@@ -891,7 +877,7 @@
 
   function handleMessageContextMenu(e, msg, i) {
     e.preventDefault();
-    const isLastAssistant = i === messages.length - 1 && msg.role === 'assistant';
+    const isLastAssistant = i === chatSession.messages.length - 1 && msg.role === 'assistant';
 
     const items = [
       {
@@ -912,17 +898,37 @@
       { divider: true },
       ...(isLastAssistant ? [{
         label: 'Regenerate',
-        disabled: isLoading,
+        disabled: chatSession.isLoading,
         action: regenerate,
       }] : []),
       {
         label: 'Delete',
         danger: true,
-        disabled: isLoading,
+        disabled: chatSession.isLoading,
         action: () => deleteMessage(i),
+      },
+      { divider: true },
+      {
+        label: CLEAR_CONVERSATION_LABEL,
+        disabled: chatSession.isLoading,
+        action: () => chatSession.clearConversation(),
       },
     ];
 
+    e.stopPropagation();
+    onContextMenu?.(e.clientX, e.clientY, items);
+  }
+
+  function handlePanelContextMenu(e) {
+    if (/** @type {Element} */ (e.target).closest('.chat-message')) return;
+    e.preventDefault();
+    const items = [
+      {
+        label: CLEAR_CONVERSATION_LABEL,
+        disabled: chatSession.isLoading || chatSession.messages.length === 0,
+        action: () => chatSession.clearConversation(),
+      },
+    ];
     onContextMenu?.(e.clientX, e.clientY, items);
   }
 
@@ -996,7 +1002,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <svelte:window onclick={(e) => { if (chatOptsOpen && !(/** @type {Element} */ (e.target)).closest('.chat-opts-wrap')) chatOptsOpen = false; }} />
 
-<aside class="chat-panel" data-tour="chat">
+<aside class="chat-panel" data-tour="chat" oncontextmenu={handlePanelContextMenu}>
   {#if modelDownloadModal}
     <ModelDownloadModal
       model={modelDownloadModal.model}
@@ -1087,13 +1093,24 @@
         </div>
       {/if}
     </div>
+    <button
+      class="chat-clear-btn"
+      onclick={() => chatSession.clearConversation()}
+      disabled={chatSession.isLoading || chatSession.messages.length === 0}
+      title={CLEAR_CONVERSATION_LABEL}
+      aria-label={CLEAR_CONVERSATION_LABEL}
+    >
+      <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 4h11M5 4V2.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V4M6 7v4M9 7v4M3 4l.75 8.5a1 1 0 0 0 1 .9h5.5a1 1 0 0 0 1-.9L12 4"/>
+      </svg>
+    </button>
     {#if onClose}
       <button class="chat-close-btn" onclick={onClose} aria-label="Close chat">✕</button>
     {/if}
   </div>
 
   <div class="chat-messages" role="log" aria-live="polite" aria-atomic="false" bind:this={messagesEl}>
-    {#each messages as msg, i (i)}
+    {#each chatSession.messages as msg, i (i)}
       {#if msg.role !== 'assistant' || msg.content !== ''}
         <div class="chat-message {msg.role}" role="listitem" oncontextmenu={(e) => handleMessageContextMenu(e, msg, i)}>
           {#if msg.role === 'assistant'}
@@ -1107,30 +1124,30 @@
       <p class="chat-empty">Consult the grimoire.</p>
     {/each}
 
-    {#if isLoading && (messages.length === 0 || messages[messages.length - 1]?.role !== 'assistant' || messages[messages.length - 1]?.content === '')}
+    {#if chatSession.isLoading && (chatSession.messages.length === 0 || chatSession.messages[chatSession.messages.length - 1]?.role !== 'assistant' || chatSession.messages[chatSession.messages.length - 1]?.content === '')}
       <div class="chat-message assistant loading">
         <p>Thinking…</p>
       </div>
     {/if}
   </div>
 
-  {#if notesError}
-    <p class="chat-error">{notesError}</p>
+  {#if chatSession.notesError}
+    <p class="chat-error">{chatSession.notesError}</p>
   {/if}
 
-  {#if error}
-    <p class="chat-error">{error}</p>
+  {#if error || chatSession.streamError}
+    <p class="chat-error">{error || chatSession.streamError}</p>
   {/if}
 
-  {#if sourcesUsed.length > 0 || wikiSourcesUsed.length > 0}
-    {#if !isLoading}
+  {#if chatSession.sourcesUsed.length > 0 || chatSession.wikiSourcesUsed.length > 0}
+    {#if !chatSession.isLoading}
     <details class="chat-sources">
-      <summary class="chat-sources-summary">Sources ({sourcesUsed.length + wikiSourcesUsed.length})</summary>
+      <summary class="chat-sources-summary">Sources ({chatSession.sourcesUsed.length + chatSession.wikiSourcesUsed.length})</summary>
       <div class="chat-sources-pills">
-        {#each sourcesUsed as title}
+        {#each chatSession.sourcesUsed as title}
           <span class="chat-source-pill">{title}</span>
         {/each}
-        {#each wikiSourcesUsed as src}
+        {#each chatSession.wikiSourcesUsed as src}
           <button
             class="chat-source-pill chat-source-wiki"
             onclick={() => onOpenWikipediaArticle?.(src.bundleId, src.articlePath, src.title)}
@@ -1190,8 +1207,8 @@
       placeholder={inputPlaceholder}
       aria-label="Message"
       rows="6"
-      disabled={isLoading || !chatEnabled}
+      disabled={chatSession.isLoading || !chatEnabled}
     ></textarea>
-    <button onclick={send} disabled={isLoading || !input.trim() || !chatEnabled} aria-busy={isLoading}>Send</button>
+    <button onclick={send} disabled={chatSession.isLoading || !input.trim() || !chatEnabled} aria-busy={chatSession.isLoading}>Send</button>
   </div>
 </aside>
