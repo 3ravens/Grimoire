@@ -11,6 +11,7 @@
         exportNotePdfPrint,
     } from "./utils/noteExportActions.js";
     import { applyEditorTab } from "./utils/editorIndent.js";
+    import { editorReadableStats } from "./utils/readableText.js";
 
     const ns = getContext("ns");
     const ts = getContext("ts");
@@ -86,12 +87,20 @@
     const activeTab = $derived(
         ts.tabs.find((t) => t.id === ts.activeTabId) ?? null,
     );
-    const wordCount = $derived(
-        ns.editorContent
-            ? ns.editorContent.trim().split(/\s+/).filter(Boolean).length
-            : 0,
+    const readableStats = $derived(
+        editorReadableStats({
+            locked: ns.activeNote?.locked,
+            body: ns.editorContent,
+            wpm: settings.readingWpm,
+        }),
     );
-    const readingTime = $derived(Math.max(1, Math.round(wordCount / 200)));
+    const wordCount = $derived(readableStats?.wordCount ?? 0);
+    const readingTime = $derived(readableStats?.readingMinutes ?? 0);
+    const wordCountLabel = $derived(
+        readableStats
+            ? `${wordCount} word${wordCount === 1 ? "" : "s"} · ${readingTime} min`
+            : "",
+    );
 
     let propertiesReady = $state(!ns.activeNote?.folder_id);
     let loadedNoteId = ns.activeNote?.id ?? null;
@@ -353,9 +362,9 @@
             title="Close note"
             onclick={onCloseNote}>✕</button
         >
-        <span class="word-count"
-            >{wordCount} word{wordCount === 1 ? "" : "s"} · {readingTime} min</span
-        >
+        {#if readableStats}
+            <span class="word-count" aria-label={wordCountLabel}>{wordCountLabel}</span>
+        {/if}
     </div>
 </div>
 

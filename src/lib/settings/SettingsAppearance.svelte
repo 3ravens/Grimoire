@@ -3,6 +3,7 @@
     theme = 'system', onThemeChange = () => {},
     accent = 'default', onAccentChange = () => {},
     dateFormat = 'DD-MM-YYYY', onDateFormatChange = () => {},
+    readingWpm = 200, onReadingWpmChange = () => {},
   } = $props();
 
   /** Client-only unique ids (Svelte does not ship `useId` on our toolchain). */
@@ -114,4 +115,24 @@
     <option value="YYYY-MM-DD">YYYY-MM-DD</option>
     <option value="MM-DD-YYYY">MM-DD-YYYY</option>
   </select>
+</div>
+
+<div class="setting-row">
+  <div class="setting-label">
+    <label class="setting-name" for="reading-wpm-input">Reading speed (WPM)</label>
+    <span class="setting-desc">
+      Used for the note toolbar reading time. Word count is based on readable words in the current note body.
+    </span>
+  </div>
+  <input
+    id="reading-wpm-input"
+    type="number"
+    class="setting-num"
+    min="50"
+    max="600"
+    step="1"
+    value={readingWpm}
+    aria-label="Reading speed in words per minute"
+    onchange={(e) => onReadingWpmChange(e.currentTarget.value)}
+  />
 </div>

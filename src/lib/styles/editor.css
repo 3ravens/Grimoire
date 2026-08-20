@@ -93,7 +93,7 @@
   color: var(--text);
   opacity: 0.45;
   white-space: nowrap;
-  margin-left: 4px;
+  margin-inline-start: 4px;
   pointer-events: none;
   user-select: none;
 }

@@ -33,6 +33,8 @@
     onThemeChange = () => {},
     dateFormat = 'DD-MM-YYYY',
     onDateFormatChange = () => {},
+    readingWpm = 200,
+    onReadingWpmChange = () => {},
     devNativeContextMenu = false,
     onDevNativeContextMenuChange = () => {},
     llmEnabled = false,
@@ -104,7 +106,7 @@
         {:else if activeSection === 'hardware'}
           <SettingsHardware {llmEnabled} {onHardwareChange} />
         {:else if activeSection === 'appearance'}
-          <SettingsAppearance {theme} {onThemeChange} {accent} {onAccentChange} {dateFormat} {onDateFormatChange} />
+          <SettingsAppearance {theme} {onThemeChange} {accent} {onAccentChange} {dateFormat} {onDateFormatChange} {readingWpm} {onReadingWpmChange} />
         {:else if activeSection === 'security'}
           <SettingsSecurity {vaultHasPassword} {onSetVaultPassword} {onChangeVaultPassword} {onRemoveVaultPassword} {onLockVault} />
         {:else if activeSection === 'data'}

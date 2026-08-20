@@ -40,6 +40,7 @@
     import { createChatSessionService } from "./lib/services/chatSessionService.svelte.js";
     import { folderSubtreeIds } from "./lib/utils/folderTree.js";
     import { createKeyboardService } from "./lib/services/keyboardService.svelte.js";
+    import { normalizeReadingWpm } from "./lib/utils/readableText.js";
     import {
         FIRST_START_TOUR_SETTING_KEY,
         FIRST_START_TOUR_STEPS,
@@ -392,6 +393,28 @@
         return ns.loadAllTags();
     }
 
+    async function loadReadingWpmSetting() {
+        try {
+            const value = await invoke("get_setting", { key: "reading_wpm" });
+            settings.readingWpm = normalizeReadingWpm(value);
+        } catch {
+            settings.readingWpm = normalizeReadingWpm(undefined);
+        }
+    }
+
+    async function saveReadingWpmSetting(value) {
+        const normalized = normalizeReadingWpm(value);
+        settings.readingWpm = normalized;
+        try {
+            await invoke("set_setting", {
+                key: "reading_wpm",
+                value: String(normalized),
+            });
+        } catch (e) {
+            err.showError(e);
+        }
+    }
+
     async function loadMainShellAfterUnlock() {
         await Promise.all([loadFolders(), loadNotes(), restoreTabs()]);
         if (ts.tabs.length === 0) newTab();
@@ -418,6 +441,8 @@
                 settings.wizardAiSkipped = v === "true";
             })
             .catch(() => {});
+
+        void loadReadingWpmSetting();
 
         void refreshVaultReindexBanner();
         void refreshAppDataMigrationBanner();
@@ -1764,6 +1789,8 @@
             onThemeChange={(v) => (settings.theme = v)}
             dateFormat={settings.dailyNoteFormat}
             onDateFormatChange={(v) => (settings.dailyNoteFormat = v)}
+            readingWpm={settings.readingWpm}
+            onReadingWpmChange={saveReadingWpmSetting}
             devNativeContextMenu={settings.devNativeContextMenu}
             onDevNativeContextMenuChange={(v) =>
                 (settings.devNativeContextMenu = v)}

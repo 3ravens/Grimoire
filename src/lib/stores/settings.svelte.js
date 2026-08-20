@@ -6,6 +6,7 @@ export function createSettings() {
   let accent = $state(localStorage.getItem('accent') ?? 'default');
   let theme  = $state(localStorage.getItem('theme')  ?? 'system');
   let dailyNoteFormat = $state(localStorage.getItem('dailyNoteFormat') ?? 'DD-MM-YYYY');
+  let readingWpm = $state(200);
   let devNativeContextMenu = $state(
     import.meta.env.DEV ? (localStorage.getItem('devNativeContextMenu') === 'true') : false
   );
@@ -70,6 +71,8 @@ export function createSettings() {
     set theme(v) { theme = v; },
     get dailyNoteFormat() { return dailyNoteFormat; },
     set dailyNoteFormat(v) { dailyNoteFormat = v; },
+    get readingWpm() { return readingWpm; },
+    set readingWpm(v) { readingWpm = v; },
     get devNativeContextMenu() { return devNativeContextMenu; },
     set devNativeContextMenu(v) { devNativeContextMenu = v; },
     get hwCapability() { return hwCapability; },
