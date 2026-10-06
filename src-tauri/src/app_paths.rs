@@ -190,23 +190,25 @@ mod tests {
 
     #[test]
     fn debug_guard_rewrites_production_folder_name() {
-        let prod = PathBuf::from(r"C:\Users\me\AppData\Roaming\com.grimoire.app");
+        // Use Path::join so the final component is correct on Windows and Unix
+        // (a raw `C:\...\com.grimoire.app` string is one component on Unix).
+        let prod = PathBuf::from("Roaming").join(PRODUCTION_APP_DATA_DIR_NAME);
         let rewritten = debug_guard_rewrite_for_test(prod);
         assert_eq!(
             rewritten,
-            PathBuf::from(r"C:\Users\me\AppData\Roaming\com.grimoire.app.dev")
+            PathBuf::from("Roaming").join(DEV_APP_DATA_DIR_NAME)
         );
         assert!(!is_production_app_data_dir_name(&rewritten));
     }
 
     #[test]
     fn debug_guard_leaves_dev_and_other_folders_alone() {
-        let already_dev = PathBuf::from(r"C:\Users\me\AppData\Roaming\com.grimoire.app.dev");
+        let already_dev = PathBuf::from("Roaming").join(DEV_APP_DATA_DIR_NAME);
         assert_eq!(
             debug_guard_rewrite_for_test(already_dev.clone()),
             already_dev
         );
-        let other = PathBuf::from(r"C:\temp\sandbox");
+        let other = PathBuf::from("temp").join("sandbox");
         assert_eq!(debug_guard_rewrite_for_test(other.clone()), other);
     }
 
