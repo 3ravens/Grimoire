@@ -1,7 +1,8 @@
 <script>
+  import { t } from './i18n/t.js';
   import { tick } from 'svelte';
 
-  let { x = 0, y = 0, label = 'What should the LLM improve?', onSend, onCancel } = $props();
+  let { x = 0, y = 0, label = t('views.improveDefaultLabel'), onSend, onCancel } = $props();
 
   let instruction = $state('');
 
@@ -39,12 +40,12 @@
     bind:this={textareaEl}
     bind:value={instruction}
     onkeydown={handleKeydown}
-    placeholder='E.g. "Fix grammar and spelling", "Make it more concise", "Restructure into bullet points"'
-    aria-label="Improvement instruction"
+    placeholder={t('views.improvePlaceholder')}
+    aria-label={t('views.improveInstructionAria')}
   ></textarea>
   <div class="improve-popover-actions">
-    <button onclick={onCancel}>Cancel</button>
-    <button class="primary" disabled={!instruction.trim()} onclick={submit}>Improve</button>
+    <button onclick={onCancel}>{t('common.cancel')}</button>
+    <button class="primary" disabled={!instruction.trim()} onclick={submit}>{t('views.improveBtn')}</button>
   </div>
 </div>
 

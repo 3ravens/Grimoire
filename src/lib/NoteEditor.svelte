@@ -11,7 +11,14 @@
         exportNotePdfPrint,
     } from "./utils/noteExportActions.js";
     import { applyEditorTab } from "./utils/editorIndent.js";
+    import {
+        applyChecklistToggle,
+        applyListEnter,
+        applyListTab,
+        toggleChecklistAtIndex,
+    } from "./utils/editorLists.js";
     import { editorReadableStats } from "./utils/readableText.js";
+    import { t, tp } from "./i18n/t.js";
 
     const ns = getContext("ns");
     const ts = getContext("ts");
@@ -22,8 +29,8 @@
     const llmImproveDisabled = $derived(!settings.llmEnabled);
     const improveTooltip = $derived(
         llmImproveDisabled
-            ? "AI features are disabled for this hardware — enable in Settings → Hardware"
-            : "Suggest improvements",
+            ? t("notes.improveDisabled")
+            : t("notes.suggestImprovements"),
     );
 
     // ── Composed callbacks (still provided by the coordinator) ────────────────
@@ -98,7 +105,7 @@
     const readingTime = $derived(readableStats?.readingMinutes ?? 0);
     const wordCountLabel = $derived(
         readableStats
-            ? `${wordCount} word${wordCount === 1 ? "" : "s"} · ${readingTime} min`
+            ? tp("editor.wordCountLabel", wordCount, { readingTime })
             : "",
     );
 
@@ -138,6 +145,7 @@
         let cancelled = false;
         renderTransclusionMarkdownToHtml(content ?? "", {
             rootNoteId: rootId,
+            interactiveChecklists: !ns.activeNote?.locked,
         }).then((html) => {
             if (!cancelled) readModeHtml = html;
         });
@@ -146,23 +154,86 @@
         };
     });
 
-    // ── Editor keydown (Tab indent + wiki-link brackets) ──────────────────────
+    function handleReadModeChecklistChange(e) {
+        if (ns.activeNote?.locked) return;
+        const target = /** @type {EventTarget | null} */ (e.target);
+        if (!(target instanceof HTMLInputElement)) return;
+        if (target.type !== "checkbox") return;
+        const raw = target.getAttribute("data-checklist-index");
+        if (raw == null) return;
+        const index = Number(raw);
+        if (!Number.isInteger(index)) return;
+
+        const next = toggleChecklistAtIndex(ns.editorContent ?? "", index);
+        if (!next) return;
+        ns.editorContent = next.value;
+        ns.markDirty();
+        onSave?.();
+    }
+
+    // ── Editor keydown (lists, Tab indent, wiki-link brackets) ────────────────
+    function applyEditorEdit(el, next) {
+        ns.editorContent = next.value;
+        // Sync the DOM immediately so caret restore is not racing the bind effect.
+        el.value = next.value;
+        ns.markDirty();
+        el.selectionStart = next.selectionStart;
+        el.selectionEnd = next.selectionEnd;
+    }
+
+    function isEnterKey(e) {
+        return (
+            e.key === "Enter" ||
+            e.code === "Enter" ||
+            e.code === "NumpadEnter"
+        );
+    }
+
     function handleEditorKeydown(e) {
         const el = /** @type {HTMLTextAreaElement} */ (e.currentTarget);
         const { selectionStart: start, selectionEnd: end, value } = el;
 
-        // Tab / Shift+Tab: indent in the note instead of leaving the textarea.
+        // Ctrl/Cmd+Enter: toggle checklist on the current line.
+        // Always preventDefault so the browser does not insert a newline.
+        if (
+            isEnterKey(e) &&
+            (e.ctrlKey || e.metaKey) &&
+            !e.shiftKey &&
+            !e.altKey
+        ) {
+            e.preventDefault();
+            e.stopPropagation();
+            const next = applyChecklistToggle(value, start, end);
+            if (next) applyEditorEdit(el, next);
+            return;
+        }
+
+        // Enter: continue / exit / split Markdown list items.
+        if (
+            isEnterKey(e) &&
+            !e.ctrlKey &&
+            !e.metaKey &&
+            !e.altKey &&
+            !e.shiftKey
+        ) {
+            const listNext = applyListEnter(value, start, end);
+            if (listNext) {
+                e.preventDefault();
+                applyEditorEdit(el, listNext);
+            }
+            return;
+        }
+
+        // Tab / Shift+Tab: nest list lines, otherwise soft-indent.
         if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey) {
             e.preventDefault();
-            const next = applyEditorTab(value, start, end, {
+            const listNext = applyListTab(value, start, end, {
                 shiftKey: e.shiftKey,
             });
-            ns.editorContent = next.value;
-            ns.markDirty();
-            requestAnimationFrame(() => {
-                el.selectionStart = next.selectionStart;
-                el.selectionEnd = next.selectionEnd;
-            });
+            const next =
+                listNext ??
+                applyEditorTab(value, start, end, { shiftKey: e.shiftKey });
+            applyEditorEdit(el, next);
             return;
         }
 
@@ -198,12 +269,12 @@
         class="title-input"
         bind:value={ns.editorTitle}
         oninput={ns.markDirty}
-        placeholder="Note title"
-        aria-label="Note title"
+        placeholder={t("notes.noteTitlePlaceholder")}
+        aria-label={t("notes.noteTitleAria")}
     />
     <div class="toolbar-actions">
         <label>
-            Move to:
+            {t("notes.moveTo")}
             <select
                 onchange={(e) => {
                     const v = /** @type {HTMLSelectElement} */ (e.target).value;
@@ -213,7 +284,7 @@
                     );
                 }}
             >
-                <option value="null">Unfiled</option>
+                <option value="null">{t("folders.unfiled")}</option>
                 {#each fs.folders as f (f.id)}
                     <option
                         value={f.id}
@@ -230,33 +301,33 @@
             class:index-error={!ns.isDirty && ns.indexState === "error"}
         >
             {ns.isDirty
-                ? "Save (Ctrl+S)"
+                ? t("notes.saveShortcut")
                 : ns.indexState === "indexing"
-                  ? "Indexing…"
+                  ? t("notes.indexing")
                   : ns.indexState === "error"
-                    ? "⚠ Index failed"
-                    : "Saved"}
+                    ? t("notes.indexFailedIcon")
+                    : t("notes.saved")}
         </button>
         <span class="sr-only" aria-live="polite" aria-atomic="true">
             {ns.isDirty
-                ? "Unsaved changes"
+                ? t("notes.unsaved")
                 : ns.indexState === "indexing"
-                  ? "Indexing"
+                  ? t("notes.indexingShort")
                   : ns.indexState === "error"
-                    ? "Index failed"
-                    : "Saved"}
+                    ? t("notes.indexFailed")
+                    : t("notes.saved")}
         </span>
         {#if fs.folderHasProperties}
             <button
                 class="graph-toggle"
-                aria-label="Switch to table view"
-                onclick={onOpenTableView}>← Table</button
+                aria-label={t("notes.switchTable")}
+                onclick={onOpenTableView}>{t("notes.tableBack")}</button
             >
         {/if}
         {#if ns.activeNote.folder_id != null && fs.folders.some((f) => f.id === ns.activeNote.folder_id)}
             <button
                 class="graph-toggle"
-                aria-label="Switch to board view"
+                aria-label={t("notes.switchBoard")}
                 onclick={() =>
                     onOpenKanbanTab?.(
                         ns.activeNote.folder_id,
@@ -264,25 +335,25 @@
                             ?.name ?? "",
                     )}
             >
-                ← Board
+                {t("notes.boardBack")}
             </button>
         {/if}
         {#if ns.activeNote.folder_id}
             <button
                 class="graph-toggle"
                 onclick={() => onRevealFolder?.(ns.activeNote.folder_id)}
-                title="Reveal in folder panel"
-                aria-label="Reveal in folder panel">Reveal</button
+                title={t("notes.revealInFolders")}
+                aria-label={t("notes.revealInFolders")}>{t("notes.reveal")}</button
             >
         {/if}
         <button
             class="graph-toggle"
-            aria-label="Suggest improvements"
+            aria-label={t("notes.suggestImprovements")}
             title={improveTooltip}
             onclick={is.startImprove}
             disabled={llmImproveDisabled || is.improveState.status !== "idle" || !ns.editorContent}
         >
-            Improve
+            {t("notes.improve")}
         </button>
         {#if !ns.activeNote.locked}
             <details
@@ -294,9 +365,9 @@
                     class="graph-toggle export-summary"
                     aria-haspopup="menu"
                     aria-expanded={exportMenuOpen}
-                    aria-label="Export note"
-                    title="Export note"
-                    >Export</summary
+                    aria-label={t("notes.exportNote")}
+                    title={t("notes.exportNote")}
+                    >{t("common.export")}</summary
                 >
                 <div class="toolbar-export-menu" role="menu" tabindex="-1" onkeydown={handleExportMenuKeydown}>
                     <button
@@ -312,7 +383,7 @@
                             });
                             closeExportMenu();
                         }}
-                        >Markdown…</button
+                        >{t("contextMenu.markdown")}</button
                     >
                     <button
                         type="button"
@@ -327,7 +398,7 @@
                             });
                             closeExportMenu();
                         }}
-                        >HTML…</button
+                        >{t("contextMenu.html")}</button
                     >
                     <button
                         type="button"
@@ -342,7 +413,7 @@
                             });
                             closeExportMenu();
                         }}
-                        >PDF…</button
+                        >{t("contextMenu.pdf")}</button
                     >
                 </div>
             </details>
@@ -350,16 +421,16 @@
         <button
             class="graph-toggle"
             aria-label={activeTab?.readMode
-                ? "Switch to edit mode"
-                : "Switch to read mode"}
+                ? t("notes.editMode")
+                : t("notes.readMode")}
             onclick={ts.toggleReadMode}
         >
-            {activeTab?.readMode ? "Edit" : "Read"}
+            {activeTab?.readMode ? t("notes.editModeShort") : t("notes.readModeShort")}
         </button>
         <button
             class="close-note-btn"
-            aria-label="Close note"
-            title="Close note"
+            aria-label={t("notes.closeNote")}
+            title={t("notes.closeNote")}
             onclick={onCloseNote}>✕</button
         >
         {#if readableStats}
@@ -407,17 +478,20 @@
             class="content-area"
             style="overflow-y: auto; white-space: pre-wrap; font-family: var(--mono); padding: 24px;"
         >
-            {is.improveState.improvedText || "Thinking\u2026"}
+            {is.improveState.improvedText || t("notes.improveThinking")}
         </div>
     {:else if activeTab?.readMode}
-        <div class="content-area read-mode-content">
+        <div
+            class="content-area read-mode-content"
+            onchange={handleReadModeChecklistChange}
+        >
             {@html readModeHtml}
         </div>
     {:else}
         <NoteBodyTextarea
             noteId={ns.activeNote.id}
             bind:value={ns.editorContent}
-            onkeydown={handleEditorKeydown}
+            onkeydown={(e) => handleEditorKeydown(e)}
         />
     {/if}
 {/if}
@@ -435,7 +509,7 @@
     <ImprovePopover
         x={is.refineState.x}
         y={is.refineState.y}
-        label="How should this section be refined?"
+        label={t("notes.refineSectionLabel")}
         onSend={is.handleRefineSend}
         onCancel={is.handleRefineCancel}
     />
@@ -445,7 +519,7 @@
     <div class="note-footer">
         {#if ns.noteLinks.length > 0}
             <div class="note-footer-section">
-                <span class="note-footer-label">Links</span>
+                <span class="note-footer-label">{t("notes.links")}</span>
                 {#each ns.noteLinks as link}
                     <button
                         class="link-pill"
@@ -457,7 +531,7 @@
         {/if}
         {#if ns.noteBacklinks.length > 0}
             <div class="note-footer-section">
-                <span class="note-footer-label">Backlinks</span>
+                <span class="note-footer-label">{t("notes.backlinks")}</span>
                 {#each ns.noteBacklinks as link}
                     <button
                         class="link-pill"
@@ -469,7 +543,7 @@
         {/if}
         {#if ns.unlinkedMentions.length > 0}
             <div class="note-footer-section">
-                <span class="note-footer-label">Unlinked mentions</span>
+                <span class="note-footer-label">{t("notes.unlinkedMentions")}</span>
                 {#each ns.unlinkedMentions as mention}
                     <span class="link-pill-group">
                         <button
@@ -480,7 +554,7 @@
                         <button
                             class="link-pill-action"
                             onclick={() => onConvertMention?.(mention)}
-                            title="Convert to wiki-link">→ link</button
+                            title={t("notes.convertToWikiLink")}>{t("notes.convertToLink")}</button
                         >
                     </span>
                 {/each}

@@ -1,6 +1,7 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
   import { focusTrap } from './utils/focusTrap.js';
+  import { t } from './i18n/t.js';
 
   /**
    * @type {{
@@ -67,18 +68,18 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
-<div class="qs-backdrop" onclick={onClose} role="dialog" aria-modal="true" aria-label="Quick Switcher" tabindex="-1">
+<div class="qs-backdrop" onclick={onClose} role="dialog" aria-modal="true" aria-label={t('views.quickSwitcherAria')} tabindex="-1">
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="qs-panel" use:focusTrap onclick={(e) => e.stopPropagation()}>
     <input
       bind:this={inputEl}
       bind:value={query}
       class="qs-input"
-      placeholder="Search notes…"
+      placeholder={t('views.searchNotesPlaceholder')}
       autocomplete="off"
       spellcheck="false"
       onkeydown={handleKeydown}
-      aria-label="Search notes"
+      aria-label={t('views.searchNotesAria')}
       aria-autocomplete="list"
       aria-controls="qs-results"
     />
@@ -97,7 +98,7 @@
           >{note.title}</button>
         </li>
       {:else}
-        <li class="qs-empty">No matching notes</li>
+        <li class="qs-empty">{t('views.noMatchingNotes')}</li>
       {/each}
     </ul>
   </div>

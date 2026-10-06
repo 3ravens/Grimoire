@@ -1,4 +1,5 @@
 <script>
+  import { t } from './i18n/t.js';
   import { focusTrap } from './utils/focusTrap.js';
 
   let { onDismiss } = $props();
@@ -26,19 +27,19 @@
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="modal" use:focusTrap onclick={(e) => e.stopPropagation()}>
     <div class="modal-header">
-      <h2 id="privacy-egg-title" class="modal-title">Privacy policy</h2>
-      <button type="button" class="close-btn" onclick={onDismiss} aria-label="Close">✕</button>
+      <h2 id="privacy-egg-title" class="modal-title">{t('views.privacyTitle')}</h2>
+      <button type="button" class="close-btn" onclick={onDismiss} aria-label={t("common.close")}>✕</button>
     </div>
 
     <div class="modal-body">
-      <p class="policy-line"><strong>Data we track:</strong></p>
+      <p class="policy-line"><strong>{t('views.privacyDataWeTrack')}</strong></p>
       <ul class="policy-list">
-        <li>nothing</li>
+        <li>{t('views.privacyNothing')}</li>
       </ul>
     </div>
 
     <div class="modal-actions">
-      <button type="button" class="btn-dismiss" bind:this={dismissBtn} onclick={onDismiss}>Got it</button>
+      <button type="button" class="btn-dismiss" bind:this={dismissBtn} onclick={onDismiss}>{t('views.privacyGotIt')}</button>
     </div>
   </div>
 </div>

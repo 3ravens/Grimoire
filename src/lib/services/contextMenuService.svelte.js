@@ -5,6 +5,7 @@ import {
   exportNotePdfPrint,
   resolveExportPayload,
 } from "../utils/noteExportActions.js";
+import { t } from "../i18n/t.js";
 
 /**
  * Context menu state and logic.
@@ -106,17 +107,17 @@ export function createContextMenuService(deps) {
     let items = /** @type {any[]} */ ([]);
 
     if (createNoteBtn) {
-      items = tmpl.templates.map((t) => ({
-        label: t.name,
-        action: () => startNoteInline(t.id),
+      items = tmpl.templates.map((tmplItem) => ({
+        label: tmplItem.name,
+        action: () => startNoteInline(tmplItem.id),
       }));
     } else if (tabEl) {
       const tabId = /** @type {HTMLElement} */ (tabEl).dataset.tabId;
       items = [
-        { label: "Close", action: () => closeTab(tabId) },
-        { label: "Close Others", action: () => closeOtherTabs(tabId) },
+        { label: t("contextMenu.close"), action: () => closeTab(tabId) },
+        { label: t("contextMenu.closeOthers"), action: () => closeOtherTabs(tabId) },
         {
-          label: "Rename",
+          label: t("contextMenu.rename"),
           action: () => startTabRenameExternal(tabId),
         },
       ];
@@ -128,11 +129,11 @@ export function createContextMenuService(deps) {
       const payload = note ? resolveExportPayload(ns, note) : null;
       items = [
         {
-          label: "Open in New Tab",
+          label: t("contextMenu.openInNewTab"),
           action: () => note && openNoteInNewTab(note),
         },
         {
-          label: "Duplicate",
+          label: t("contextMenu.duplicate"),
           action: async () => {
             try {
               await invoke("duplicate_note", { id: noteId });
@@ -145,10 +146,10 @@ export function createContextMenuService(deps) {
         ...(note && payload
           ? [
               {
-                label: "Export",
+                label: t("contextMenu.export"),
                 submenu: [
                   {
-                    label: "Markdown…",
+                    label: t("contextMenu.markdown"),
                     action: () =>
                       exportNoteMarkdown({
                         noteId,
@@ -158,7 +159,7 @@ export function createContextMenuService(deps) {
                       }),
                   },
                   {
-                    label: "HTML…",
+                    label: t("contextMenu.html"),
                     action: () =>
                       exportNoteHtml({
                         noteId,
@@ -168,7 +169,7 @@ export function createContextMenuService(deps) {
                       }),
                   },
                   {
-                    label: "PDF…",
+                    label: t("contextMenu.pdf"),
                     action: () =>
                       exportNotePdfPrint({
                         noteId,
@@ -184,16 +185,16 @@ export function createContextMenuService(deps) {
         { divider: true },
         bm.bookmarkedNoteIds.has(noteId)
           ? {
-              label: "Remove from Bookmarks",
+              label: t("contextMenu.removeFromBookmarks"),
               action: () => bm.removeBookmark(noteId),
             }
           : {
-              label: "Add to Bookmarks",
+              label: t("contextMenu.addToBookmarks"),
               action: () => bm.addBookmark(noteId),
             },
         { divider: true },
         {
-          label: "Delete",
+          label: t("contextMenu.delete"),
           action: () => deleteNote(noteId),
           danger: true,
         },
@@ -206,36 +207,36 @@ export function createContextMenuService(deps) {
         if (folder && !folder.locked) {
           items = [
             {
-              label: "Open as Table",
+              label: t("contextMenu.openAsTable"),
               action: async () => {
                 await selectFolder(folderId);
                 ts.tableViewOpen = true;
               },
             },
             {
-              label: "Open as Kanban",
+              label: t("contextMenu.openAsKanban"),
               action: () => openKanbanTab(folderId, folder.name),
             },
             { divider: true },
             ...(folder.password_protected && !folder.locked
               ? [
                   {
-                    label: "Lock folder",
+                    label: t("contextMenu.lockFolder"),
                     action: () => void lockFolderSession(folderId),
                   },
                 ]
               : []),
             fs.unlockedFolderIds.has(folderId)
               ? {
-                  label: "Remove password",
+                  label: t("contextMenu.removePassword"),
                   action: () => fs.openFolderPwModal(folderId, "remove"),
                 }
               : {
-                  label: "Set password",
+                  label: t("contextMenu.setPassword"),
                   action: () => fs.openFolderPwModal(folderId, "set"),
                 },
             {
-              label: "Delete",
+              label: t("contextMenu.delete"),
               action: () => deleteFolder(folderId),
               danger: true,
             },
@@ -253,37 +254,37 @@ export function createContextMenuService(deps) {
       const formatSubmenu = hasSel
         ? [
             {
-              label: "Bold",
+              label: t("contextMenu.bold"),
               action: () => applyInlineFormat(start, end, val, "**", "**"),
             },
             {
-              label: "Italic",
+              label: t("contextMenu.italic"),
               action: () => applyInlineFormat(start, end, val, "*", "*"),
             },
             {
-              label: "Strikethrough",
+              label: t("contextMenu.strikethrough"),
               action: () => applyInlineFormat(start, end, val, "~~", "~~"),
             },
             {
-              label: "Inline Code",
+              label: t("contextMenu.inlineCode"),
               action: () => applyInlineFormat(start, end, val, "`", "`"),
             },
             { divider: true },
             {
-              label: "Heading 1",
+              label: t("contextMenu.heading1"),
               action: () => applyLinePrefix(start, end, val, "# "),
             },
             {
-              label: "Heading 2",
+              label: t("contextMenu.heading2"),
               action: () => applyLinePrefix(start, end, val, "## "),
             },
             {
-              label: "Heading 3",
+              label: t("contextMenu.heading3"),
               action: () => applyLinePrefix(start, end, val, "### "),
             },
             { divider: true },
             {
-              label: "Code Block",
+              label: t("contextMenu.codeBlock"),
               action: () =>
                 applyInlineFormat(start, end, val, "```\n", "\n```"),
             },
@@ -292,10 +293,10 @@ export function createContextMenuService(deps) {
 
       items = [
         ...(hasSel
-          ? [{ label: "Format", submenu: formatSubmenu }, { divider: true }]
+          ? [{ label: t("contextMenu.format"), submenu: formatSubmenu }, { divider: true }]
           : []),
         {
-          label: "Cut",
+          label: t("contextMenu.cut"),
           disabled: !hasSel,
           action: () => {
             navigator.clipboard.writeText(selText);
@@ -304,12 +305,12 @@ export function createContextMenuService(deps) {
           },
         },
         {
-          label: "Copy",
+          label: t("contextMenu.copy"),
           disabled: !hasSel,
           action: () => navigator.clipboard.writeText(selText),
         },
         {
-          label: "Paste",
+          label: t("contextMenu.paste"),
           action: async () => {
             const text = await navigator.clipboard.readText();
             ns.editorContent = val.slice(0, start) + text + val.slice(end);
@@ -320,14 +321,14 @@ export function createContextMenuService(deps) {
           ? [
               { divider: true },
               {
-                label: "Send to Chat",
+                label: t("contextMenu.sendToChat"),
                 action: () => sendSelectionToChat(),
               },
             ]
           : []),
         { divider: true },
         {
-          label: "Suggest improvements",
+          label: t("contextMenu.suggestImprovements"),
           action: () => is.startImprove(),
           disabled: !settings.llmEnabled || !ns.editorContent || is.improveState.status !== "idle",
         },

@@ -1,5 +1,6 @@
 <script>
   import { focusTrap } from './utils/focusTrap.js';
+  import { t } from './i18n/t.js';
   /**
    * PasswordModal — reusable modal for password prompts.
    *
@@ -17,7 +18,7 @@
     title,
     onSubmit,
     onCancel,
-    confirmLabel = 'Confirm',
+    confirmLabel = t('modals.passwordConfirm'),
     warning = '',
     requireAck = false,
   } = $props();
@@ -40,7 +41,7 @@
     try {
       const result = await onSubmit(password);
       if (result === false) {
-        error = 'Incorrect password.';
+        error = t('modals.passwordIncorrect');
         password = '';
       }
       // On success (true or undefined), the parent dismisses the modal.
@@ -75,7 +76,7 @@
     {#if requireAck}
       <label class="modal-ack" for="pw-modal-ack">
         <input id="pw-modal-ack" type="checkbox" bind:checked={acked} />
-        I understand
+        {t('modals.passwordAck')}
       </label>
     {/if}
 
@@ -84,8 +85,8 @@
       type="password"
       bind:value={password}
       onkeydown={handleKeydown}
-      placeholder="Password…"
-      aria-label="Password"
+      placeholder={t('modals.passwordPlaceholder')}
+      aria-label={t('modals.passwordAria')}
       disabled={loading}
     />
 
@@ -94,13 +95,13 @@
     {/if}
 
     <div class="modal-actions">
-      <button class="modal-cancel" onclick={onCancel} disabled={loading}>Cancel</button>
+      <button class="modal-cancel" onclick={onCancel} disabled={loading}>{t('modals.passwordCancel')}</button>
       <button
         class="modal-confirm"
         onclick={submit}
         disabled={loading || !password || (requireAck && !acked)}
       >
-        {loading ? 'Working…' : confirmLabel}
+        {loading ? t('modals.passwordWorking') : confirmLabel}
       </button>
     </div>
   </div>

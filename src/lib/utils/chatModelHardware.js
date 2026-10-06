@@ -1,4 +1,5 @@
 import { CURATED_CHAT_MODELS } from '../constants/chatModels.js';
+import { t } from '../i18n/t.js';
 
 /** @typedef {'ok' | 'caution' | 'severe'} HardwareWarnLevel */
 
@@ -94,7 +95,7 @@ function maxGpuVramMb(report) {
 }
 
 function fmtGbFromMb(mb) {
-  if (mb == null || mb <= 0) return 'unknown';
+  if (mb == null || mb <= 0) return t('hardware.unknownRam');
   const gb = mb / 1024;
   return gb >= 10 ? `${Math.round(gb)} GB` : `${gb.toFixed(1)} GB`;
 }
@@ -125,39 +126,51 @@ export function assessChatModelHardware(modelId, report) {
 
   if (ram < rules.severeRamBelowMb) {
     lines.push(
-      `This PC has about ${fmtGbFromMb(ram)} of system RAM. The model “${modelId}” is in a size class that usually needs at least ${fmtGbFromMb(rules.minRamMb)} RAM to run reliably; it may fail to load or make the system swap heavily.`,
+      t('hardware.ramSevere', {
+        ram: fmtGbFromMb(ram),
+        model: modelId,
+        minRam: fmtGbFromMb(rules.minRamMb),
+      }),
     );
     bump('severe');
   } else if (ram < rules.minRamMb) {
     lines.push(
-      `This PC has about ${fmtGbFromMb(ram)} of system RAM. “${modelId}” may run, but ${fmtGbFromMb(rules.minRamMb)} or more is recommended for this class of model.`,
+      t('hardware.ramCaution', {
+        ram: fmtGbFromMb(ram),
+        model: modelId,
+        minRam: fmtGbFromMb(rules.minRamMb),
+      }),
     );
     bump('caution');
   }
 
   if (rules.minComfortVramMb > 0) {
     if (vram == null) {
-      lines.push(
-        'No usable GPU video memory was detected. Large models may fall back to CPU and be extremely slow.',
-      );
+      lines.push(t('hardware.noGpu'));
       bump(tier === 'xlarge' || tier === 'heavy' ? 'severe' : 'caution');
     } else if (vram < rules.severeVramBelowMb) {
       lines.push(
-        `The strongest GPU reported has about ${fmtGbFromMb(vram)} VRAM. “${modelId}” often needs on the order of ${fmtGbFromMb(rules.minComfortVramMb)} VRAM for reasonable GPU inference.`,
+        t('hardware.vramSevere', {
+          vram: fmtGbFromMb(vram),
+          model: modelId,
+          minVram: fmtGbFromMb(rules.minComfortVramMb),
+        }),
       );
       bump('severe');
     } else if (vram < rules.minComfortVramMb) {
       lines.push(
-        `The strongest GPU reported has about ${fmtGbFromMb(vram)} VRAM. “${modelId}” may run with quantization or smaller context, but ${fmtGbFromMb(rules.minComfortVramMb)} VRAM is a more comfortable target.`,
+        t('hardware.vramCaution', {
+          vram: fmtGbFromMb(vram),
+          model: modelId,
+          minVram: fmtGbFromMb(rules.minComfortVramMb),
+        }),
       );
       bump('caution');
     }
   }
 
   if (report.capability === 'embeddingOnly' && (tier === 'heavy' || tier === 'xlarge')) {
-    lines.push(
-      'Grimoire classified this machine as “embedding only” for LLM workloads. Chat with this model size is likely to be impractical unless you use a much smaller quant or a different machine.',
-    );
+    lines.push(t('hardware.embeddingOnly'));
     bump('caution');
   }
 

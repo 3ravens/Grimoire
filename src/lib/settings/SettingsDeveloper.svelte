@@ -3,6 +3,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
+  import { t, tParts } from '../i18n/t.js';
 
   let {
     devNativeContextMenu = false,
@@ -31,8 +32,8 @@
     const selected = await openDialog({
       directory: false,
       multiple: false,
-      filters: [{ name: 'Kiwix / ZIM', extensions: ['zim'] }],
-      title: 'Select a Wikipedia .zim file',
+      filters: [{ name: t('settings.developer.zimDialogFilter'), extensions: ['zim'] }],
+      title: t('settings.developer.zimDialogTitle'),
     }).catch(() => null);
     if (selected === null || selected === undefined) return;
     zimPath = Array.isArray(selected) ? selected[0] : selected;
@@ -65,8 +66,7 @@
   async function runWikiIndexBenchmark() {
     const path = zimPath.trim();
     if (!path) {
-      benchError =
-        'No ZIM file selected. Click Browse… next to the path field (above), or paste the full path to your .zim file.';
+      benchError = t('settings.developer.noZimSelected');
       benchStatus = 'error';
       benchResult = null;
       return;
@@ -81,7 +81,7 @@
       if (trimmed !== '') {
         const n = Number.parseInt(trimmed, 10);
         if (!Number.isFinite(n) || n < 1) {
-          benchError = 'Max entries must be a positive integer.';
+          benchError = t('settings.developer.maxEntriesInvalid');
           benchStatus = 'error';
           return;
         }
@@ -102,16 +102,16 @@
     if (!benchResult) return;
     try {
       await navigator.clipboard.writeText(JSON.stringify(benchResult, null, 2));
-      benchCopyHint = 'Copied to clipboard.';
+      benchCopyHint = t('settings.developer.copied');
       setTimeout(() => { benchCopyHint = ''; }, 2500);
     } catch {
-      benchCopyHint = 'Copy failed.';
+      benchCopyHint = t('settings.developer.copyFailed');
       setTimeout(() => { benchCopyHint = ''; }, 2500);
     }
   }
 
   function benchNum(v) {
-    if (v === null || v === undefined) return '—';
+    if (v === null || v === undefined) return t('settings.shared.emDash');
     const n = typeof v === 'bigint' ? Number(v) : Number(v);
     return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(v);
   }
@@ -164,12 +164,7 @@
 
   async function runCleanDatabase() {
     tdCleanError = '';
-    const ok = confirm(
-      'Delete ALL local vault data in this app?\n\n' +
-        'This removes every note, folder, tag, wiki-link, template, bookmark, property, Wikipedia bundle metadata, file-scanner entries, audit log, and app settings from the SQLite database. It also clears LanceDB semantic indexes (notes, Wikipedia, scanned files) and vault/session encryption state.\n\n' +
-        'External files on disk are not deleted. This cannot be undone.\n\n' +
-        'Continue?',
-    );
+    const ok = confirm(t('settings.developer.cleanConfirm'));
     if (!ok) return;
 
     tdCleanRunning = true;
@@ -185,16 +180,13 @@
 
 </script>
 
-<h3>Developer</h3>
-<p class="settings-notice">These settings are only visible in dev builds.</p>
+<h3>{t('settings.developer.title')}</h3>
+<p class="settings-notice">{t('settings.developer.devOnlyNotice')}</p>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Use native context menu</span>
-    <span class="setting-desc">
-      Disables the custom context menu and restores the native WebView2 menu,
-      which includes Inspect Element. Useful for debugging layout and styles.
-    </span>
+    <span class="setting-name">{t('settings.developer.nativeContextMenu')}</span>
+    <span class="setting-desc">{t('settings.developer.nativeContextMenuDesc')}</span>
   </div>
   <label class="toggle">
     <input
@@ -202,18 +194,14 @@
       checked={devNativeContextMenu}
       onchange={(e) => onDevNativeContextMenuChange(e.currentTarget.checked)}
     />
-    <span class="toggle-label">{devNativeContextMenu ? 'On' : 'Off'}</span>
+    <span class="toggle-label">{devNativeContextMenu ? t('common.on') : t('common.off')}</span>
   </label>
 </div>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Wikipedia perf logs</span>
-    <span class="setting-desc">
-      Emits periodic <code>[wiki_index_perf]</code> timing summaries while indexing.
-      Disable to keep logs clean. Output appears in the dev terminal and is also
-      written to a dedicated <code>wiki-index-perf.log</code> file.
-    </span>
+    <span class="setting-name">{t('settings.developer.wikiPerfLogs')}</span>
+    <span class="setting-desc">{t('settings.developer.wikiPerfLogsDesc')}</span>
   </div>
   <label class="toggle">
     <input
@@ -221,47 +209,41 @@
       checked={wikiPerfLogging}
       onchange={(e) => saveWikiPerfLogging(e.currentTarget.checked)}
     />
-    <span class="toggle-label">{wikiPerfLogging ? 'On' : 'Off'}</span>
+    <span class="toggle-label">{wikiPerfLogging ? t('common.on') : t('common.off')}</span>
   </label>
 </div>
 
 <!-- ── Phase 0: ZIM parsing PoC ─────────────────────────────────────────── -->
-<h4 class="section-subhead">Wikipedia — ZIM parsing PoC</h4>
-<p class="settings-notice">
-  Paste the absolute path to a Kiwix .zim file, then click Test. The command
-  reads up to 500 articles and returns counts + 5 content previews so you can
-  judge whether the <code>zim</code> crate is usable for this bundle.
-</p>
+<h4 class="section-subhead">{t('settings.developer.zimPocTitle')}</h4>
+<p class="settings-notice">{t('settings.developer.zimPocNotice')}</p>
 
 <div class="setting-row zim-path-row">
   <div class="setting-label">
-    <span class="setting-name">ZIM file path</span>
-    <span class="setting-desc">
-      Absolute path on disk. Use Browse… to choose a bundle — otherwise the indexing benchmark stays idle until this is filled.
-    </span>
+    <span class="setting-name">{t('settings.developer.zimPath')}</span>
+    <span class="setting-desc">{t('settings.developer.zimPathDesc')}</span>
   </div>
   <div class="zim-path-controls">
     <input
       class="text-input"
       type="text"
-      placeholder="C:\path\to\bundle.zim"
+      placeholder={t('settings.developer.zimPlaceholder')}
       bind:value={zimPath}
     />
-    <button type="button" class="btn btn-outline" onclick={browseZimPath}>Browse…</button>
+    <button type="button" class="btn btn-outline" onclick={browseZimPath}>{t('common.browse')}</button>
   </div>
 </div>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Run PoC</span>
-    <span class="setting-desc">Opens the ZIM, iterates up to 500 articles, reports counts and sample content.</span>
+    <span class="setting-name">{t('settings.developer.runPoc')}</span>
+    <span class="setting-desc">{t('settings.developer.runPocDesc')}</span>
   </div>
   <button
     class="btn"
     onclick={runZimPoC}
     disabled={zimStatus === 'running' || !zimPath.trim()}
   >
-    {zimStatus === 'running' ? 'Parsing…' : 'Test ZIM'}
+    {zimStatus === 'running' ? t('settings.developer.parsing') : t('settings.developer.testZim')}
   </button>
 </div>
 
@@ -272,11 +254,11 @@
 {#if zimStatus === 'done' && zimResult}
   <div class="zim-result">
     <div class="zim-stats">
-      <span>Total entries: <strong>{zimResult.total_entries}</strong></span>
-      <span>Articles: <strong>{zimResult.article_count}</strong></span>
-      <span>Redirects: <strong>{zimResult.redirect_count}</strong></span>
-      <span>Other namespaces: <strong>{zimResult.other_namespace}</strong></span>
-      <span>Compression: <strong>{zimResult.compression}</strong></span>
+      <span>{t('settings.developer.totalEntries')} <strong>{zimResult.total_entries}</strong></span>
+      <span>{t('settings.developer.articles')} <strong>{zimResult.article_count}</strong></span>
+      <span>{t('settings.developer.redirects')} <strong>{zimResult.redirect_count}</strong></span>
+      <span>{t('settings.developer.otherNamespaces')} <strong>{zimResult.other_namespace}</strong></span>
+      <span>{t('settings.developer.compression')} <strong>{zimResult.compression}</strong></span>
     </div>
     {#each zimResult.samples as sample, i}
       <div class="zim-sample">
@@ -288,25 +270,23 @@
 {/if}
 
 <!-- ── Wikipedia indexing performance benchmark ─────────────────────────── -->
-<h4 class="section-subhead">Wikipedia — indexing benchmark</h4>
+<h4 class="section-subhead">{t('settings.developer.benchTitle')}</h4>
 <p class="settings-notice">
-  Uses the same <strong>ZIM file path</strong> as above (set it with <strong>Browse…</strong> or paste).
-  Runs read → parse → embed (Ollama) for a bounded prefix of the archive — does not write SQLite or LanceDB.
-  Save JSON and compare with <code>scripts/compare_wiki_benchmark.py</code>.
+  {#each tParts('settings.developer.benchNotice') as part}
+    {#if part.type === 'text'}{part.value}{:else if part.name === 'zimPath'}<strong>{t('settings.developer.zimPath')}</strong>{:else if part.name === 'browse'}<strong>{t('common.browse')}</strong>{/if}
+  {/each}
 </p>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Max ZIM entries</span>
-    <span class="setting-desc">
-      Cap how many sequential ZIM entry indices to walk (default 20,000 if empty). Lower = faster smoke test.
-    </span>
+    <span class="setting-name">{t('settings.developer.maxZimEntries')}</span>
+    <span class="setting-desc">{t('settings.developer.maxZimEntriesDesc')}</span>
   </div>
   <input
     class="text-input bench-max-input"
     type="text"
     inputmode="numeric"
-    placeholder="20000"
+    placeholder={t('settings.developer.maxEntriesPlaceholder')}
     bind:value={benchMaxEntries}
     disabled={benchStatus === 'running'}
   />
@@ -314,17 +294,15 @@
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Run benchmark</span>
-    <span class="setting-desc">
-      Ensure Ollama is running and your embedding model matches Settings → LLM.
-    </span>
+    <span class="setting-name">{t('settings.developer.runBenchmark')}</span>
+    <span class="setting-desc">{t('settings.developer.runBenchmarkDesc')}</span>
   </div>
   <button
     class="btn"
     onclick={runWikiIndexBenchmark}
     disabled={benchStatus === 'running'}
   >
-    {benchStatus === 'running' ? 'Benchmarking…' : 'Run indexing benchmark'}
+    {benchStatus === 'running' ? t('settings.developer.benchmarking') : t('settings.developer.runIndexingBenchmark')}
   </button>
 </div>
 
@@ -339,43 +317,36 @@
 {#if benchStatus === 'done' && benchResult}
   <div class="zim-result bench-result-block">
     <div class="zim-stats bench-stats-grid">
-      <span>Model: <strong>{benchResult.model}</strong></span>
-      <span>Total in ZIM: <strong>{benchNum(benchResult.total_entries_in_zim)}</strong></span>
-      <span>Benchmark window: <strong>{benchNum(benchResult.benchmark_entries)}</strong> entries</span>
-      <span>Scanned: <strong>{benchNum(benchResult.scanned_entries)}</strong></span>
-      <span>Accepted articles: <strong>{benchNum(benchResult.accepted_articles)}</strong></span>
-      <span>Embedded: <strong>{benchNum(benchResult.embedded_articles)}</strong></span>
-      <span>Windows: <strong>{benchNum(benchResult.windows)}</strong></span>
-      <span>Total time: <strong>{benchNum(benchResult.total_ms)}</strong> ms</span>
-      <span>Read: <strong>{benchNum(benchResult.read_ms)}</strong> ms</span>
-      <span>Parse: <strong>{benchNum(benchResult.parse_ms)}</strong> ms</span>
-      <span>Embed: <strong>{benchNum(benchResult.embed_ms)}</strong> ms</span>
-      <span>Entries/s: <strong>{benchNum(benchResult.entries_per_sec)}</strong></span>
-      <span>Accepted/s: <strong>{benchNum(benchResult.accepted_per_sec)}</strong></span>
-      <span>Embedded/s: <strong>{benchNum(benchResult.embedded_per_sec)}</strong></span>
+      <span>{t('settings.developer.benchModel')} <strong>{benchResult.model}</strong></span>
+      <span>{t('settings.developer.benchTotalInZim')} <strong>{benchNum(benchResult.total_entries_in_zim)}</strong></span>
+      <span>{t('settings.developer.benchWindow')} <strong>{benchNum(benchResult.benchmark_entries)}</strong>{t('settings.developer.entriesSuffix')}</span>
+      <span>{t('settings.developer.benchScanned')} <strong>{benchNum(benchResult.scanned_entries)}</strong></span>
+      <span>{t('settings.developer.benchAccepted')} <strong>{benchNum(benchResult.accepted_articles)}</strong></span>
+      <span>{t('settings.developer.benchEmbedded')} <strong>{benchNum(benchResult.embedded_articles)}</strong></span>
+      <span>{t('settings.developer.benchWindows')} <strong>{benchNum(benchResult.windows)}</strong></span>
+      <span>{t('settings.developer.benchTotalTime')} <strong>{benchNum(benchResult.total_ms)}</strong>{t('settings.developer.msSuffix')}</span>
+      <span>{t('settings.developer.benchRead')} <strong>{benchNum(benchResult.read_ms)}</strong>{t('settings.developer.msSuffix')}</span>
+      <span>{t('settings.developer.benchParse')} <strong>{benchNum(benchResult.parse_ms)}</strong>{t('settings.developer.msSuffix')}</span>
+      <span>{t('settings.developer.benchEmbed')} <strong>{benchNum(benchResult.embed_ms)}</strong>{t('settings.developer.msSuffix')}</span>
+      <span>{t('settings.developer.benchEntriesPerSec')} <strong>{benchNum(benchResult.entries_per_sec)}</strong></span>
+      <span>{t('settings.developer.benchAcceptedPerSec')} <strong>{benchNum(benchResult.accepted_per_sec)}</strong></span>
+      <span>{t('settings.developer.benchEmbeddedPerSec')} <strong>{benchNum(benchResult.embedded_per_sec)}</strong></span>
     </div>
     <div class="bench-actions">
-      <button type="button" class="btn btn-secondary" onclick={copyBenchJson}>Copy result JSON</button>
+      <button type="button" class="btn btn-secondary" onclick={copyBenchJson}>{t('settings.developer.copyResultJson')}</button>
     </div>
   </div>
 {/if}
 
 
 <!-- ── Test Data Generator ───────────────────────────────────── -->
-<h4 class="section-subhead">Test Data Generator</h4>
-<p class="settings-notice">
-  Populates the vault with realistic notes, folders, tags, wiki-links, properties,
-  templates, and daily notes. Only available in dev builds.
-  Generation always adds two fixed folders on top of the configured folder count: a
-  Kanban-style capstone board and a table/database-style reading folder.
-  Generation is quick without embedding; with embeddings enabled, progress and the
-  current step appear below while Ollama runs (this can take several minutes).
-</p>
+<h4 class="section-subhead">{t('settings.developer.testDataTitle')}</h4>
+<p class="settings-notice">{t('settings.developer.testDataNotice')}</p>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Number of notes</span>
-    <span class="setting-desc">Target count (10–500). Default is 120.</span>
+    <span class="setting-name">{t('settings.developer.noteCount')}</span>
+    <span class="setting-desc">{t('settings.developer.noteCountDesc')}</span>
   </div>
   <input
     class="text-input bench-max-input"
@@ -389,8 +360,8 @@
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Number of folders</span>
-    <span class="setting-desc">Topic folders to distribute notes across (1–20). Default is 8.</span>
+    <span class="setting-name">{t('settings.developer.folderCount')}</span>
+    <span class="setting-desc">{t('settings.developer.folderCountDesc')}</span>
   </div>
   <input
     class="text-input bench-max-input"
@@ -404,16 +375,14 @@
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Random seed</span>
-    <span class="setting-desc">
-      Leave empty for random, or enter a number for reproducible output.
-    </span>
+    <span class="setting-name">{t('settings.developer.randomSeed')}</span>
+    <span class="setting-desc">{t('settings.developer.randomSeedDesc')}</span>
   </div>
   <input
     class="text-input bench-max-input"
     type="text"
     inputmode="numeric"
-    placeholder="(random)"
+    placeholder={t('settings.developer.seedPlaceholder')}
     bind:value={tdSeed}
     disabled={tdLocked}
   />
@@ -421,11 +390,8 @@
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Include daily notes</span>
-    <span class="setting-desc">
-      Generate ~60 daily notes scattered across the last 120 days inside the
-      root “Daily Notes” folder (same as the calendar / activity bar).
-    </span>
+    <span class="setting-name">{t('settings.developer.includeDailyNotes')}</span>
+    <span class="setting-desc">{t('settings.developer.includeDailyNotesDesc')}</span>
   </div>
   <label class="toggle">
     <input
@@ -434,17 +400,14 @@
       onchange={(e) => (tdDailyNotes = e.currentTarget.checked)}
       disabled={tdLocked}
     />
-    <span class="toggle-label">{tdDailyNotes ? 'Yes' : 'No'}</span>
+    <span class="toggle-label">{tdDailyNotes ? t('common.yes') : t('common.no')}</span>
   </label>
 </div>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Generate embeddings</span>
-    <span class="setting-desc">
-      Run Ollama embedding for every note. Can take several minutes — a live progress line
-      appears below. Only enable if Ollama is running with your embedding model available.
-    </span>
+    <span class="setting-name">{t('settings.developer.generateEmbeddings')}</span>
+    <span class="setting-desc">{t('settings.developer.generateEmbeddingsDesc')}</span>
   </div>
   <label class="toggle">
     <input
@@ -453,18 +416,14 @@
       onchange={(e) => (tdEmbed = e.currentTarget.checked)}
       disabled={tdLocked}
     />
-    <span class="toggle-label">{tdEmbed ? 'Yes' : 'No'}</span>
+    <span class="toggle-label">{tdEmbed ? t('common.yes') : t('common.no')}</span>
   </label>
 </div>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Vault tools</span>
-    <span class="setting-desc">
-      Generate adds sample data to the current vault. Clean Database wipes all SQLite rows,
-      clears semantic indexes, resets in-memory crypto keys, and reloads the page — use before
-      generating a fresh test vault.
-    </span>
+    <span class="setting-name">{t('settings.developer.vaultTools')}</span>
+    <span class="setting-desc">{t('settings.developer.vaultToolsDesc')}</span>
   </div>
   <div class="td-btn-row">
     <button
@@ -473,7 +432,7 @@
       onclick={runTestDataGenerator}
       disabled={tdLocked}
     >
-      {tdRunning ? 'Generating…' : 'Generate Test Data'}
+      {tdRunning ? t('settings.developer.generating') : t('settings.developer.generateTestData')}
     </button>
     <button
       type="button"
@@ -481,7 +440,7 @@
       onclick={runCleanDatabase}
       disabled={tdLocked}
     >
-      {tdCleanRunning ? 'Cleaning…' : 'Clean Database'}
+      {tdCleanRunning ? t('settings.developer.cleaning') : t('settings.developer.cleanDatabase')}
     </button>
   </div>
 </div>
@@ -512,17 +471,17 @@
 {#if tdSummary}
   <div class="zim-result bench-result-block">
     <div class="zim-stats bench-stats-grid">
-      <span>Notes: <strong>{tdSummary.notes}</strong></span>
-      <span>Folders: <strong>{tdSummary.folders}</strong></span>
-      <span>Templates: <strong>{tdSummary.templates}</strong></span>
-      <span>Tags: <strong>{tdSummary.tags}</strong></span>
-      <span>Wiki-links: <strong>{tdSummary.links}</strong></span>
-      <span>Daily notes: <strong>{tdSummary.daily_notes}</strong></span>
-      <span>Embedded: <strong>{tdSummary.embedded}</strong></span>
+      <span>{t('settings.developer.summaryNotes')} <strong>{tdSummary.notes}</strong></span>
+      <span>{t('settings.developer.summaryFolders')} <strong>{tdSummary.folders}</strong></span>
+      <span>{t('settings.developer.summaryTemplates')} <strong>{tdSummary.templates}</strong></span>
+      <span>{t('settings.developer.summaryTags')} <strong>{tdSummary.tags}</strong></span>
+      <span>{t('settings.developer.summaryLinks')} <strong>{tdSummary.links}</strong></span>
+      <span>{t('settings.developer.summaryDailyNotes')} <strong>{tdSummary.daily_notes}</strong></span>
+      <span>{t('settings.developer.summaryEmbedded')} <strong>{tdSummary.embedded}</strong></span>
     </div>
     {#if tdSummary.errors && tdSummary.errors.length > 0}
       <div class="zim-sample">
-        <p class="zim-sample-title">Errors ({tdSummary.errors.length})</p>
+        <p class="zim-sample-title">{t('settings.developer.errorsTitle', { count: tdSummary.errors.length })}</p>
         <pre class="zim-preview">{tdSummary.errors.join('\n')}</pre>
       </div>
     {/if}

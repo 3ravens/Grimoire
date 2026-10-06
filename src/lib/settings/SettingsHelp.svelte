@@ -1,6 +1,7 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
   import { onMount } from 'svelte';
+  import { t } from '../i18n/t.js';
 
   /** @type {{ onReplayTour?: () => void }} */
   let { onReplayTour = () => {} } = $props();
@@ -40,7 +41,6 @@
     updateError = '';
     try {
       updateResult = await invoke('check_for_update');
-      // Let the app shell update its banner/badge with the fresh result.
       window.dispatchEvent(
         new CustomEvent('grimoire:update-check', { detail: updateResult })
       );
@@ -71,17 +71,12 @@
   }
 </script>
 
-<h3>Updates</h3>
+<h3>{t('settings.help.updatesTitle')}</h3>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Check for updates on startup</span>
-    <span class="setting-desc">
-      Off by default. When enabled, Grimoire asks grimoireapp.dev for the latest version
-      number on launch and tells you if a newer build exists. Only a version request is sent —
-      no telemetry, identifiers, or vault data — and the check is recorded in the audit log.
-      Updates are never downloaded or installed automatically; you choose when to upgrade.
-    </span>
+    <span class="setting-name">{t('settings.help.checkOnStartup')}</span>
+    <span class="setting-desc">{t('settings.help.checkOnStartupDesc')}</span>
   </div>
   <label class="toggle">
     <input
@@ -89,17 +84,14 @@
       checked={updateCheckEnabled}
       onchange={e => setUpdateCheckEnabled(e.currentTarget.checked)}
     />
-    <span class="toggle-label">{updateCheckEnabled ? 'On' : 'Off'}</span>
+    <span class="toggle-label">{updateCheckEnabled ? t('common.on') : t('common.off')}</span>
   </label>
 </div>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Check now</span>
-    <span class="setting-desc">
-      Manually check for a newer version once. This sends a single version request to
-      grimoireapp.dev regardless of the startup setting above.
-    </span>
+    <span class="setting-name">{t('settings.help.checkNow')}</span>
+    <span class="setting-desc">{t('settings.help.checkNowDesc')}</span>
   </div>
   <div class="setting-actions">
     <button
@@ -107,53 +99,46 @@
       onclick={checkForUpdate}
       disabled={updateChecking}
     >
-      {updateChecking ? 'Checking…' : 'Check now…'}
+      {updateChecking ? t('settings.help.checking') : t('settings.help.checkNowBtn')}
     </button>
     {#if updateError}
       <span class="export-err">{updateError}</span>
     {:else if updateResult}
       {#if updateResult.updateAvailable}
         <span class="setting-desc">
-          Update available: {updateResult.latest} (you have {updateResult.current}).
+          {t('settings.help.updateAvailable', { latest: updateResult.latest, current: updateResult.current })}
         </span>
         <button
           class="settings-action-btn"
           onclick={() => openPublicSite(updateResult.downloadUrl)}
         >
-          View download
+          {t('settings.help.viewDownload')}
         </button>
       {:else}
-        <span class="setting-desc">You are on the latest version ({updateResult.current}).</span>
+        <span class="setting-desc">{t('settings.help.onLatest', { current: updateResult.current })}</span>
       {/if}
     {/if}
   </div>
 </div>
 
-<h3>Help</h3>
+<h3>{t('settings.help.helpTitle')}</h3>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Replay UI tour</span>
-    <span class="setting-desc">
-      Walk through a short spotlight tour of the folder panel, note editor, chat sidebar, search, and
-      settings. Skippable at any time.
-    </span>
+    <span class="setting-name">{t('settings.help.replayTour')}</span>
+    <span class="setting-desc">{t('settings.help.replayTourDesc')}</span>
   </div>
   <div class="setting-actions">
     <button type="button" class="settings-action-btn" onclick={onReplayTour}>
-      Replay UI tour
+      {t('settings.help.replayTourBtn')}
     </button>
   </div>
 </div>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Report a bug</span>
-    <span class="setting-desc">
-      Opens the bug report page on grimoireapp.dev in your browser. Your app version, operating
-      system, CPU architecture, and bundle name are appended to the URL so the form can
-      pre-fill them. No note content, logs, or other vault data are sent.
-    </span>
+    <span class="setting-name">{t('settings.help.reportBug')}</span>
+    <span class="setting-desc">{t('settings.help.reportBugDesc')}</span>
   </div>
   <div class="setting-actions">
     <button
@@ -161,7 +146,7 @@
       onclick={reportBug}
       disabled={bugStatus === 'opening'}
     >
-      {bugStatus === 'opening' ? 'Opening…' : 'Report a bug…'}
+      {bugStatus === 'opening' ? t('settings.help.opening') : t('settings.help.reportBugBtn')}
     </button>
     {#if bugStatus.startsWith('error:')}
       <span class="export-err">{bugStatus.slice(6)}</span>
@@ -171,18 +156,15 @@
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Documentation and website</span>
-    <span class="setting-desc">
-      Documentation lives on a separate site. The main site has release notes and general
-      information.
-    </span>
+    <span class="setting-name">{t('settings.help.docsAndSite')}</span>
+    <span class="setting-desc">{t('settings.help.docsAndSiteDesc')}</span>
   </div>
   <div class="setting-actions">
     <button class="settings-action-btn" onclick={() => openPublicSite('https://docs.grimoireapp.dev')}>
-      Documentation
+      {t('settings.help.documentation')}
     </button>
     <button class="settings-action-btn" onclick={() => openPublicSite('https://grimoireapp.dev')}>
-      grimoireapp.dev
+      {t('settings.help.mainSite')}
     </button>
     {#if siteLinkError}
       <span class="export-err">{siteLinkError}</span>

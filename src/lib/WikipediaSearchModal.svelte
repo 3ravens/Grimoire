@@ -1,4 +1,5 @@
 <script>
+  import { t } from './i18n/t.js';
   import { invoke } from '@tauri-apps/api/core';
   import { focusTrap } from './utils/focusTrap.js';
 
@@ -29,7 +30,7 @@
         bundles = list;
         if (list.length === 1) selectedBundle = list[0];
       })
-      .catch(() => { errorMsg = 'Could not load Wikipedia bundles.'; });
+      .catch(() => { errorMsg = t('views.wikiBundlesLoadFailed'); });
   });
 
   $effect(() => {
@@ -57,12 +58,12 @@
         });
         if (mySeq !== suggestSeq) return;
         results = next;
-        if (results.length === 0) errorMsg = 'No results found.';
+        if (results.length === 0) errorMsg = t('views.wikiNoResults');
       } catch (err) {
         if (mySeq !== suggestSeq) return;
         console.error('Wikipedia search failed:', err);
         results = [];
-        errorMsg = typeof err === 'string' ? err : 'Search failed.';
+        errorMsg = typeof err === 'string' ? err : (err?.message ?? t('views.wikiSearchFailed'));
       } finally {
         if (mySeq === suggestSeq) searching = false;
       }
@@ -93,18 +94,18 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
-<div class="wsm-backdrop" onclick={onClose} role="dialog" aria-modal="true" aria-label="Search Wikipedia" tabindex="-1">
+<div class="wsm-backdrop" onclick={onClose} role="dialog" aria-modal="true" aria-label={t('views.wikiSearchAria')} tabindex="-1">
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="wsm-panel" use:focusTrap onclick={(e) => e.stopPropagation()}>
 
     {#if bundles.length === 0 && !errorMsg}
-      <p class="wsm-status">Loading bundles…</p>
+      <p class="wsm-status">{t('views.wikiLoadingBundles')}</p>
     {:else if bundles.length === 0 && errorMsg}
       <p class="wsm-status wsm-error">{errorMsg}</p>
     {:else}
       {#if bundles.length > 1}
         <div class="wsm-bundle-row">
-          <label class="wsm-bundle-label" for="wsm-bundle-select">Bundle</label>
+          <label class="wsm-bundle-label" for="wsm-bundle-select">{t('views.wikiBundle')}</label>
           <select
             id="wsm-bundle-select"
             class="wsm-bundle-select"
@@ -117,35 +118,35 @@
               onInput();
             }}
           >
-            <option value="" disabled>Select a bundle…</option>
+            <option value="" disabled>{t('views.wikiSelectBundle')}</option>
             {#each bundles as b}
               <option value={b.id}>{b.title || b.name}</option>
             {/each}
           </select>
         </div>
       {:else if bundles.length === 1}
-        <div class="wsm-bundle-hint">Searching: {bundles[0].title || bundles[0].name}</div>
+        <div class="wsm-bundle-hint">{t('views.wikiSearchingBundle', { name: bundles[0].title || bundles[0].name })}</div>
       {/if}
 
       <input
         bind:this={inputEl}
         bind:value={query}
         class="wsm-input"
-        placeholder="Search Wikipedia articles…"
+        placeholder={t('views.wikiSearchArticles')}
         autocomplete="off"
         spellcheck="false"
         oninput={onInput}
         onkeydown={handleKeydown}
-        aria-label="Search Wikipedia articles"
+        aria-label={t('views.wikiSearchArticles')}
         aria-autocomplete="list"
         aria-controls="wsm-results"
         disabled={!selectedBundle}
       />
 
       {#if !selectedBundle && bundles.length > 1}
-        <p class="wsm-status">Select a bundle above to search.</p>
+        <p class="wsm-status">{t('views.wikiSelectBundleToSearch')}</p>
       {:else if searching}
-        <p class="wsm-status">Searching…</p>
+        <p class="wsm-status">{t('views.wikiSearching')}</p>
       {:else if results.length > 0}
         <ul class="wsm-results" id="wsm-results" role="listbox">
           {#each results as result, i}
@@ -166,7 +167,7 @@
       {:else if errorMsg}
         <p class="wsm-status">{errorMsg}</p>
       {:else if query.trim()}
-        <p class="wsm-status">Type to search…</p>
+        <p class="wsm-status">{t('views.wikiTypeToSearch')}</p>
       {/if}
     {/if}
   </div>

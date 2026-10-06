@@ -2,6 +2,9 @@
   /**
    * DatabaseView — spreadsheet-style table view for a folder's notes + properties.
    * Shown when the user toggles "Table" on a folder that has property definitions.
+   */
+  import { t } from './i18n/t.js';
+  /**
    *
    * Props:
    *   folderId   — the folder to display
@@ -103,6 +106,26 @@
     boolean: ['is true', 'is false'],
     select:  ['any of', 'none of'],
   };
+
+  const FILTER_OP_LABEL_KEYS = {
+    contains: 'views.dbFilterContains',
+    equals: 'views.dbFilterEquals',
+    'is empty': 'views.dbFilterEmpty',
+    'is not empty': 'views.dbFilterNotEmpty',
+    on: 'views.dbFilterOn',
+    before: 'views.dbFilterBefore',
+    after: 'views.dbFilterAfter',
+    between: 'views.dbFilterBetween',
+    'is true': 'views.dbFilterTrue',
+    'is false': 'views.dbFilterFalse',
+    'any of': 'views.dbFilterAnyOf',
+    'none of': 'views.dbFilterNoneOf',
+  };
+
+  function filterOpLabel(op) {
+    const key = FILTER_OP_LABEL_KEYS[op];
+    return key ? t(key) : op;
+  }
 
   function defaultValue(type, op) {
     if (type === 'boolean') return '';
@@ -311,7 +334,7 @@
 
 <div class="db-view">
   {#if loading}
-    <p class="db-loading">Loading…</p>
+    <p class="db-loading">{t('views.dbLoading')}</p>
   {:else}
 
     <!-- ── Filter bar ──────────────────────────────────────────────────────── -->
@@ -333,7 +356,7 @@
                   onchange={e => onOpChange(defId, e.currentTarget.value, def)}
                 >
                   {#each OPS[def.type] ?? [] as op}
-                    <option value={op}>{op}</option>
+                    <option value={op}>{filterOpLabel(op)}</option>
                   {/each}
                 </select>
 
@@ -388,11 +411,11 @@
                     class="db-filter-input"
                     value={typeof f.value === 'string' ? f.value : ''}
                     oninput={e => onValueChange(defId, e.currentTarget.value)}
-                    placeholder="value"
+                    placeholder={t('views.dbFilterValue')}
                   />
                 {/if}
 
-                <button class="db-filter-remove" onclick={() => removeFilter(defId)} title="Remove filter">×</button>
+                <button class="db-filter-remove" onclick={() => removeFilter(defId)} title={t('views.dbFilterRemove')}>×</button>
               </div>
             {/if}
           {/each}
@@ -405,7 +428,7 @@
               class="db-filter-add-btn"
               onclick={() => addFilterOpen = !addFilterOpen}
               disabled={availableDefs().length === 0}
-            >+ Filter</button>
+            >{t('views.dbFilterAdd')}</button>
             {#if addFilterOpen}
               <div class="db-filter-add-menu">
                 {#each availableDefs() as def}
@@ -416,14 +439,14 @@
           </div>
 
           {#if Object.keys(pending).length > 0}
-            <button class="db-filter-apply-btn" onclick={applyPending}>Apply</button>
+            <button class="db-filter-apply-btn" onclick={applyPending}>{t('views.dbApply')}</button>
           {/if}
           {#if activeFilterCount() > 0}
-            <button class="db-filter-clear-btn" onclick={clearFilters}>Clear all</button>
+            <button class="db-filter-clear-btn" onclick={clearFilters}>{t('views.dbClearFilters')}</button>
           {/if}
 
           {#if activeFilterCount() > 0}
-            <span class="db-filter-count">{filteredRows.length} of {rows.length}</span>
+            <span class="db-filter-count">{t('views.dbFilterCount', { shown: filteredRows.length, total: rows.length })}</span>
           {/if}
 
           <!-- Sync from template -->
@@ -433,12 +456,12 @@
                 class="db-filter-add-btn db-sync-btn"
                 onclick={() => syncOpen = !syncOpen}
                 disabled={syncing}
-                title="Apply a template's current properties to all notes in this folder"
-              >{syncing ? 'Syncing…' : 'Sync from template'}</button>
+                title={t('views.dbSyncTitle')}
+              >{syncing ? t('views.dbSyncing') : t('views.dbSyncFromTemplate')}</button>
               {#if syncOpen}
                 <div class="db-filter-add-menu">
-                  {#each templates as t}
-                    <button class="db-filter-add-opt" onclick={() => syncFromTemplate(t.id)}>{t.name}</button>
+                  {#each templates as tmpl}
+                    <button class="db-filter-add-opt" onclick={() => syncFromTemplate(tmpl.id)}>{tmpl.name}</button>
                   {/each}
                 </div>
               {/if}
@@ -450,15 +473,15 @@
 
     <!-- ── Table ──────────────────────────────────────────────────────────── -->
     {#if rows.length === 0}
-      <p class="db-empty">No notes in this folder.</p>
+      <p class="db-empty">{t('views.dbNoNotes')}</p>
     {:else if filteredRows.length === 0}
-      <p class="db-empty">No notes match the active filters.</p>
+      <p class="db-empty">{t('views.dbNoMatchFilters')}</p>
     {:else}
       <div class="db-table-wrap">
         <table class="db-table">
           <thead>
             <tr>
-              <th class="db-th-title">Title</th>
+              <th class="db-th-title">{t('views.dbTitleCol')}</th>
               {#each defs as def (def.id)}
                 <th>{def.name}</th>
               {/each}
@@ -476,7 +499,7 @@
                   {@const val = getPropValue(note, def.id)}
                   <td class="db-td-value">
                     {#if val === null}
-                      <span class="db-cell-empty">—</span>
+                      <span class="db-cell-empty">{t('views.emDash')}</span>
                     {:else if def.type === 'boolean'}
                       <input
                         type="checkbox"
@@ -489,7 +512,7 @@
                         value={val}
                         onchange={(e) => handleSelectChange(note.id, def.id, e)}
                       >
-                        <option value="">—</option>
+                        <option value="">{t('views.emDash')}</option>
                         {#each parseSelectOptions(def.options) as opt}
                           <option value={opt}>{opt}</option>
                         {/each}

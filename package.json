@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:build": "tauri build",
     "tauri:wizard-sandbox": "node scripts/wizard-sandbox.mjs",
     "tauri:wizard-sandbox:fresh": "node scripts/wizard-sandbox.mjs --fresh",

@@ -4,6 +4,7 @@ import {
   buildStandaloneReadModeHtml,
   printStandaloneHtml,
 } from './noteExportHtml.js';
+import { t } from '../i18n/t.js';
 
 /**
  * Use live editor text when this note is the active tab; otherwise the list row snapshot.
@@ -23,7 +24,7 @@ export function sanitiseExportBasename(title) {
     .replace(/[/\\:*?"<>|]/g, '-')
     .trim()
     .replace(/\s+/g, ' ');
-  return s || 'note';
+  return s || t('export.defaultBasename');
 }
 
 /**
@@ -34,9 +35,9 @@ export async function exportNoteMarkdown(opts) {
   try {
     const base = sanitiseExportBasename(title);
     const path = await save({
-      title: 'Export note as Markdown',
+      title: t('export.markdownTitle'),
       defaultPath: `${base}.md`,
-      filters: [{ name: 'Markdown', extensions: ['md'] }],
+      filters: [{ name: t('export.filterMarkdown'), extensions: ['md'] }],
     });
     if (!path) return;
     await invoke('export_single_note_markdown', {
@@ -58,9 +59,9 @@ export async function exportNoteHtml(opts) {
     const html = await buildStandaloneReadModeHtml(title, body, { rootNoteId: noteId });
     const base = sanitiseExportBasename(title);
     const path = await save({
-      title: 'Export note as HTML',
+      title: t('export.htmlTitle'),
       defaultPath: `${base}.html`,
-      filters: [{ name: 'HTML', extensions: ['html', 'htm'] }],
+      filters: [{ name: t('export.filterHtml'), extensions: ['html', 'htm'] }],
     });
     if (!path) return;
     await invoke('save_note_html_export', {

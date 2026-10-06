@@ -3,6 +3,7 @@
   import { listen } from '@tauri-apps/api/event';
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import { onMount, onDestroy } from 'svelte';
+  import { t, tp, tParts } from '../i18n/t.js';
 
   // ── State ────────────────────────────────────────────────────────────────
 
@@ -127,7 +128,7 @@
     try {
       await invoke('set_setting', { key: 'file_scanner_global_excludes', value: globalExcludes });
     } catch (e) {
-      alert(`Could not save global excludes: ${e?.message ?? e}`);
+      alert(t('settings.fileScanner.saveGlobalExcludesFailed', { msg: e?.message ?? e }));
     }
   }
 
@@ -156,7 +157,7 @@
       showExcludesFor = null;
       await loadPaths();
     } catch (e) {
-      alert(`Could not save excludes: ${e?.message ?? e}`);
+      alert(t('settings.fileScanner.saveExcludesFailed', { msg: e?.message ?? e }));
     }
   }
 
@@ -166,10 +167,10 @@
       await loadPaths();
       await loadStaleSummary();
       if (n > 0) {
-        alert(`Removed ${n} missing file${n === 1 ? '' : 's'} from the index.`);
+        alert(tp('settings.fileScanner.cleanupRemoved', n, { count: n }));
       }
     } catch (e) {
-      alert(`Clean up failed: ${e?.message ?? e}`);
+      alert(t('settings.fileScanner.cleanupFailed', { msg: e?.message ?? e }));
     }
   }
 
@@ -179,7 +180,7 @@
       multiple: false,
       filters: [
         {
-          name: 'Supported files',
+          name: t('settings.fileScanner.dialogSupportedFiles'),
           extensions: [
             'txt',
             'md',
@@ -212,7 +213,7 @@
       const row = await invoke('add_scanned_path', { path: folderPath, kind: 'folder' });
       paths = [row, ...paths];
     } catch (e) {
-      alert(`Could not add folder: ${e?.message ?? e}`);
+      alert(t('settings.fileScanner.addFolderFailed', { msg: e?.message ?? e }));
     }
   }
 
@@ -227,7 +228,7 @@
       await loadStaleSummary();
     } catch (e) {
       console.error('[remove_scanned_path]', e);
-      alert(`Could not remove path: ${e?.message ?? e}`);
+      alert(t('settings.fileScanner.removePathFailed', { msg: e?.message ?? e }));
     }
   }
 
@@ -236,7 +237,7 @@
       await invoke('toggle_scanned_path', { id, enabled });
       paths = paths.map(p => p.id === id ? { ...p, enabled } : p);
     } catch (e) {
-      alert(`Could not toggle path: ${e?.message ?? e}`);
+      alert(t('settings.fileScanner.toggleFailed', { msg: e?.message ?? e }));
     }
   }
 
@@ -260,7 +261,7 @@
     try {
       await invoke('rescan_path', { id });
     } catch (e) {
-      alert(`Could not rescan path: ${e?.message ?? e}`);
+      alert(t('settings.fileScanner.rescanFailed', { msg: e?.message ?? e }));
     }
   }
 
@@ -274,7 +275,7 @@
       progress = { ...progress, [id]: { ...existing, done: true, error: null } };
       await loadPaths();
     } catch (e) {
-      alert(`Could not stop scan: ${e?.message ?? e}`);
+      alert(t('settings.fileScanner.stopFailed', { msg: e?.message ?? e }));
     }
   }
 
@@ -315,9 +316,9 @@
     const started = ids.length - failed;
 
     if (failed > 0) {
-      rescanAllStatus = `Started ${started} of ${ids.length} paths. ${failed} failed to start.`;
+      rescanAllStatus = t('settings.fileScanner.rescanAllPartial', { started, total: ids.length, failed });
     } else {
-      rescanAllStatus = `Started re-indexing ${started} path${started === 1 ? '' : 's'}. Progress appears per row.`;
+      rescanAllStatus = tp('settings.fileScanner.rescanAllStarted', started, { count: started });
     }
 
     rescanningAll = false;
@@ -331,14 +332,14 @@
       // Signal the main app to refresh its note list and offer navigation.
       window.dispatchEvent(new CustomEvent('grimoire:note-imported', { detail: { noteId: note.id } }));
     } catch (e) {
-      alert(`Could not import file as note: ${e?.message ?? e}`);
+      alert(t('settings.fileScanner.importFailed', { msg: e?.message ?? e }));
     } finally {
       importingNoteId = null;
     }
   }
 
   function formatDate(timestamp) {
-    if (!timestamp) return 'Never';
+    if (!timestamp) return t('settings.fileScanner.neverScanned');
     return new Date(timestamp * 1000).toLocaleString();
   }
 
@@ -375,22 +376,25 @@
     if (!p || p.error) return '';
     const phase = p.phase ?? '';
     const name = p.current_file ? ` · ${p.current_file}` : '';
-    if (phase === 'storing') return `Saving to index${name}`;
+    if (phase === 'storing') return t('settings.fileScanner.storing', { name });
     const ct = p.chunks_total ?? 0;
     const ce = p.chunks_embedded ?? 0;
     if (ct > 0) {
-      return `Embedding ${ce.toLocaleString()} / ${ct.toLocaleString()} chunks${name}`;
+      return t('settings.fileScanner.embeddingChunks', {
+        done: ce.toLocaleString(),
+        total: ct.toLocaleString(),
+        name,
+      });
     }
-    if (phase === 'reading') return `Reading${name}`;
-    if (phase === 'storing') return `Saving to index${name}`;
-    if (phase === 'cleanup') return 'Removing stale index entries…';
-    if (phase === 'starting') return 'Starting…';
+    if (phase === 'reading') return t('settings.fileScanner.reading', { name });
+    if (phase === 'cleanup') return t('settings.fileScanner.cleanup');
+    if (phase === 'starting') return t('settings.fileScanner.starting');
     if (phase === 'walking') {
       const v = p.visited ?? 0;
-      const t = p.total ?? 0;
-      return `Finding files… (${v} / ${t})`;
+      const total = p.total ?? 0;
+      return t('settings.fileScanner.walking', { visited: v, total });
     }
-    if (phase === 'embedding') return `Embedding…${name}`;
+    if (phase === 'embedding') return t('settings.fileScanner.embedding', { name });
     return '';
   }
 
@@ -407,7 +411,7 @@
     const remainingSec = (ct - ce) / rate;
     if (!isFinite(remainingSec) || remainingSec < 5) return '';
     const formatted = fmtEta(remainingSec);
-    return formatted ? ` · ~${formatted} left` : '';
+    return formatted ? t('settings.fileScanner.embedEta', { eta: formatted }) : '';
   }
 
   function isScanning(id) {
@@ -419,25 +423,20 @@
 <div class="file-scanner-settings">
   <div class="fs-header">
     <div class="fs-header-text">
-      <h2>File Scanner</h2>
-      <p class="fs-description">
-        Add files or folders from outside your vault as context sources.
-        Indexed content is searched alongside your notes when chatting.
-        Supports <code>.txt</code>, <code>.md</code>, <code>.pdf</code>, <code>.csv</code>, <code>.html</code>,
-        <code>.docx</code>, <code>.odt</code>, <code>.log</code>, and more.
-      </p>
+      <h2>{t('settings.fileScanner.title')}</h2>
+      <p class="fs-description">{t('settings.fileScanner.description')}</p>
     </div>
     <div class="fs-add-buttons">
       <button
         class="fs-add-btn"
         onclick={rescanAllPaths}
         disabled={rescanningAll || paths.some((p) => isScanning(p.id)) || paths.length === 0}
-        title="Re-index every path currently in File Scanner"
+        title={t('settings.fileScanner.reindexAllTitle')}
       >
-        Re-index all
+        {t('settings.fileScanner.reindexAll')}
       </button>
-      <button class="fs-add-btn" onclick={addFile}>Add file</button>
-      <button class="fs-add-btn" onclick={addFolder}>Add folder</button>
+      <button class="fs-add-btn" onclick={addFile}>{t('settings.fileScanner.addFile')}</button>
+      <button class="fs-add-btn" onclick={addFolder}>{t('settings.fileScanner.addFolder')}</button>
     </div>
   </div>
 
@@ -447,20 +446,20 @@
       class="fs-collapse-toggle"
       onclick={() => (showGlobalExcludes = !showGlobalExcludes)}
       aria-expanded={showGlobalExcludes}
-      title="Show or hide global exclude patterns"
+      title={showGlobalExcludes ? t('settings.fileScanner.hideGlobalExcludes') : t('settings.fileScanner.showGlobalExcludes')}
     >
-      {showGlobalExcludes ? 'Hide' : 'Show'} global exclude patterns
+      {showGlobalExcludes ? t('settings.fileScanner.hideGlobalExcludes') : t('settings.fileScanner.showGlobalExcludes')}
     </button>
 
     {#if showGlobalExcludes}
-      <h3 class="fs-subheading">Global exclude patterns</h3>
+      <h3 class="fs-subheading">{t('settings.fileScanner.globalExcludesTitle')}</h3>
       <p class="fs-hint">
-        Newline-separated globs (merged with each path). Filename-only patterns match at any depth.
-        Use forward slashes. Example: <code>node_modules</code>, <code>*.tmp</code>, <code>draft.txt</code>.
-        Save here, then use <strong>Rescan</strong> on each path to apply.
+        {#each tParts('settings.fileScanner.globalExcludesHint') as part}
+          {#if part.type === 'text'}{part.value}{:else if part.name === 'rescan'}<strong>{t('settings.fileScanner.rescan')}</strong>{/if}
+        {/each}
       </p>
       <textarea class="fs-exclude-textarea" bind:value={globalExcludes} rows="4" spellcheck="false"></textarea>
-      <button type="button" class="fs-add-btn" onclick={saveGlobalExcludes}>Save global excludes</button>
+      <button type="button" class="fs-add-btn" onclick={saveGlobalExcludes}>{t('settings.fileScanner.saveGlobalExcludes')}</button>
     {/if}
   </div>
 
@@ -469,9 +468,7 @@
   {/if}
 
   {#if paths.length === 0}
-    <div class="fs-empty">
-      No paths added yet. Add a file or folder to make it available as chat context.
-    </div>
+    <div class="fs-empty">{t('settings.fileScanner.empty')}</div>
   {:else}
     <div class="fs-list">
       {#each paths as p (p.id)}
@@ -481,31 +478,32 @@
 
         <div class="fs-row" class:disabled={!p.enabled}>
           <div class="fs-row-main">
-            <span class="fs-kind-badge">{p.kind === 'folder' ? 'Folder' : 'File'}</span>
+            <span class="fs-kind-badge">{p.kind === 'folder' ? t('settings.fileScanner.folderKind') : t('settings.fileScanner.fileKind')}</span>
             <span class="fs-path" title={p.path}>{p.path}</span>
           </div>
 
           <div class="fs-row-meta">
             {#if stale?.root_missing}
-              <span class="fs-stale-badge fs-stale-root" title="The scanned path no longer exists on disk">
-                Path missing on disk
+              <span class="fs-stale-badge fs-stale-root" title={t('settings.fileScanner.pathMissingTitle')}>
+                {t('settings.fileScanner.pathMissing')}
               </span>
             {:else if stale && stale.missing_files > 0}
-              <span class="fs-stale-badge" title="Some indexed files were deleted or moved">
-                Stale: {stale.missing_files} missing
+              <span class="fs-stale-badge" title={t('settings.fileScanner.staleFilesTitle')}>
+                {t('settings.fileScanner.staleMissing', { count: stale.missing_files })}
               </span>
             {/if}
             {#if p.error_msg && !scanning}
-              <span class="fs-error" title={p.error_msg}>Error</span>
+              <span class="fs-error" title={p.error_msg}>{t('common.error')}</span>
             {/if}
-            <span class="fs-file-count">{p.file_count} file{p.file_count !== 1 ? 's' : ''}</span>
-            <span class="fs-scanned-at" title="Last scanned">{formatDate(p.last_scanned_at)}</span>
+            <span class="fs-file-count">{tp('settings.fileScanner.fileCount', p.file_count, { count: p.file_count })}</span>
+            <span class="fs-scanned-at" title={t('settings.fileScanner.lastScannedTitle')}>{formatDate(p.last_scanned_at)}</span>
           </div>
 
           {#if stale?.root_missing}
             <p class="fs-stale-root-msg">
-              This index entry points at a path that is gone. Use <strong>Remove</strong> to delete the entry
-              and its vectors (no separate clean-up needed).
+              {#each tParts('settings.fileScanner.staleRootMsg') as part}
+                {#if part.type === 'text'}{part.value}{:else if part.name === 'remove'}<strong>{t('settings.shared.remove')}</strong>{/if}
+              {/each}
             </p>
           {/if}
 
@@ -519,7 +517,12 @@
                   {#if prog?.error}
                     {prog.error}
                   {:else}
-                    File {prog?.visited ?? 0} / {prog?.total ?? 0}{@const s = prog?.skipped ?? 0}{s > 0 ? ` (${s} unchanged)` : ''}
+                    {@const s = prog?.skipped ?? 0}
+                    {t('settings.fileScanner.progressFile', {
+                      visited: prog?.visited ?? 0,
+                      total: prog?.total ?? 0,
+                      unchangedPart: s > 0 ? t('settings.fileScanner.unchangedPart', { count: s }) : '',
+                    })}
                   {/if}
                 </span>
               </div>
@@ -537,85 +540,88 @@
 
           {#if prog?.done && ((prog?.permanently_skipped ?? 0) > 0 || (prog?.permanently_skipped_chunks ?? 0) > 0)}
             <p class="fs-hint fs-skip-summary">
-              Indexed with {prog.permanently_skipped} skipped file(s), {prog.permanently_skipped_chunks} skipped chunk(s).
+              {t('settings.fileScanner.skipSummary', {
+                files: prog.permanently_skipped,
+                chunks: prog.permanently_skipped_chunks,
+              })}
             </p>
           {/if}
 
           <div class="fs-row-actions">
-            <label class="fs-toggle" title={p.enabled ? 'Disable (excludes from RAG)' : 'Enable'}>
+            <label class="fs-toggle" title={p.enabled ? t('settings.fileScanner.toggleDisableTitle') : t('settings.fileScanner.toggleEnableTitle')}>
               <input
                 type="checkbox"
                 checked={p.enabled}
                 onchange={(e) => togglePath(p.id, /** @type {HTMLInputElement} */ (e.target).checked)}
               />
-              {p.enabled ? 'Enabled' : 'Disabled'}
+              {p.enabled ? t('settings.fileScanner.enabled') : t('settings.fileScanner.disabled')}
             </label>
             {#if p.kind === 'file'}
               {#if lastImportedNoteId[p.id]}
                 <button
                   class="fs-action-btn fs-view-btn"
                   onclick={() => window.dispatchEvent(new CustomEvent('grimoire:navigate-note', { detail: { noteId: lastImportedNoteId[p.id] } }))}
-                  title="Open the imported note in the editor"
+                  title={t('settings.fileScanner.viewNoteTitle')}
                 >
-                  View note
+                  {t('settings.fileScanner.viewNote')}
                 </button>
               {/if}
               <button
                 class="fs-action-btn"
                 onclick={() => importAsNote(p)}
                 disabled={scanning || importingNoteId === p.id}
-                title="Copy the file content into a new note in the Unfiled folder"
+                title={t('settings.fileScanner.turnIntoNoteTitle')}
               >
-                {importingNoteId === p.id ? 'Importing…' : 'Turn into note'}
+                {importingNoteId === p.id ? t('settings.fileScanner.importing') : t('settings.fileScanner.turnIntoNote')}
               </button>
             {/if}
             <button
               class="fs-action-btn"
               onclick={() => stopScan(p.id)}
               disabled={!scanning}
-              title="Stop the current indexing run for this path"
+              title={t('settings.fileScanner.stopTitle')}
             >
-              Stop
+              {t('settings.shared.stop')}
             </button>
             <button
               class="fs-action-btn"
               onclick={() => rescan(p.id)}
               disabled={scanning}
-              title="Re-index all files in this path"
+              title={t('settings.fileScanner.rescanTitle')}
             >
-              Rescan
+              {t('settings.fileScanner.rescan')}
             </button>
             <button
               type="button"
               class="fs-action-btn"
               onclick={() => clearStaleFiles(p.id)}
               disabled={scanning || stale?.root_missing || !stale || stale.missing_files === 0}
-              title="Remove index rows for files that no longer exist on disk"
+              title={t('settings.fileScanner.cleanUpTitle')}
             >
-              Clean up
+              {t('settings.fileScanner.cleanUp')}
             </button>
             <button
               type="button"
               class="fs-action-btn"
               onclick={() => toggleExcludesEditor(p)}
-              title="Edit per-path exclude globs (Rescan to apply)"
+              title={t('settings.fileScanner.excludesTitle')}
             >
-              {showExcludesFor === p.id ? 'Hide excludes' : 'Excludes'}
+              {showExcludesFor === p.id ? t('settings.fileScanner.hideExcludes') : t('settings.fileScanner.excludes')}
             </button>
             <button
               class="fs-action-btn fs-remove-btn"
               class:fs-remove-emphasis={stale?.root_missing}
               onclick={() => removePath(p.id)}
               disabled={scanning}
-              title="Remove this path and delete its indexed data"
+              title={t('settings.fileScanner.removeTitle')}
             >
-              Remove
+              {t('settings.shared.remove')}
             </button>
           </div>
 
           {#if showExcludesFor === p.id}
             <div class="fs-excludes-panel">
-              <p class="fs-hint">One pattern per line. Merged with global excludes. Save, then Rescan.</p>
+              <p class="fs-hint">{t('settings.fileScanner.excludesPanelHint')}</p>
               <textarea
                 class="fs-exclude-textarea"
                 rows="4"
@@ -626,8 +632,8 @@
                 }}
               ></textarea>
               <div class="fs-excludes-actions">
-                <button type="button" class="fs-add-btn" onclick={() => savePathExcludes(p.id)}>Save excludes</button>
-                <button type="button" class="fs-action-btn" onclick={() => { showExcludesFor = null; }}>Cancel</button>
+                <button type="button" class="fs-add-btn" onclick={() => savePathExcludes(p.id)}>{t('settings.fileScanner.saveExcludes')}</button>
+                <button type="button" class="fs-action-btn" onclick={() => { showExcludesFor = null; }}>{t('common.cancel')}</button>
               </div>
             </div>
           {/if}

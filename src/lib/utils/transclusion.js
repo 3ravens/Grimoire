@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { marked } from 'marked';
+import { t } from '../i18n/t.js';
+import { enableRootChecklistInputs, annotateTaskListItems, normalizeChecklistMarkdownForRender } from './editorLists.js';
 import { sanitizeNoteHtml } from './sanitize.js';
 
 /** Maximum nesting depth for `![[title]]` embeds (inclusive of first expansion). */
@@ -85,11 +87,15 @@ export function splitMarkdownByEmbeds(source) {
  * Render markdown with `![[note title]]` transclusions expanded (read-only embeds).
  *
  * @param {string} markdown
- * @param {{ rootNoteId?: number | null }} [opts]
+ * @param {{
+ *   rootNoteId?: number | null,
+ *   interactiveChecklists?: boolean,
+ * }} [opts]
  * @returns {Promise<string>} HTML (same safety model as `marked.parse`).
  */
 export async function renderTransclusionMarkdownToHtml(markdown, opts = {}) {
   const rootId = opts.rootNoteId ?? null;
+  const interactiveChecklists = opts.interactiveChecklists === true;
   const initialStack = rootId != null ? [rootId] : [];
   /** @type {Map<string, EmbedResolve>} */
   const memo = new Map();
@@ -118,7 +124,7 @@ export async function renderTransclusionMarkdownToHtml(markdown, opts = {}) {
    */
   async function renderChunk(md, stack, depth) {
     if (depth > TRANSCLUSION_MAX_DEPTH) {
-      return '<p class="note-embed-stub note-embed-stub--depth">Embedded note omitted (maximum depth reached)</p>';
+      return `<p class="note-embed-stub note-embed-stub--depth">${t('transclusion.maxDepth')}</p>`;
     }
 
     const parts = splitMarkdownByEmbeds(md);
@@ -133,16 +139,26 @@ export async function renderTransclusionMarkdownToHtml(markdown, opts = {}) {
     await ensureResolved(embedKeys);
 
     const out = [];
+    /** Running checklist index across root text segments only. */
+    let checklistIndex = 0;
     for (const part of parts) {
       if (part.type === 'text') {
-        out.push(sanitizeNoteHtml(marked.parse(part.value)));
+        let html = annotateTaskListItems(
+          marked.parse(normalizeChecklistMarkdownForRender(part.value)),
+        );
+        if (depth === 0 && interactiveChecklists) {
+          const enabled = enableRootChecklistInputs(html, checklistIndex);
+          html = enabled.html;
+          checklistIndex = enabled.nextIndex;
+        }
+        out.push(sanitizeNoteHtml(html));
         continue;
       }
 
       const title = part.value.trim();
       if (!title) {
         out.push(
-          '<p class="note-embed-stub note-embed-stub--missing"><span class="note-embed-stub-label">Note not found:</span> <em>(empty title)</em></p>',
+          `<p class="note-embed-stub note-embed-stub--missing"><span class="note-embed-stub-label">${t('transclusion.notFoundLabel')}</span> <em>${t('transclusion.emptyTitle')}</em></p>`,
         );
         continue;
       }
@@ -150,13 +166,13 @@ export async function renderTransclusionMarkdownToHtml(markdown, opts = {}) {
       const r = memo.get(title) ?? { found: false, locked: false, content: '' };
       if (!r.found) {
         out.push(
-          `<p class="note-embed-stub note-embed-stub--missing"><span class="note-embed-stub-label">Note not found:</span> <em>${escapeHtml(title)}</em></p>`,
+          `<p class="note-embed-stub note-embed-stub--missing"><span class="note-embed-stub-label">${t('transclusion.notFoundLabel')}</span> <em>${escapeHtml(title)}</em></p>`,
         );
         continue;
       }
       if (r.locked) {
         out.push(
-          `<p class="note-embed-stub note-embed-stub--locked"><span class="note-embed-stub-label">Locked note</span> (unlock the folder to view): <em>${escapeHtml(title)}</em></p>`,
+          `<p class="note-embed-stub note-embed-stub--locked"><span class="note-embed-stub-label">${t('transclusion.lockedLabel')}</span> ${t('transclusion.lockedHint')} <em>${escapeHtml(title)}</em></p>`,
         );
         continue;
       }
@@ -164,7 +180,7 @@ export async function renderTransclusionMarkdownToHtml(markdown, opts = {}) {
       const id = r.id ?? null;
       if (id != null && stack.includes(id)) {
         out.push(
-          '<p class="note-embed-stub note-embed-stub--circular">Embedded note omitted (circular reference)</p>',
+          `<p class="note-embed-stub note-embed-stub--circular">${t('transclusion.circular')}</p>`,
         );
         continue;
       }

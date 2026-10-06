@@ -11,6 +11,7 @@ export const FEATURE_GUIDE = `## Grimoire Feature Guide
 - F11: Toggle focus / distraction-free mode (hides all panels)
 - Ctrl+Shift+L: Lock vault
 - Ctrl+Shift+Enter: Send selected text to chat
+- In the note editor: Enter continues Markdown lists; Tab / Shift+Tab nest / unnest list items; Ctrl+Enter toggles checklists; in Read mode, click a checklist box to toggle and save
 - Delete: Delete active note
 - M (on kanban card): Start keyboard move mode
 - Arrow keys: Navigate tabs, calendar, quick switcher, menus

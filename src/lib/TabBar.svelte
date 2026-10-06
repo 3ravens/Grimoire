@@ -1,7 +1,10 @@
 <script>
   import { getContext } from 'svelte';
+  import { t } from './i18n/t.js';
+  import { displayTabLabel } from './i18n/displayTabLabel.js';
 
   const ts = getContext('ts');
+  const fs = getContext('fs');
 
   const { onActivate, onClose, onRename, onNew } = $props();
 
@@ -33,6 +36,14 @@
   function handleRenameKeydown(e) {
     if (e.key === 'Enter')  { e.preventDefault(); commitRename(); }
     if (e.key === 'Escape') { editingTabId = null; }
+  }
+
+  function tabLabel(tab) {
+    const folderName =
+      tab.folderId != null
+        ? fs.folders.find((f) => f.id === tab.folderId)?.name
+        : undefined;
+    return displayTabLabel(tab, { folderName });
   }
 
   function handleTabListKeydown(e) {
@@ -75,7 +86,7 @@
 -->
 <div class="tabbar" data-tauri-drag-region>
   <!-- tab-list uses display:contents so flex layout is unaffected -->
-  <div class="tab-list" role="tablist" aria-label="Open tabs" aria-orientation="horizontal" tabindex="-1" onkeydown={handleTabListKeydown}>
+  <div class="tab-list" role="tablist" aria-label={t('tabs.openTabsAria')} aria-orientation="horizontal" tabindex="-1" onkeydown={handleTabListKeydown}>
     {#each tabs as tab (tab.id)}
       <div
         class="tab"
@@ -91,7 +102,7 @@
           tabindex={tab.id === activeTabId ? 0 : -1}
           onclick={() => onActivate(tab.id)}
           ondblclick={() => startRename(tab.id)}
-          title={tab.customLabel ?? tab.label}
+          title={tabLabel(tab)}
         >
           {#if editingTabId === tab.id}
             <input
@@ -100,17 +111,17 @@
               onblur={commitRename}
               onkeydown={handleRenameKeydown}
               onclick={(e) => e.stopPropagation()}
-              aria-label="Rename tab"
+              aria-label={t('tabs.renameAria')}
             />
           {:else}
-            {tab.customLabel ?? tab.label}
+            {tabLabel(tab)}
           {/if}
         </button>
         <button
           class="tab-close"
           onclick={(e) => { e.stopPropagation(); onClose(tab.id); }}
-          title="Close tab"
-          aria-label="Close {tab.customLabel ?? tab.label}"
+          title={t('tabs.closeTitle')}
+          aria-label={t('tabs.closeAria', { label: tabLabel(tab) })}
           tabindex="-1"
         >✕</button>
       </div>
@@ -118,7 +129,7 @@
   </div>
 
   <!-- + button sits immediately after the last tab -->
-  <button class="tab-new" onclick={onNew} title="New tab (Ctrl+T)" aria-label="New tab">+</button>
+  <button class="tab-new" onclick={onNew} title={t('tabs.newTabShortcut')} aria-label={t('tabs.newTabAria')}>+</button>
 
   <!-- Remaining space is drag region -->
   <div class="tabbar-fill" data-tauri-drag-region></div>

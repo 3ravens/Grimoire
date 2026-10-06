@@ -1,4 +1,5 @@
 <script>
+  import { t } from './i18n/t.js';
   /**
    * @typedef {{
    *   value: string,
@@ -23,7 +24,7 @@
     onUninstall = undefined,
     /** When set, uninstall is in progress for this option `value`. */
     uninstallBusyKey = null,
-    ariaLabel = 'Chat model',
+    ariaLabel = t('settings.llm.chatModelAria'),
     /** @type {'chat' | 'settings'} */
     variant = 'chat',
   } = $props();
@@ -122,11 +123,11 @@
             <button
               type="button"
               class="chat-model-combobox-remove"
-              title="Remove {opt.installedFull} from Ollama"
-              aria-label="Remove {opt.installedFull} from Ollama"
+              title={t('views.chatModelRemove', { name: opt.installedFull })}
+              aria-label={t('views.chatModelRemoveAria', { name: opt.installedFull })}
               disabled={!!uninstallBusyKey}
               onclick={(e) => onRemoveClick(e, opt)}
-            >Remove</button>
+            >{t('common.remove')}</button>
           {/if}
         </div>
       {/each}

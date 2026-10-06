@@ -1,4 +1,5 @@
 <script>
+  import { t, tParts } from './i18n/t.js';
   import { getContext } from 'svelte';
   import { autofocus } from './utils/autofocus.js';
   import LockClosedIcon from './icons/LockClosedIcon.svelte';
@@ -67,42 +68,51 @@
     {/if}
   </h2>
   {#if tagFilter}
-    <button class="clear-filter-btn" onclick={clearTagFilter} title="Clear tag filter">✕</button>
+    <button class="clear-filter-btn" onclick={clearTagFilter} title={t('notes.clearTagFilter')}>✕</button>
   {/if}
-  <select class="sort-select" bind:value={noteSort} title="Sort notes" aria-label="Sort notes">
-    <option value="modified">Modified</option>
-    <option value="created">Created</option>
-    <option value="name">Name</option>
+  <select class="sort-select" bind:value={noteSort} title={t('notes.sortNotes')} aria-label={t('notes.sortNotes')}>
+    <option value="modified">{t('notes.sortModified')}</option>
+    <option value="created">{t('notes.sortCreated')}</option>
+    <option value="name">{t('notes.sortName')}</option>
   </select>
   {#if !tagFilter && selectedFolderId && selectedFolderId !== 'all'}
     <button
       class="panel-view-btn"
       class:active={tableViewOpen}
       aria-pressed={tableViewOpen}
-      title="Table view"
-      aria-label="Table view"
+      title={t('notes.tableView')}
+      aria-label={t('notes.tableView')}
       onclick={onTableViewToggle}
-    >Table</button>
+    >{t('notes.table')}</button>
     <button
       class="panel-view-btn"
-      title="Kanban view"
-      aria-label="Board view"
+      title={t('notes.boardView')}
+      aria-label={t('notes.boardView')}
       onclick={() => onOpenKanbanTab?.(selectedFolderId, folders.find(f => f.id === selectedFolderId)?.name ?? '')}
-    >Board</button>
+    >{t('notes.board')}</button>
   {/if}
 </div>
 
 {#if showFolderUnlockProgress}
   <p class="folder-unlock-index-status" role="status">
     {#if showFolderUnlockProgress.embeddingChunks}
-      Embedding “{showFolderUnlockProgress.embeddingChunks.note_title}”… {showFolderUnlockProgress.embeddingChunks.done}/{showFolderUnlockProgress.embeddingChunks.total} chunks · notes {showFolderUnlockProgress.processed}/{showFolderUnlockProgress.total}
+      {t('notes.embeddingNoteChunks', {
+        title: showFolderUnlockProgress.embeddingChunks.note_title,
+        done: showFolderUnlockProgress.embeddingChunks.done,
+        total: showFolderUnlockProgress.embeddingChunks.total,
+        processed: showFolderUnlockProgress.processed,
+        noteTotal: showFolderUnlockProgress.total,
+      })}
     {:else}
-      Indexing notes for AI… {showFolderUnlockProgress.processed}/{showFolderUnlockProgress.total}
+      {t('notes.indexingNotesForAi', {
+        processed: showFolderUnlockProgress.processed,
+        total: showFolderUnlockProgress.total,
+      })}
     {/if}
   </p>
 {/if}
 
-<ul role="listbox" aria-label="Notes">
+<ul role="listbox" aria-label={t('notes.notesListAria')}>
   {#each sortedNotes as note (note.id)}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
     <li
@@ -119,7 +129,7 @@
       onkeydown={(e) => { if (e.key === 'Enter' && !note.locked) { onOpenNote?.(note); } }}
     >
       {#if note.locked}
-        <span class="row-btn note-title note-locked"><span class="lock-icon"><LockClosedIcon /></span>(locked)</span>
+        <span class="row-btn note-title note-locked"><span class="lock-icon"><LockClosedIcon /></span>{t('notes.lockedShort')}</span>
       {:else if inlineRenaming?.id === note.id && inlineRenaming?.type === 'note'}
         <input
           class="inline-rename"
@@ -129,7 +139,7 @@
           onblur={() => onConfirmInlineRename?.()}
         />
       {:else}
-        <span class="drag-handle" title="Drag to move" aria-hidden="true">⠇</span>
+        <span class="drag-handle" title={t('notes.dragToMove')} aria-hidden="true">⠇</span>
         <span class="row-btn note-title">{note.title}</span>
         <button
           class="icon-btn danger"
@@ -139,14 +149,14 @@
             e.preventDefault();
             onDeleteNote?.(note.id);
           }}
-          title="Delete note"
-          aria-label="Delete note {note.title}"
+          title={t('notes.deleteNote')}
+          aria-label={t('notes.deleteNoteAria', { title: note.title })}
         >✕</button>
       {/if}
     </li>
   {:else}
     <li class="empty" role="status">
-      No notes here yet. Use the <strong>new note</strong> button in the folder column to create your first note.
+      {#each tParts('notes.emptyFolder', { newNote: t('notes.newNoteStrong') }) as part}{#if part.type === 'slot' && part.name === 'newNote'}<strong>{part.value}</strong>{:else}{part.value}{/if}{/each}
     </li>
   {/each}
 </ul>
@@ -155,14 +165,23 @@
   {#if isReindexing}
     {#if reindexProgress && reindexProgress.total > 0}
       {#if reindexProgress.embeddingChunks}
-        Embedding “{reindexProgress.embeddingChunks.note_title}”… {reindexProgress.embeddingChunks.done}/{reindexProgress.embeddingChunks.total} chunks · notes {reindexProgress.processed}/{reindexProgress.total}
+        {t('notes.embeddingNoteChunks', {
+          title: reindexProgress.embeddingChunks.note_title,
+          done: reindexProgress.embeddingChunks.done,
+          total: reindexProgress.embeddingChunks.total,
+          processed: reindexProgress.processed,
+          noteTotal: reindexProgress.total,
+        })}
       {:else}
-        Indexing… {reindexProgress.processed}/{reindexProgress.total}
+        {t('notes.indexingProgress', {
+          processed: reindexProgress.processed,
+          total: reindexProgress.total,
+        })}
       {/if}
     {:else}
-      Indexing…
+      {t('notes.indexing')}
     {/if}
   {:else}
-    Re-index all notes
+    {t('notes.reindexAllNotes')}
   {/if}
 </button>

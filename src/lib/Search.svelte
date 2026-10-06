@@ -2,6 +2,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { getContext } from 'svelte';
   import { sanitizeSearchSnippet } from './utils/sanitize.js';
+  import { t } from './i18n/t.js';
 
   const fs = getContext('fs');
   const ts = getContext('ts');
@@ -141,28 +142,28 @@
       onkeydown={handleKeydown}
       class="search-input"
       type="search"
-      placeholder="Search notes…"
-      aria-label="Search notes"
+      placeholder={t('views.searchPlaceholder')}
+      aria-label={t('views.searchAria')}
       autocomplete="off"
       spellcheck="false"
     />
     {#if query}
-      <button class="clear-btn" onclick={() => { query = ''; results = []; }} aria-label="Clear search">✕</button>
+      <button class="clear-btn" onclick={() => { query = ''; results = []; }} aria-label={t('views.clearSearch')}>✕</button>
     {/if}
   </div>
 
-  <div class="search-body" role="region" aria-label="Search results" aria-live="polite" aria-atomic="true" aria-busy={loading}>
+  <div class="search-body" role="region" aria-label={t('views.resultsRegion')} aria-live="polite" aria-atomic="true" aria-busy={loading}>
     {#if loading}
-      <span class="status-msg">Searching…</span>
+      <span class="status-msg">{t('views.searching')}</span>
     {:else if errorMsg}
       <span class="status-msg error">{errorMsg}</span>
     {:else if query.trim() && results.length === 0}
-      <span class="status-msg">No results for <em>{query}</em></span>
+      <span class="status-msg">{t('views.noResults', { query })}</span>
     {:else if !query.trim()}
-      <span class="status-msg hint">Type to search your notes</span>
+      <span class="status-msg hint">{t('views.typeToSearch')}</span>
     {:else}
       {#if semanticLoading}
-        <span class="status-msg refining">Refining with semantic search…</span>
+        <span class="status-msg refining">{t('views.refiningSemantic')}</span>
       {/if}
       <ul class="result-list">
         {#each results as result (result.note_id)}
@@ -171,7 +172,7 @@
               <div class="result-header">
                 <span class="result-title">{result.title}</span>
                 <span class="match-badge" class:badge-both={result.matched_by === 'both'}>
-                  {result.matched_by === 'both' ? 'FTS + Semantic' : result.matched_by === 'fts' ? 'FTS' : 'Semantic'}
+                  {result.matched_by === 'both' ? t('views.matchBoth') : result.matched_by === 'fts' ? t('views.matchFts') : t('views.matchSemantic')}
                 </span>
               </div>
               {#if result.folder_id && folderMap[result.folder_id]}

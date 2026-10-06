@@ -3,6 +3,15 @@
 
   import { untrack, tick, onMount, getContext } from 'svelte';
   import { FEATURE_GUIDE } from './utils/featureGuide.js';
+  import { t } from './i18n/t.js';
+  import { formatAppError } from './i18n/formatAppError.js';
+  import {
+    openNoteSystemPart,
+    userNotesSystemPart,
+    wikipediaSystemPart,
+    scannedFilesSystemPart,
+    assembleChatSystemContent,
+  } from './llm/prompts.js';
   import { CURATED_CHAT_MODELS, DEFAULT_CHAT_MODEL, isExtraInstalledModel, statsForAnyModelId, isEmbeddingModelId } from './constants/chatModels.js';
   import { assessChatModelHardware } from './utils/chatModelHardware.js';
   import { firstInstalledFullName } from './utils/ollamaModelMatch.js';
@@ -16,6 +25,8 @@
   import { CLEAR_CONVERSATION_LABEL } from './services/chatSessionService.svelte.js';
   import ModelDownloadModal from './ModelDownloadModal.svelte';
   import ChatModelCombobox from './ChatModelCombobox.svelte';
+  import SlidersIcon from './icons/SlidersIcon.svelte';
+  import TrashIcon from './icons/TrashIcon.svelte';
 
   const ns       = getContext('ns');
   const ts       = getContext('ts');
@@ -57,37 +68,30 @@
   const activeViewLabel = $derived.by(() => {
     if (!activeView || !activeViewFolderId) return '';
     const folder = fs.folders.find(f => f.id === activeViewFolderId);
-    const name = folder?.name ?? 'Unknown';
-    return activeView === 'kanban' ? `Kanban — ${name}` : `Table — ${name}`;
+    const name = folder?.name ?? t('common.unknown');
+    return activeView === 'kanban'
+      ? t('chat.activeViewKanban', { name })
+      : t('chat.activeViewTable', { name });
   });
   const activeViewFilters = $derived(ts.activeViewFilters);
 
   // ── Helpers ────────────────────────────────────────────────────────────────
-
-  /** Format a Tauri AppError `{kind, message}` object into a human-readable string.
-   *  Appends an actionable hint for known error kinds. */
-  function fmtAppError(e) {
-    const msg = e?.message ?? String(e);
-    if (e?.kind === 'OllamaUnavailable') return `${msg} — Make sure Ollama is running: ollama serve`;
-    if (e?.kind === 'EmbeddingFailed')   return `${msg} — Check that your embedding model is pulled (ollama pull <model>)`;
-    return msg;
-  }
 
   // ── State ──────────────────────────────────────────────────────────────────
 
   // ── Chat input placeholder ──────────────────────────────────────────────────
 
   const PLACEHOLDERS = [
-    'Consult the grimoire…',
-    'How to cast a fireball?',
-    'What are the ingredients for a healing potion?',
-    'Translate this ancient rune…',
-    'Ask the oracle…',
-    'Summon an answer from the void…',
-    'Which spell works best against undead?',
-    'Where did I write about the lost city?',
-    'What does my future hold? (Ask about your notes)',
-    'Speak, mortal…',
+    t('chat.placeholders.p0'),
+    t('chat.placeholders.p1'),
+    t('chat.placeholders.p2'),
+    t('chat.placeholders.p3'),
+    t('chat.placeholders.p4'),
+    t('chat.placeholders.p5'),
+    t('chat.placeholders.p6'),
+    t('chat.placeholders.p7'),
+    t('chat.placeholders.p8'),
+    t('chat.placeholders.p9'),
   ];
 
   const inputPlaceholder = PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)];
@@ -141,9 +145,7 @@
     if (!opt.installedFull || uninstallBusy) return;
     const label = opt.installedFull;
     if (
-      !confirm(
-        `Remove "${label}" from Ollama? This deletes the local copy; you can pull it again later.`,
-      )
+      !confirm(t('chat.uninstallConfirm', { label }))
     ) {
       return;
     }
@@ -156,7 +158,7 @@
       }
       await refreshExtraInstalledModels();
     } catch (e) {
-      error = fmtAppError(e);
+      error = formatAppError(e);
     } finally {
       uninstallBusy = null;
     }
@@ -186,28 +188,28 @@
    * @param {string} next
    */
   async function commitChatModelChoice(next) {
-    const t = String(next).trim();
-    if (!t || selectModelBusy || uninstallBusy) return;
+    const chosen = String(next).trim();
+    if (!chosen || selectModelBusy || uninstallBusy) return;
     if (isPullInFlight()) return;
-    if (isEmbeddingModelId(t)) {
-      error = 'That model is for embeddings (semantic search), not chat. Pick a chat model here, or change the embedding model under Settings → LLM.';
+    if (isEmbeddingModelId(chosen)) {
+      error = t('chat.embeddingNotChat');
       modelSelectUi = model;
       return;
     }
-    if (t === model) {
+    if (chosen === model) {
       modelSelectUi = model;
       return;
     }
     selectModelBusy = true;
     error = '';
     try {
-      const installed = await checkChatModelInstalled(t);
-      const hwWarn = assessChatModelHardware(t, hardwareReport);
+      const installed = await checkChatModelInstalled(chosen);
+      const hwWarn = assessChatModelHardware(chosen, hardwareReport);
 
       if (!installed) {
         modelSelectUi = model;
         modelDownloadModal = {
-          model: t,
+          model: chosen,
           phase: 'confirm',
           confirmKind: 'downloadMissing',
           hardwareWarning: hwWarn.level === 'ok' ? null : hwWarn,
@@ -219,9 +221,9 @@
       }
 
       if (hwWarn.level !== 'ok') {
-        modelSelectUi = t;
+        modelSelectUi = chosen;
         modelDownloadModal = {
-          model: t,
+          model: chosen,
           phase: 'confirm',
           confirmKind: 'installedRisk',
           hardwareWarning: hwWarn,
@@ -232,12 +234,12 @@
         return;
       }
 
-      model = t;
-      modelSelectUi = t;
-      await saveChatModelSetting(t);
+      model = chosen;
+      modelSelectUi = chosen;
+      await saveChatModelSetting(chosen);
       await refreshExtraInstalledModels();
     } catch (e) {
-      error = fmtAppError(e);
+      error = formatAppError(e);
       modelSelectUi = model;
     } finally {
       selectModelBusy = false;
@@ -291,7 +293,7 @@
       });
       const ok = await checkChatModelInstalled(name);
       if (!ok) {
-        throw new Error('Model still not reported as installed after pull.');
+        throw new Error(t('errors.modelNotInstalledAfterPull'));
       }
       model = name;
       modelSelectUi = name;
@@ -306,7 +308,7 @@
         hardwareWarning: null,
         statusLine: '',
         progress: null,
-        errorMessage: fmtAppError(e),
+        errorMessage: formatAppError(e),
       };
     }
   }
@@ -462,9 +464,7 @@
     if (activeNote) {
       const openTitle = (ns.editorTitle ?? activeNote.title ?? '').trim() || activeNote.title;
       const openBody = ns.editorContent ?? activeNote.content ?? '';
-      systemParts.push(
-        `## Note the user currently has open\n### ${openTitle}\n${openBody}`
-      );
+      systemParts.push(openNoteSystemPart(openTitle, openBody));
     }
 
     // ── 1b. Board/table context ──────────────────────────────────────────────
@@ -607,7 +607,7 @@
       try {
         matches = await invoke('search_notes', { query: notesSearchQuery });
       } catch (e) {
-        chatSession.notesError = `Note search failed: ${fmtAppError(e)}`;
+        chatSession.notesError = t('errors.noteSearchFailed', { msg: formatAppError(e) });
       }
       const byTitle = {};
       const pinned = dailyNoteResolution?.note;
@@ -624,7 +624,7 @@
         const context = Object.entries(byTitle)
           .map(([title, excerpts]) => `[Note: "${title}"]\n${excerpts.join('\n')}`)
           .join('\n\n');
-        systemParts.push(`USER NOTES:\n${context}`);
+        systemParts.push(userNotesSystemPart(context));
       }
     }
 
@@ -645,7 +645,7 @@
         const wikiContext = wikiMatches
           .map(m => `[Wikipedia: "${m.title}"]\n${m.excerpts.join('\n')}`)
           .join('\n\n');
-        systemParts.push(`WIKIPEDIA ARTICLES:\n${wikiContext}`);
+        systemParts.push(wikipediaSystemPart(wikiContext));
       }
     }
 
@@ -662,98 +662,24 @@
         const fileContext = fileMatches
           .map(m => `[File: "${m.title}" (${m.file_path})]\n${m.excerpts.join('\n')}`)
           .join('\n\n');
-        systemParts.push(`SCANNED FILES:\n${fileContext}`);
+        systemParts.push(scannedFilesSystemPart(fileContext));
       }
     }
 
     // ── Assemble system message ──────────────────────────────────────────────
     if (systemParts.length > 0) {
-      const hasWikiContext  = chatSession.wikiSourcesUsed.length > 0;
+      const hasWikiContext = chatSession.wikiSourcesUsed.length > 0;
       const hasNotesContext = chatSession.sourcesUsed.length > 0;
       const hasFilesContext = fileMatches.length > 0;
-      const hasAnyContext   = hasNotesContext || hasWikiContext || hasFilesContext;
-
-      // Build a strict source-priority preamble that varies based on what was actually retrieved.
-      let preamble =
-        `You are a personal knowledge assistant embedded in Grimoire, a local note-taking app.\n` +
-        `You also have access to a feature guide that documents Grimoire's keyboard shortcuts and features.\n`;
-
-      if (dailyNoteResolution) {
-        const fmt = settings.dailyNoteFormat;
-        preamble +=
-          `Daily notes in the "Daily Notes" folder use ${fmt} titles ` +
-          `(e.g. 5 May 2026 → "${dailyNoteResolution.display_title}"). ` +
-          `When the user asks about a calendar day, match that title format.\n`;
-      }
-
-      const sourceList = [hasNotesContext && 'notes', hasWikiContext && 'wiki', hasFilesContext && 'files'].filter(Boolean);
-
-      if (sourceList.length >= 2) {
-        const labels = { notes: "the user's notes", wiki: 'Wikipedia articles', files: 'scanned files' };
-        const sourcesDesc = sourceList.map(s => labels[s]).join(' AND ');
-        preamble +=
-          `You have been given ${sourcesDesc} for this question.\n` +
-          `STRICT SOURCE PRIORITY — follow this order without exception:\n` +
-          (hasNotesContext ? `  1. Answer first from the user's notes if they contain genuinely relevant information.\n` : '') +
-          (hasWikiContext  ? `  ${hasNotesContext ? 2 : 1}. Then draw on the Wikipedia articles provided.\n` : '') +
-          (hasFilesContext ? `  ${(hasNotesContext ? 1 : 0) + (hasWikiContext ? 1 : 0) + 1}. Then draw on the scanned files provided.\n` : '') +
-          `  ${sourceList.length + 1}. Only use your own general knowledge to fill gaps that none of the provided sources cover. Do NOT lead with general knowledge when provided sources exist.`;
-      } else if (hasWikiContext) {
-        preamble +=
-          `You have been given Wikipedia articles for this question. The user's notes were not relevant.\n` +
-          `STRICT SOURCE PRIORITY — follow this order without exception:\n` +
-          `  1. Answer from the Wikipedia articles provided. They are your primary source.\n` +
-          `  2. Only use your own general knowledge to fill gaps the Wikipedia articles do not cover. Do NOT lead with general knowledge when Wikipedia articles are available.`;
-      } else if (hasFilesContext) {
-        preamble +=
-          `You have been given scanned files for this question. The user's notes were not relevant.\n` +
-          `STRICT SOURCE PRIORITY — follow this order without exception:\n` +
-          `  1. Answer from the scanned files provided. They are your primary source.\n` +
-          `  2. Only use your own general knowledge to fill gaps the scanned files do not cover.`;
-      } else if (hasNotesContext) {
-        preamble +=
-          `You have been given the user's notes for this question.\n` +
-          `STRICT SOURCE PRIORITY — follow this order without exception:\n` +
-          `  1. Answer from the user's notes where they are genuinely relevant.\n` +
-          `  2. Only use your own general knowledge to fill gaps the notes do not cover.`;
-      } else {
-        preamble += `No relevant notes, Wikipedia articles, or scanned files were found for this question. Answer from your own general knowledge.`;
-      }
-
-      let content;
-      if (verbosity === 'caveman') {
-        content =
-          `${preamble}\n\n` +
-          systemParts.join('\n\n') +
-          `\n\nINSTRUCTIONS:\n` +
-          `- Compress the key facts into telegraphic bullet points — no full sentences, no filler words.\n` +
-          `- Example: "• metabolic process • microbes convert sugars → acids/gas/alcohol • lactic: yoghurt, kimchi"\n` +
-          `- Only use sources that are directly relevant to the question. Ignore off-topic sources.\n` +
-          `- Prefix each bullet with its source: "note:" for user notes, "wiki:" for Wikipedia, "general:" for your own knowledge.\n` +
-          `- Wrap any code or diagrams in triple-backtick code blocks.\n` +
-          `- Ignore [[ ]] and **.`;
-      } else {
-        let styleInstruction = '';
-        if (verbosity === 'thorough') {
-          styleInstruction = '\n\nSTYLE: Provide thorough, detailed answers with full context. Do not skip nuance.';
-        }
-        content =
-          `${preamble}\n\n` +
-          systemParts.join('\n\n') +
-          `\n\nINSTRUCTIONS:\n` +
-          `1. RELEVANCE GATE — Before using any source, ask: does this source directly answer the question? If not, discard it completely. Do not mention discarded sources. A source that merely shares vocabulary with the question is NOT relevant.\n` +
-          `2. Answer in natural prose. Do not output section labels, headers, or structural markers like [Note: …] or [Wikipedia: …].\n` +
-          `3. Follow the source priority above strictly. Do not open with general knowledge if provided sources cover the topic.\n` +
-          `4. Wrap all code samples, command examples, ASCII art, and diagrams in triple-backtick fenced code blocks.\n` +
-          `5. Every sentence drawn from a source MUST be attributed inline — no exceptions:\n` +
-          `   - User notes: begin with "In your note on X, …" or "Your note on X explains that …" (use the exact note title)\n` +
-          `   - Wikipedia: begin with "According to Wikipedia's article on X, …" or "Wikipedia (X) explains that …" (use the exact article title)\n` +
-          `   - Scanned files: begin with "From your file X, …" or "Your file X states that …" (use the exact file title)\n` +
-          `   - General knowledge (only as fallback): begin with "Based on general knowledge, …"\n` +
-          `   - When switching sources mid-answer, explicitly signal the transition.\n` +
-          `6. Never fabricate a source attribution. Ignore formatting like [[ ]] or **.` +
-          styleInstruction;
-      }
+      const content = assembleChatSystemContent({
+        systemParts,
+        hasNotesContext,
+        hasWikiContext,
+        hasFilesContext,
+        dailyNoteResolution,
+        dailyNoteFormat: settings.dailyNoteFormat,
+        verbosity,
+      });
       payload = [{ role: 'system', content }, ...history];
     }
 
@@ -812,7 +738,7 @@
           && chatSession.messages[chatSession.messages.length - 1].content === '') {
         chatSession.messages = chatSession.messages.slice(0, -1);
       }
-      chatSession.streamError = fmtAppError(e);
+      chatSession.streamError = formatAppError(e);
     } finally {
       chatSession.isLoading = false;
     }
@@ -867,7 +793,7 @@
           && chatSession.messages[chatSession.messages.length - 1].content === '') {
         chatSession.messages = chatSession.messages.slice(0, -1);
       }
-      chatSession.streamError = fmtAppError(e);
+      chatSession.streamError = formatAppError(e);
     } finally {
       chatSession.isLoading = false;
     }
@@ -881,28 +807,28 @@
 
     const items = [
       {
-        label: 'Copy',
+        label: t('chat.copy'),
         action: () => navigator.clipboard.writeText(msg.content),
       },
       {
-        label: 'Copy as quote',
+        label: t('chat.copyAsQuote'),
         action: () => navigator.clipboard.writeText(`"${msg.content}"`),
       },
       ...(onInsertIntoNote ? [
         { divider: true },
         {
-          label: 'Insert into note',
+          label: t('chat.insertIntoNote'),
           action: () => onInsertIntoNote(msg.content),
         },
       ] : []),
       { divider: true },
       ...(isLastAssistant ? [{
-        label: 'Regenerate',
+        label: t('chat.regenerate'),
         disabled: chatSession.isLoading,
         action: regenerate,
       }] : []),
       {
-        label: 'Delete',
+        label: t('common.delete'),
         danger: true,
         disabled: chatSession.isLoading,
         action: () => deleteMessage(i),
@@ -1018,26 +944,24 @@
   {/if}
   {#if wizardAiSkipped}
     <div class="chat-hw-banner">
-      <strong>Chat is off.</strong>
-      You chose to skip AI setup. Install Ollama, pull models, and configure chat in
-      <strong>Settings → LLM</strong> (or enable override in <strong>Settings → Hardware</strong>).
+      <strong>{t('chat.wizardSkippedTitle')}</strong>
+      {t('chat.wizardSkippedBanner')}
     </div>
   {:else if !llmEnabled}
     <div class="chat-hw-banner">
-      <strong>LLM features unavailable.</strong>
-      Your hardware doesn’t meet the minimum requirements for chat. You can override this in
-      <strong>Settings → Hardware</strong>.
+      <strong>{t('chat.llmDisabledTitle')}</strong>
+      {t('chat.llmDisabledBanner')}
     </div>
   {/if}
 
   <div class="chat-header">
-    <span class="chat-title">Chat</span>
+    <span class="chat-title">{t('chat.title')}</span>
     <ChatModelCombobox
       variant="chat"
       selected={modelSelectUi}
       options={chatModelSelectOptions}
       disabled={selectModelBusy || isPullInFlight() || !!uninstallBusy || !chatEnabled}
-      ariaLabel="Chat model (Ollama)"
+      ariaLabel={t('chat.chatModelAria')}
       onOpenChange={(o) => {
         if (o) {
           chatOptsOpen = false;
@@ -1053,42 +977,34 @@
         class="chat-opts-btn"
         class:active={chatOptsOpen}
         onclick={() => (chatOptsOpen = !chatOptsOpen)}
-        title="Context options"
-        aria-label="Context options"
+        title={t('chat.contextOptions')}
+        aria-label={t('chat.contextOptions')}
         aria-expanded={chatOptsOpen}
       >
-        <!-- Sliders icon -->
-        <svg width="14" height="14" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-          <line x1="3"  y1="3"  x2="3"  y2="12"/>
-          <line x1="8"  y1="3"  x2="8"  y2="12"/>
-          <line x1="13" y1="3"  x2="13" y2="12"/>
-          <rect x="1"   y="5.5" width="4"  height="2" rx="1"/>
-          <rect x="6"   y="8.5" width="4"  height="2" rx="1"/>
-          <rect x="11"  y="4"   width="4"  height="2" rx="1"/>
-        </svg>
+        <SlidersIcon size={14} />
       </button>
 
       {#if chatOptsOpen}
         <div class="chat-opts-dropdown" role="menu">
-          <label class="chat-opt-row" title="Search your notes and inject the most relevant ones as context before each message (requires nomic-embed-text)">
+          <label class="chat-opt-row" title={t('chat.optNotesTitle')}>
             <input type="checkbox" bind:checked={useNotes} />
-            Use notes
+            {t('chat.useNotes')}
           </label>
-          <label class="chat-opt-row" class:disabled={!wikipediaEnabled} title="Search the indexed Wikipedia catalogue and inject relevant articles as context">
+          <label class="chat-opt-row" class:disabled={!wikipediaEnabled} title={t('chat.optWikiTitle')}>
             <input type="checkbox" bind:checked={useWiki} disabled={!wikipediaEnabled} />
-            Use wiki
+            {t('chat.useWiki')}
           </label>
-          <label class="chat-opt-row" title="Search scanned files (added in Settings → File Scanner) and inject relevant excerpts as context">
+          <label class="chat-opt-row" title={t('chat.optFilesTitle')}>
             <input type="checkbox" bind:checked={useFiles} />
-            Use files
+            {t('chat.useFiles')}
           </label>
-          <label class="chat-opt-row" class:disabled={!activeView} title="Include the current board or table view state as context for the LLM">
+          <label class="chat-opt-row" class:disabled={!activeView} title={t('chat.optViewTitle')}>
             <input type="checkbox" bind:checked={useViewContext} disabled={!activeView} />
-            Use view
+            {t('chat.useView')}
           </label>
-          <label class="chat-opt-row" title="Include a feature guide describing Grimoire keyboard shortcuts, view types, and commands">
+          <label class="chat-opt-row" title={t('chat.optGuideTitle')}>
             <input type="checkbox" bind:checked={useFeatureGuide} />
-            Use guide
+            {t('chat.useGuide')}
           </label>
         </div>
       {/if}
@@ -1100,12 +1016,10 @@
       title={CLEAR_CONVERSATION_LABEL}
       aria-label={CLEAR_CONVERSATION_LABEL}
     >
-      <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M2 4h11M5 4V2.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V4M6 7v4M9 7v4M3 4l.75 8.5a1 1 0 0 0 1 .9h5.5a1 1 0 0 0 1-.9L12 4"/>
-      </svg>
+      <TrashIcon size={15} />
     </button>
     {#if onClose}
-      <button class="chat-close-btn" onclick={onClose} aria-label="Close chat">✕</button>
+      <button class="chat-close-btn" onclick={onClose} aria-label={t('chat.closeChat')}>✕</button>
     {/if}
   </div>
 
@@ -1121,12 +1035,12 @@
         </div>
       {/if}
     {:else}
-      <p class="chat-empty">Consult the grimoire.</p>
+      <p class="chat-empty">{t('chat.emptyState')}</p>
     {/each}
 
     {#if chatSession.isLoading && (chatSession.messages.length === 0 || chatSession.messages[chatSession.messages.length - 1]?.role !== 'assistant' || chatSession.messages[chatSession.messages.length - 1]?.content === '')}
       <div class="chat-message assistant loading">
-        <p>Thinking…</p>
+        <p>{t('chat.thinking')}</p>
       </div>
     {/if}
   </div>
@@ -1142,7 +1056,7 @@
   {#if chatSession.sourcesUsed.length > 0 || chatSession.wikiSourcesUsed.length > 0}
     {#if !chatSession.isLoading}
     <details class="chat-sources">
-      <summary class="chat-sources-summary">Sources ({chatSession.sourcesUsed.length + chatSession.wikiSourcesUsed.length})</summary>
+      <summary class="chat-sources-summary">{t('chat.sourcesSummary', { count: chatSession.sourcesUsed.length + chatSession.wikiSourcesUsed.length })}</summary>
       <div class="chat-sources-pills">
         {#each chatSession.sourcesUsed as title}
           <span class="chat-source-pill">{title}</span>
@@ -1151,8 +1065,8 @@
           <button
             class="chat-source-pill chat-source-wiki"
             onclick={() => onOpenWikipediaArticle?.(src.bundleId, src.articlePath, src.title)}
-            title="Open article: {src.title}"
-          >W · {src.title}</button>
+            title={t('chat.openWikiArticle', { title: src.title })}
+          >{t('chat.wikiPillPrefix')}{src.title}</button>
         {/each}
       </div>
     </details>
@@ -1161,15 +1075,15 @@
 
   {#if import.meta.env.DEV}
   <details class="debug-search" bind:open={debugOpen}>
-    <summary>Debug: raw scores</summary>
+    <summary>{t('chat.debugRawScores')}</summary>
     <div class="debug-input-row">
-      <input bind:value={debugQuery} placeholder="query…" onkeydown={e => e.key === 'Enter' && runDebugSearch()} />
-      <button onclick={runDebugSearch}>Search</button>
+      <input bind:value={debugQuery} placeholder={t('chat.debugQueryPlaceholder')} onkeydown={e => e.key === 'Enter' && runDebugSearch()} />
+      <button onclick={runDebugSearch}>{t('chat.debugSearch')}</button>
     </div>
     {#if debugResults.length > 0}
-      <p class="debug-section-label">Notes</p>
+      <p class="debug-section-label">{t('chat.debugNotes')}</p>
       <table class="debug-table">
-        <thead><tr><th>dist</th><th>title</th><th>excerpt</th></tr></thead>
+        <thead><tr><th>{t('chat.debugDist')}</th><th>{t('chat.debugTitle')}</th><th>{t('chat.debugExcerpt')}</th></tr></thead>
         <tbody>
           {#each debugResults as r}
             <tr class:debug-pass={r.distance <= 1.1} class:debug-fail={r.distance > 1.1}>
@@ -1182,9 +1096,9 @@
       </table>
     {/if}
     {#if debugWikiResults.length > 0}
-      <p class="debug-section-label">Wikipedia</p>
+      <p class="debug-section-label">{t('chat.debugWikipedia')}</p>
       <table class="debug-table">
-        <thead><tr><th>dist</th><th>title</th><th>excerpt</th></tr></thead>
+        <thead><tr><th>{t('chat.debugDist')}</th><th>{t('chat.debugTitle')}</th><th>{t('chat.debugExcerpt')}</th></tr></thead>
         <tbody>
           {#each debugWikiResults as r}
             <tr class:debug-pass={r.distance <= 1.35} class:debug-fail={r.distance > 1.35}>
@@ -1205,10 +1119,10 @@
       bind:value={input}
       onkeydown={handleKeydown}
       placeholder={inputPlaceholder}
-      aria-label="Message"
+      aria-label={t('chat.messageAria')}
       rows="6"
       disabled={chatSession.isLoading || !chatEnabled}
     ></textarea>
-    <button onclick={send} disabled={chatSession.isLoading || !input.trim() || !chatEnabled} aria-busy={chatSession.isLoading}>Send</button>
+    <button onclick={send} disabled={chatSession.isLoading || !input.trim() || !chatEnabled} aria-busy={chatSession.isLoading}>{t('chat.send')}</button>
   </div>
 </aside>

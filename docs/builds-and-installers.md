@@ -32,6 +32,7 @@ flowchart LR
 |------|------|
 | [`package.json`](../package.json) | npm scripts; version must match Cargo/Tauri config |
 | [`src-tauri/tauri.conf.json`](../src-tauri/tauri.conf.json) | Bundle id `com.grimoire.app`, `bundle.targets`, Windows `bundle.resources`, WebView2 `skip` |
+| [`src-tauri/tauri.dev.conf.json`](../src-tauri/tauri.dev.conf.json) | Dev overlay for `npm run tauri:dev`: `com.grimoire.app.dev` / **Grimoire Dev** (isolated vault) |
 | [`src-tauri/build.rs`](../src-tauri/build.rs) | Windows: copy libzim DLLs → `target/<profile>/` and `nsis-dll-staging/`; vcpkg lib path; protoc detection |
 | [`src-tauri/Cargo.toml`](../src-tauri/Cargo.toml) | App crate `app`; patches `zim-sys` / `zim-rs` from `vendor/` |
 | [`vendor/zim-sys`](../vendor/zim-sys) | C++ bridge to **libzim**; Unix uses `pkg-config`, Windows links `zim` + vcpkg |

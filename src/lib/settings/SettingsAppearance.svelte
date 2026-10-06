@@ -1,4 +1,6 @@
 <script>
+  import { t } from '../i18n/t.js';
+
   let {
     theme = 'system', onThemeChange = () => {},
     accent = 'default', onAccentChange = () => {},
@@ -12,6 +14,16 @@
 
   const visibleTheme = $derived(theme === 'bag' ? 'dark' : theme);
 
+  const accentDesc = $derived(
+    theme === 'spellbook'
+      ? t('settings.appearance.accentDescSpellbook')
+      : theme === 'matrix'
+        ? t('settings.appearance.accentDescMatrix')
+        : theme === 'bag'
+          ? t('settings.appearance.accentDescBag')
+          : t('settings.appearance.accentDescDefault'),
+  );
+
   function selectStandardAccent(nextAccent) {
     onAccentChange(nextAccent);
     if (theme === 'bag') onThemeChange('dark');
@@ -22,35 +34,35 @@
   }
 </script>
 
-<h3>Appearance</h3>
+<h3>{t('settings.appearance.title')}</h3>
 
 <div class="setting-row">
   <div class="setting-label">
-    <label class="setting-name" for={themeSelectId}>Theme</label>
-    <span class="setting-desc">Controls the base theme mode. "System" follows your OS preference.</span>
+    <label class="setting-name" for={themeSelectId}>{t('settings.appearance.theme')}</label>
+    <span class="setting-desc">{t('settings.appearance.themeDesc')}</span>
   </div>
-  <select id={themeSelectId} value={visibleTheme} onchange={(e) => onThemeChange(e.currentTarget.value)} aria-label="Theme mode">
-    <option value="system">System</option>
-    <option value="light">Light</option>
-    <option value="dark">Dark</option>
-    <option value="spellbook">Spellbook ✦</option>
-    <option value="matrix">Matrix ▓</option>
+  <select id={themeSelectId} value={visibleTheme} onchange={(e) => onThemeChange(e.currentTarget.value)} aria-label={t('settings.appearance.themeAria')}>
+    <option value="system">{t('settings.appearance.themeSystem')}</option>
+    <option value="light">{t('settings.appearance.themeLight')}</option>
+    <option value="dark">{t('settings.appearance.themeDark')}</option>
+    <option value="spellbook">{t('settings.appearance.themeSpellbook')}</option>
+    <option value="matrix">{t('settings.appearance.themeMatrix')}</option>
   </select>
 </div>
 
 <div class="setting-row" class:faded={theme === 'spellbook' || theme === 'matrix'}>
   <div class="setting-label">
-    <span class="setting-name">Accent colour</span>
-    <span class="setting-desc">{theme === 'spellbook' ? 'Not available in Spellbook theme — accent is fixed gold.' : theme === 'matrix' ? 'Not available in Matrix theme — accent is fixed green.' : theme === 'bag' ? 'Black and grey uses a monochrome dark palette. Pick another swatch to return to Dark mode.' : 'Changes the highlight colour used across the app. Black and grey is available here as a monochrome palette option.'}</span>
+    <span class="setting-name">{t('settings.appearance.accentColour')}</span>
+    <span class="setting-desc">{accentDesc}</span>
   </div>
-  <div class="accent-swatches" role="group" aria-label="Accent colour">
+  <div class="accent-swatches" role="group" aria-label={t('settings.appearance.accentGroupAria')}>
     <button
       type="button"
       class="accent-swatch"
       class:active={theme !== 'bag' && accent === 'default'}
       style="--swatch-color: #c8a44e"
-      title="Default"
-      aria-label="Default accent"
+      title={t('settings.appearance.accentDefault')}
+      aria-label={t('settings.appearance.accentDefaultAria')}
       aria-pressed={theme !== 'bag' && accent === 'default'}
       disabled={theme === 'spellbook' || theme === 'matrix'}
       onclick={() => selectStandardAccent('default')}
@@ -60,8 +72,8 @@
       class="accent-swatch"
       class:active={theme !== 'bag' && accent === 'red'}
       style="--swatch-color: #9b2020"
-      title="Crimson"
-      aria-label="Crimson accent"
+      title={t('settings.appearance.accentCrimson')}
+      aria-label={t('settings.appearance.accentCrimsonAria')}
       aria-pressed={theme !== 'bag' && accent === 'red'}
       disabled={theme === 'spellbook' || theme === 'matrix'}
       onclick={() => selectStandardAccent('red')}
@@ -71,8 +83,8 @@
       class="accent-swatch"
       class:active={theme !== 'bag' && accent === 'cyan'}
       style="--swatch-color: #0c6e7e"
-      title="Cyan"
-      aria-label="Cyan accent"
+      title={t('settings.appearance.accentCyan')}
+      aria-label={t('settings.appearance.accentCyanAria')}
       aria-pressed={theme !== 'bag' && accent === 'cyan'}
       disabled={theme === 'spellbook' || theme === 'matrix'}
       onclick={() => selectStandardAccent('cyan')}
@@ -82,8 +94,8 @@
       class="accent-swatch"
       class:active={theme !== 'bag' && accent === 'green'}
       style="--swatch-color: #256b3a"
-      title="Forest green"
-      aria-label="Forest green accent"
+      title={t('settings.appearance.accentForest')}
+      aria-label={t('settings.appearance.accentForestAria')}
       aria-pressed={theme !== 'bag' && accent === 'green'}
       disabled={theme === 'spellbook' || theme === 'matrix'}
       onclick={() => selectStandardAccent('green')}
@@ -93,8 +105,8 @@
       class="accent-swatch accent-swatch-bag"
       class:active={theme === 'bag'}
       style="--swatch-color: #4a4a4a"
-      title="Black and grey"
-      aria-label="Black and grey appearance"
+      title={t('settings.appearance.accentBag')}
+      aria-label={t('settings.appearance.accentBagAria')}
       aria-pressed={theme === 'bag'}
       disabled={theme === 'spellbook' || theme === 'matrix'}
       onclick={selectBlackAndGreyAppearance}
@@ -104,13 +116,10 @@
 
 <div class="setting-row">
   <div class="setting-label">
-    <label class="setting-name" for={dateFormatSelectId}>Date format</label>
-    <span class="setting-desc">
-      Controls how dates are displayed in the calendar. Notes are always stored with
-      ISO 8601 titles (YYYY-MM-DD) — changing this only affects display.
-    </span>
+    <label class="setting-name" for={dateFormatSelectId}>{t('settings.appearance.dateFormat')}</label>
+    <span class="setting-desc">{t('settings.appearance.dateFormatDesc')}</span>
   </div>
-  <select id={dateFormatSelectId} value={dateFormat} onchange={(e) => onDateFormatChange(e.currentTarget.value)} aria-label="Calendar date display format">
+  <select id={dateFormatSelectId} value={dateFormat} onchange={(e) => onDateFormatChange(e.currentTarget.value)} aria-label={t('settings.appearance.dateFormatAria')}>
     <option value="DD-MM-YYYY">DD-MM-YYYY</option>
     <option value="YYYY-MM-DD">YYYY-MM-DD</option>
     <option value="MM-DD-YYYY">MM-DD-YYYY</option>
@@ -119,10 +128,8 @@
 
 <div class="setting-row">
   <div class="setting-label">
-    <label class="setting-name" for="reading-wpm-input">Reading speed (WPM)</label>
-    <span class="setting-desc">
-      Used for the note toolbar reading time. Word count is based on readable words in the current note body.
-    </span>
+    <label class="setting-name" for="reading-wpm-input">{t('settings.appearance.readingWpm')}</label>
+    <span class="setting-desc">{t('settings.appearance.readingWpmDesc')}</span>
   </div>
   <input
     id="reading-wpm-input"
@@ -132,7 +139,7 @@
     max="600"
     step="1"
     value={readingWpm}
-    aria-label="Reading speed in words per minute"
+    aria-label={t('settings.appearance.readingWpmAria')}
     onchange={(e) => onReadingWpmChange(e.currentTarget.value)}
   />
 </div>

@@ -1,4 +1,4 @@
-/** @typedef {{ id: string, title: string, body: string, selector: string }} FirstStartTourStep */
+/** @typedef {{ id: string, titleKey: string, bodyKey: string, selector: string }} FirstStartTourStep */
 
 export const FIRST_START_TOUR_SETTING_KEY = 'first_start_tour_v1_completed';
 
@@ -6,32 +6,32 @@ export const FIRST_START_TOUR_SETTING_KEY = 'first_start_tour_v1_completed';
 export const FIRST_START_TOUR_STEPS = [
   {
     id: 'folders',
-    title: 'Notes and folders',
-    body: 'Write Markdown notes, organise them in the folder tree, and use tags plus [[wiki-links]] between ideas.',
+    titleKey: 'tour.steps.foldersTitle',
+    bodyKey: 'tour.steps.foldersBody',
     selector: '[data-tour="folders"]',
   },
   {
     id: 'editor',
-    title: 'Note editor',
-    body: 'Open notes here to write and edit. Use the toolbar for export, read mode, and more.',
+    titleKey: 'tour.steps.editorTitle',
+    bodyKey: 'tour.steps.editorBody',
     selector: '[data-tour="editor"]',
   },
   {
     id: 'chat',
-    title: 'Chat with your vault',
-    body: 'The chat sidebar uses a local Ollama model. Grimoire never sends your notes to the cloud — retrieval and inference stay on this machine.',
+    titleKey: 'tour.steps.chatTitle',
+    bodyKey: 'tour.steps.chatBody',
     selector: '[data-tour="chat"]',
   },
   {
     id: 'search',
-    title: 'Search',
-    body: 'Use Search (Ctrl+F) for full-text and semantic search across unlocked notes.',
+    titleKey: 'tour.steps.searchTitle',
+    bodyKey: 'tour.steps.searchBody',
     selector: '[data-tour="search"]',
   },
   {
     id: 'settings',
-    title: 'Settings',
-    body: 'All models, privacy tools, and optional sources like Wikipedia are configured in Settings — the same place you can change anything later.',
+    titleKey: 'tour.steps.settingsTitle',
+    bodyKey: 'tour.steps.settingsBody',
     selector: '[data-tour="settings"]',
   },
 ];

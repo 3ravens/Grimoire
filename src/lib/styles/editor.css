@@ -181,6 +181,29 @@
   margin: 0 0 0.8em;
 }
 
+/* GFM task lists: real clickable checkboxes, no disc bullet beside them */
+.read-mode-content li.task-list-item {
+  list-style: none;
+  margin-left: -0.4em;
+}
+
+.read-mode-content li.task-list-item input[type="checkbox"],
+.read-mode-content input[type="checkbox"][data-checklist-index] {
+  appearance: auto;
+  -webkit-appearance: checkbox;
+  width: 1.05em;
+  height: 1.05em;
+  margin: 0 0.55em 0 0;
+  vertical-align: -0.15em;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.read-mode-content li.task-list-item input[type="checkbox"]:disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+
 .read-mode-content code {
   font-family: var(--mono);
   font-size: 0.9em;

@@ -8,6 +8,10 @@
     } from "./utils/folderTree.js";
     import LockClosedIcon from "./icons/LockClosedIcon.svelte";
     import LockRemovePasswordIcon from "./icons/LockRemovePasswordIcon.svelte";
+    import PencilIcon from "./icons/PencilIcon.svelte";
+    import ImportNoteIcon from "./icons/ImportNoteIcon.svelte";
+    import NewFolderIcon from "./icons/NewFolderIcon.svelte";
+    import { t, tParts } from "./i18n/t.js";
 
     const ns = getContext("ns");
     const fs = getContext("fs");
@@ -223,9 +227,9 @@
 </script>
 
 <div class="panel-header">
-    <h2>Folders</h2>
+    <h2>{t('folders.title')}</h2>
     <span class="panel-header-actions">
-        <button class="icon-btn" onclick={expandAll} title="Expand all">
+        <button class="icon-btn" onclick={expandAll} title={t('folders.expandAll')}>
             <svg
                 width="14"
                 height="14"
@@ -240,7 +244,7 @@
                 <polyline points="3,7.5 7.5,12 12,7.5" />
             </svg>
         </button>
-        <button class="icon-btn" onclick={collapseAll} title="Collapse all">
+        <button class="icon-btn" onclick={collapseAll} title={t('folders.collapseAll')}>
             <svg
                 width="14"
                 height="14"
@@ -259,65 +263,23 @@
             class="icon-btn"
             data-action="create-note-btn"
             onclick={() => onCreateNote?.()}
-            title="New note (right-click to pick template)"
+            title={t('folders.newNote')}
         >
-            <svg
-                width="14"
-                height="14"
-                viewBox="0 0 15 15"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-            >
-                <path d="M11.5 1.5 L13.5 3.5 L5 12 L2 12.5 L2.5 9.5 Z" />
-                <line x1="9.5" y1="3.5" x2="11.5" y2="5.5" />
-            </svg>
+            <PencilIcon size={14} />
         </button>
         <button
             class="icon-btn"
             onclick={() => onImportNote?.()}
-            title="Import file as note (.txt, .md, or .pdf)"
+            title={t('folders.importNote')}
         >
-            <svg
-                width="14"
-                height="14"
-                viewBox="0 0 15 15"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-            >
-                <path
-                    d="M2 4A1 1 0 0 1 3 3H8L10 5H12A1 1 0 0 1 13 6V11A1 1 0 0 1 12 12H3A1 1 0 0 1 2 11V4Z"
-                />
-                <line x1="7.5" y1="7" x2="7.5" y2="10.5" />
-                <polyline points="5.5,8.5 7.5,10.5 9.5,8.5" />
-            </svg>
+            <ImportNoteIcon size={14} />
         </button>
         <button
             class="icon-btn"
             onclick={() => onCreateFolder?.()}
-            title="New folder"
+            title={t('folders.newFolder')}
         >
-            <svg
-                width="14"
-                height="14"
-                viewBox="0 0 15 15"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-            >
-                <path
-                    d="M1 4A1 1 0 0 1 2 3H5L6.5 5H12A1 1 0 0 1 13 6V11A1 1 0 0 1 12 12H2A1 1 0 0 1 1 11V4Z"
-                />
-                <line x1="9.5" y1="7.5" x2="9.5" y2="10.5" />
-                <line x1="8" y1="9" x2="11" y2="9" />
-            </svg>
+            <NewFolderIcon size={14} />
         </button>
     </span>
 </div>
@@ -326,11 +288,11 @@
 {#if bookmarks.length > 0}
     <section class="bookmarks-section">
         <div class="sidebar-section-label">
-            <span>Bookmarks</span>
+            <span>{t('folders.bookmarks')}</span>
             <button
                 class="collapse-btn"
                 onclick={() => (bookmarksOpen = !bookmarksOpen)}
-                title={bookmarksOpen ? "Collapse" : "Expand"}
+                title={bookmarksOpen ? t('folders.collapse') : t('folders.expand')}
             >
                 {bookmarksOpen ? "˅" : "›"}
             </button>
@@ -350,7 +312,7 @@
                             class="bookmark-remove icon-btn"
                             onclick={() =>
                                 bmSvc.removeBookmark(bookmark.note_id)}
-                            title="Remove bookmark">✕</button
+                            title={t('folders.removeBookmark')}>✕</button
                         >
                     </li>
                 {/each}
@@ -363,7 +325,7 @@
 <ul
     class="folder-list"
     role="tree"
-    aria-label="Folders"
+    aria-label={t('folders.aria')}
     onkeydown={handleFolderTreeKeydown}
 >
     <li
@@ -375,7 +337,7 @@
         <div class="folder-row">
             <span class="folder-expand-spacer"></span>
             <button class="row-btn" onclick={() => onSelectFolder?.("all")}
-                >All Notes</button
+                >{t('folders.allNotes')}</button
             >
         </div>
     </li>
@@ -416,7 +378,7 @@
         <div class="folder-row">
             <span class="folder-expand-spacer"></span>
             <button class="row-btn" onclick={() => onSelectFolder?.(null)}
-                >Unfiled</button
+                >{t('folders.unfiled')}</button
             >
         </div>
     </li>
@@ -458,12 +420,12 @@
                         class="folder-expand-btn"
                         onclick={() => toggleFolder(folder.id)}
                         title={(fs.folderExpanded[folder.id] ?? true)
-                            ? "Collapse"
-                            : "Expand"}
+                            ? t('folders.collapse')
+                            : t('folders.expand')}
                         aria-expanded={fs.folderExpanded[folder.id] ?? true}
                         aria-label={(fs.folderExpanded[folder.id] ?? true)
-                            ? `Collapse ${folder.name}`
-                            : `Expand ${folder.name}`}
+                            ? t('folders.collapseFolderAria', { name: folder.name })
+                            : t('folders.expandFolderAria', { name: folder.name })}
                     >
                         {(fs.folderExpanded[folder.id] ?? true) ? "▾" : "▸"}
                     </button>
@@ -478,7 +440,7 @@
                     >
                         <span class="lock-icon"><LockClosedIcon /></span
                         >{folder.name === "<locked>"
-                            ? "(locked folder)"
+                            ? t('folders.lockedFolderPlaceholder')
                             : folder.name}
                     </button>
                 {:else if fs.inlineRenaming?.id === folder.id && fs.inlineRenaming?.type === "folder"}
@@ -512,14 +474,14 @@
                         {#if unlockedFolderIds?.has(folder.id)}
                             <button
                                 class="icon-btn"
-                                title="Lock folder for this session"
+                                title={t('folders.lockSession')}
                                 onclick={() => onLockFolderSession?.(folder.id)}
                             >
                                 <LockClosedIcon />
                             </button>
                             <button
                                 class="icon-btn"
-                                title="Remove folder password"
+                                title={t('folders.removeFolderPassword')}
                                 onclick={() =>
                                     fs.openFolderPwModal(folder.id, "remove")}
                             >
@@ -528,7 +490,7 @@
                         {:else}
                             <button
                                 class="icon-btn"
-                                title="Set folder password"
+                                title={t('folders.setFolderPassword')}
                                 onclick={() =>
                                     fs.openFolderPwModal(folder.id, "set")}
                             >
@@ -544,32 +506,17 @@
                                     value: folder.name,
                                 };
                             }}
-                            title="Rename folder"
-                            aria-label="Rename folder {folder.name}"
+                            title={t('folders.renameFolder')}
+                            aria-label={t('folders.renameFolderAria', { name: folder.name })}
                         >
-                            <svg
-                                width="13"
-                                height="13"
-                                viewBox="0 0 15 15"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="1.5"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                aria-hidden="true"
-                            >
-                                <path
-                                    d="M11.5 1.5 L13.5 3.5 L5 12 L2 12.5 L2.5 9.5 Z"
-                                />
-                                <line x1="9.5" y1="3.5" x2="11.5" y2="5.5" />
-                            </svg>
+                            <PencilIcon size={13} />
                         </button>
                     {/if}
                     <button
                         class="icon-btn danger"
                         onclick={() => onDeleteFolder?.(folder.id)}
-                        title="Delete folder"
-                        aria-label="Delete folder {folder.name}">✕</button
+                        title={t('folders.deleteFolder')}
+                        aria-label={t('folders.deleteFolderAria', { name: folder.name })}>✕</button
                     >
                 </div>
             </div>
@@ -588,7 +535,7 @@
         {@render renderFolder(node)}
     {:else}
         <li class="folder-empty" role="status">
-            No folders yet. Use <strong>New folder</strong> or <strong>New note</strong> in the toolbar above.
+            {#each tParts('sidebar.noFoldersYet') as part}{#if part.type === 'slot' && part.name === 'newFolder'}<strong>{t('sidebar.newFolder')}</strong>{:else if part.type === 'slot' && part.name === 'newNote'}<strong>{t('sidebar.newNote')}</strong>{:else}{part.value}{/if}{/each}
         </li>
     {/each}
 </ul>
@@ -596,13 +543,13 @@
 <!-- Tags section -->
 {#if allTags.length > 0}
     <div class="sidebar-section-label tags-header">
-        <span>Tags</span>
+        <span>{t('folders.tags')}</span>
         <button
             class="collapse-btn"
             onclick={() => (tagsOpen = !tagsOpen)}
-            title={tagsOpen ? "Collapse" : "Expand"}
+            title={tagsOpen ? t('folders.collapse') : t('folders.expand')}
             aria-expanded={tagsOpen}
-            aria-label={tagsOpen ? "Collapse tags" : "Expand tags"}
+            aria-label={tagsOpen ? t('folders.collapseTags') : t('folders.expandTags')}
         >
             {tagsOpen ? "˅" : "›"}
         </button>
@@ -612,14 +559,14 @@
             <input
                 class="tag-search-input"
                 bind:value={tagSearch}
-                placeholder="Search tags…"
+                placeholder={t('folders.searchTags')}
             />
             {#if tagSearch}
                 <button
                     class="clear-filter-btn"
                     onclick={() => (tagSearch = "")}
-                    title="Clear">✕</button
-                >
+                    title={t('folders.clearTagSearch')}
+                >✕</button>
             {/if}
         </div>
         <ul class="tag-list">
@@ -633,12 +580,12 @@
                     <span class="tag-count">{tag.count}</span>
                 </li>
             {:else}
-                <li class="empty">No matches</li>
+                <li class="empty">{t('folders.noTagMatches')}</li>
             {/each}
         </ul>
         {#if !tagSearch && allTags.length > TAG_LIMIT}
             <p class="tag-overflow">
-                {allTags.length - TAG_LIMIT} more — search to find them
+                {t('folders.tagOverflow', { n: allTags.length - TAG_LIMIT })}
             </p>
         {/if}
     {/if}
@@ -646,36 +593,36 @@
 
 <!-- Templates section -->
 <div class="sidebar-section-label">
-    <span>Templates</span>
+    <span>{t('folders.templates')}</span>
     <button
         class="collapse-btn"
         onclick={() => (templatesOpen = !templatesOpen)}
-        title={templatesOpen ? "Collapse" : "Expand"}
+        title={templatesOpen ? t('folders.collapse') : t('folders.expand')}
         aria-expanded={templatesOpen}
-        aria-label={templatesOpen ? "Collapse templates" : "Expand templates"}
+        aria-label={templatesOpen ? t('folders.collapseTemplates') : t('folders.expandTemplates')}
     >
         {templatesOpen ? "˅" : "›"}
     </button>
 </div>
 {#if templatesOpen}
     <ul class="template-list">
-        {#each templates as t (t.id)}
+        {#each templates as tpl (tpl.id)}
             <li>
-                <span class="template-name">{t.name}</span>
-                {#if !t.builtin}
+                <span class="template-name">{tpl.name}</span>
+                {#if !tpl.builtin}
                     <button
                         class="icon-btn"
                         onclick={() => {
-                            tmpl.editingTemplate = t;
+                            tmpl.editingTemplate = tpl;
                         }}
-                        title="Edit template"
-                        aria-label="Edit template {t.name}">✎</button
+                        title={t('folders.editTemplate')}
+                        aria-label={t('folders.editTemplateAria', { name: tpl.name })}>✎</button
                     >
                     <button
                         class="icon-btn danger"
-                        onclick={() => onDeleteTemplate?.(t.id)}
-                        title="Delete template"
-                        aria-label="Delete template {t.name}">✕</button
+                        onclick={() => onDeleteTemplate?.(tpl.id)}
+                        title={t('folders.deleteTemplate')}
+                        aria-label={t('folders.deleteTemplateAria', { name: tpl.name })}>✕</button
                     >
                 {/if}
             </li>

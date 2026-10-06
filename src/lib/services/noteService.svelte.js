@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { t } from "../i18n/t.js";
 
 export function createNoteService({ onError, getLlmEnabled = () => true }) {
   let notes = $state([]);
@@ -170,7 +171,7 @@ export function createNoteService({ onError, getLlmEnabled = () => true }) {
   ) {
     try {
       const note = await invoke("create_note", {
-        title: "Untitled",
+        title: t("common.untitled"),
         folderId: folderId === "all" ? null : folderId,
       });
       if (folderId && templateId > 0) {
@@ -192,7 +193,7 @@ export function createNoteService({ onError, getLlmEnabled = () => true }) {
         isDirty = true;
         invoke("save_note_with_version", {
           id: note.id,
-          title: "Untitled",
+          title: t("common.untitled"),
           content: templateContent,
         }).catch(() => {});
       }
@@ -200,7 +201,7 @@ export function createNoteService({ onError, getLlmEnabled = () => true }) {
         indexState = "indexing";
         invoke("index_note", {
           noteId: note.id,
-          title: "Untitled",
+          title: t("common.untitled"),
           content: templateContent,
         })
           .then(() => {
@@ -243,7 +244,7 @@ export function createNoteService({ onError, getLlmEnabled = () => true }) {
 
   function deleteNote(id) {
     const note = notes.find((n) => n.id === id) ?? activeNote;
-    noteDeletePending = { id, title: note?.title ?? "this note" };
+    noteDeletePending = { id, title: note?.title ?? t("notes.thisNote") };
   }
 
   async function confirmDeleteNote(closeTabFn, loadBookmarksFn) {

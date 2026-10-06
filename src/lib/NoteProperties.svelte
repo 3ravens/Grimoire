@@ -1,4 +1,5 @@
 <script>
+  import { t } from './i18n/t.js';
   /**
    * NoteProperties — collapsible properties panel shown between the note title
    * and the content editor. Displays all property definitions for the note's
@@ -115,7 +116,7 @@
 
   async function restoreSelectedVersion() {
     if (!selectedVersionId) return;
-    const ok = window.confirm('Restore this version? The current note state will be saved as a new revision first.');
+    const ok = window.confirm(t('notes.historyRestoreConfirm'));
     if (!ok) return;
     try {
       const restored = await invoke('restore_note_version', { noteId, versionId: selectedVersionId });
@@ -184,7 +185,7 @@
 <div class="note-properties">
   <button class="props-toggle" aria-expanded={open} onclick={() => (open = !open)}>
     <span class="props-toggle-icon">{open ? '˅' : '›'}</span>
-    <span class="props-toggle-label">Properties</span>
+    <span class="props-toggle-label">{t('views.propertiesToggle')}</span>
     {#if !open && defs.length > 0}
       <span class="props-count">{defs.length}</span>
     {/if}
@@ -204,7 +205,7 @@
                 onkeydown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                 class="prop-input"
                 aria-label={prop.name}
-                placeholder="—"
+                placeholder={t('views.emDash')}
               />
             {:else if prop.type === 'number'}
               <input
@@ -213,7 +214,7 @@
                 onblur={(e) => setValue(prop.def_id, e.currentTarget.value)}
                 onkeydown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                 class="prop-input"
-                placeholder="—"
+                placeholder={t('views.emDash')}
               />
             {:else if prop.type === 'date'}
               <input
@@ -240,14 +241,14 @@
                 aria-label={prop.name}
                 onchange={(e) => setValue(prop.def_id, e.currentTarget.value)}
               >
-                <option value="">—</option>
+                <option value="">{t('views.emDash')}</option>
                 {#each parseSelectOptions(prop.options) as opt}
                   <option value={opt}>{opt}</option>
                 {/each}
               </select>
             {/if}
           </div>
-          <button class="prop-delete icon-btn danger" onclick={() => deleteDef(prop.def_id)} title="Remove property" aria-label="Remove property {prop.name}">✕</button>
+          <button class="prop-delete icon-btn danger" onclick={() => deleteDef(prop.def_id)} title={t('views.propertiesRemove')} aria-label={t('views.propertiesRemoveAria', { name: prop.name })}>✕</button>
         </div>
       {/each}
     </div>
@@ -257,29 +258,29 @@
         <input
           class="prop-input"
           bind:value={newName}
-          placeholder="Property name"
-          aria-label="New property name"
+          placeholder={t('views.propertiesNewName')}
+          aria-label={t('views.propertiesNewNameAria')}
           onkeydown={(e) => { if (e.key === 'Enter') addProperty(); if (e.key === 'Escape') adding = false; }}
         />
-        <select class="prop-input" bind:value={newType} aria-label="Property type">
-          <option value="text">Text</option>
-          <option value="number">Number</option>
-          <option value="date">Date</option>
-          <option value="boolean">Checkbox</option>
-          <option value="select">Select</option>
+        <select class="prop-input" bind:value={newType} aria-label={t('views.propertiesTypeAria')}>
+          <option value="text">{t('views.propTypeText')}</option>
+          <option value="number">{t('views.propTypeNumber')}</option>
+          <option value="date">{t('views.propTypeDate')}</option>
+          <option value="boolean">{t('views.propTypeBoolean')}</option>
+          <option value="select">{t('views.propTypeSelect')}</option>
         </select>
         {#if newType === 'select'}
           <input
             class="prop-input"
             bind:value={newOptions}
-            placeholder="Options (comma-separated)"
+            placeholder={t('views.propertiesOptions')}
           />
         {/if}
-        <button class="prop-add-btn" onclick={addProperty}>Add</button>
-        <button class="prop-cancel-btn" onclick={() => (adding = false)}>Cancel</button>
+        <button class="prop-add-btn" onclick={addProperty}>{t('views.propertiesAdd')}</button>
+        <button class="prop-cancel-btn" onclick={() => (adding = false)}>{t('common.cancel')}</button>
       </div>
     {:else}
-      <button class="prop-add-trigger" onclick={() => (adding = true)}>+ Add property</button>
+      <button class="prop-add-trigger" onclick={() => (adding = true)}>{t('views.propertiesAddProperty')}</button>
     {/if}
   {/if}
 </div>
@@ -288,7 +289,7 @@
 <div class="note-properties">
   <button class="props-toggle" aria-expanded={historyOpen} onclick={() => (historyOpen = !historyOpen)}>
     <span class="props-toggle-icon">{historyOpen ? '˅' : '›'}</span>
-    <span class="props-toggle-label">History</span>
+    <span class="props-toggle-label">{t('views.historyToggle')}</span>
     {#if !historyOpen && versions.length > 0}
       <span class="props-count">{versions.length}</span>
     {/if}
@@ -298,7 +299,7 @@
     <div class="history-layout">
       <div class="history-list">
         {#if versions.length === 0}
-          <div class="history-empty">No saved revisions yet.</div>
+          <div class="history-empty">{t('views.historyEmpty')}</div>
         {:else}
           {#each versions as version (version.id)}
             <button
@@ -322,28 +323,28 @@
 
       <div class="history-preview">
         {#if versionLoading}
-          <div class="history-empty">Loading revision…</div>
+          <div class="history-empty">{t('views.historyLoadingRevision')}</div>
         {:else if selectedVersion}
           <div class="history-actions">
-            <button type="button" class="prop-add-btn" onclick={restoreSelectedVersion}>Restore selected version</button>
+            <button type="button" class="prop-add-btn" onclick={restoreSelectedVersion}>{t('views.historyRestore')}</button>
           </div>
-          <div class="history-title-section" role="region" aria-label="Title comparison">
+          <div class="history-title-section" role="region" aria-label={t('views.historyTitleCompareAria')}>
             {#if (selectedVersion.title ?? '') === (activeTitle ?? '')}
-              <p class="history-title-same">Title unchanged.</p>
+              <p class="history-title-same">{t('views.historyTitleUnchanged')}</p>
             {:else}
               <div class="history-title-grid">
-                <span class="history-title-label">Revision</span>
-                <span class="history-title-label">Current</span>
+                <span class="history-title-label">{t('views.diffRevision')}</span>
+                <span class="history-title-label">{t('views.diffCurrent')}</span>
                 <span class="history-title-cell history-title-rev">{selectedVersion.title ?? ''}</span>
                 <span class="history-title-cell history-title-cur">{activeTitle ?? ''}</span>
               </div>
             {/if}
           </div>
           <div class="history-diff-wrap">
-            <DiffView hunks={diffHunks} readonly sideBySide headerTitle="Body" />
+            <DiffView hunks={diffHunks} readonly sideBySide headerTitle={t('views.historyBody')} />
           </div>
         {:else}
-          <div class="history-empty">Select a revision to compare and restore.</div>
+          <div class="history-empty">{t('views.historySelectRevision')}</div>
         {/if}
       </div>
     </div>

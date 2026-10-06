@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 
 use tauri::AppHandle;
 
-use crate::app_paths::{legacy_migration_from_for_sandbox, resolve_app_data_dir};
+use crate::app_paths::{
+    app_data_dir_override_active, legacy_migration_from_for_sandbox, resolve_app_data_dir,
+};
 
 /// Written after a successful migration (support + UI banner).
 pub const MIGRATION_SENTINEL_FILE: &str = "app_data_migrated_from.txt";
@@ -151,7 +153,11 @@ fn write_sentinel(new_root: &Path, legacy_root: &Path) -> Result<(), String> {
 }
 
 fn find_first_legacy_data_root(new_root: &Path) -> Option<PathBuf> {
-    if let Some(legacy_root) = legacy_migration_from_for_sandbox() {
+    // Wizard / env sandbox: only migrate when an explicit source is set.
+    // Never fall through to LEGACY_BUNDLE_IDS (would pull preview vaults into
+    // an intentionally empty sandbox).
+    if app_data_dir_override_active() {
+        let legacy_root = legacy_migration_from_for_sandbox()?;
         if paths_refer_to_same_dir(&legacy_root, new_root) {
             return None;
         }
@@ -256,7 +262,37 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> &'static Mutex<()> {
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvGuard {
+        keys: Vec<&'static str>,
+    }
+
+    impl EnvGuard {
+        fn clear(keys: &[&'static str]) -> Self {
+            for key in keys {
+                std::env::remove_var(key);
+            }
+            Self {
+                keys: keys.to_vec(),
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for key in &self.keys {
+                std::env::remove_var(key);
+            }
+        }
+    }
 
     #[test]
     fn migration_copies_db_lancedb_and_sentinel() {
@@ -311,5 +347,38 @@ mod tests {
         fs::write(legacy.path().join("grimoire.db"), b"x").unwrap();
         fs::write(new_root.path().join("grimoire.db"), b"y").unwrap();
         assert!(run_migration_from_legacy_to_new(legacy.path(), new_root.path()).is_err());
+    }
+
+    #[test]
+    fn sandbox_override_without_legacy_from_does_not_scan_bundle_ids() {
+        use crate::app_paths::{APP_DATA_DIR_ENV, LEGACY_MIGRATION_FROM_ENV};
+
+        let _g = env_lock().lock().unwrap();
+        let _restore = EnvGuard::clear(&[APP_DATA_DIR_ENV, LEGACY_MIGRATION_FROM_ENV]);
+
+        let sandbox = tempdir().unwrap();
+        std::env::set_var(APP_DATA_DIR_ENV, sandbox.path());
+
+        // Even with a sibling-looking destination, sandbox mode must not fall
+        // through to LEGACY_BUNDLE_IDS (which may exist on the developer machine).
+        assert!(find_first_legacy_data_root(sandbox.path()).is_none());
+    }
+
+    #[test]
+    fn sandbox_override_with_legacy_from_uses_explicit_source() {
+        use crate::app_paths::{APP_DATA_DIR_ENV, LEGACY_MIGRATION_FROM_ENV};
+
+        let _g = env_lock().lock().unwrap();
+        let _restore = EnvGuard::clear(&[APP_DATA_DIR_ENV, LEGACY_MIGRATION_FROM_ENV]);
+
+        let sandbox = tempdir().unwrap();
+        let legacy = tempdir().unwrap();
+        fs::write(legacy.path().join("grimoire.db"), b"from-env").unwrap();
+
+        std::env::set_var(APP_DATA_DIR_ENV, sandbox.path());
+        std::env::set_var(LEGACY_MIGRATION_FROM_ENV, legacy.path());
+
+        let found = find_first_legacy_data_root(sandbox.path()).unwrap();
+        assert_eq!(found, legacy.path());
     }
 }

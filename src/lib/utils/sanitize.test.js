@@ -14,6 +14,14 @@ describe('sanitizeNoteHtml', () => {
     expect(clean).not.toContain('onerror');
     expect(clean).toContain('ok');
   });
+
+  it('preserves interactive checklist checkbox attributes', () => {
+    const dirty =
+      '<ul><li><input type="checkbox" data-checklist-index="0" checked=""> task</li></ul>';
+    const clean = sanitizeNoteHtml(dirty);
+    expect(clean).toContain('data-checklist-index="0"');
+    expect(clean).toContain('type="checkbox"');
+  });
 });
 
 describe('sanitizeWikipediaHtml', () => {

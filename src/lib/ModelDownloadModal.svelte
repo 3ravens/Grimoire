@@ -1,5 +1,6 @@
 <script>
   import { focusTrap } from './utils/focusTrap.js';
+  import { t } from './i18n/t.js';
 
   /**
    * @typedef {'confirm' | 'pulling' | 'error'} ModelDownloadPhase
@@ -34,10 +35,14 @@
     return Math.min(100, Math.round((100 * progress.completed) / progress.total));
   });
 
-  let primaryLabel = $derived(confirmKind === 'installedRisk' ? 'Use this model' : 'Download');
+  let primaryLabel = $derived(
+    confirmKind === 'installedRisk' ? t('views.modelDownloadUse') : t('views.modelDownloadDownload'),
+  );
 
   let confirmTitle = $derived(
-    confirmKind === 'installedRisk' ? 'Hardware notice' : 'Model not installed',
+    confirmKind === 'installedRisk'
+      ? t('views.modelDownloadHwNotice')
+      : t('views.modelDownloadNotInstalled'),
   );
 </script>
 
@@ -58,15 +63,15 @@
     <div class="modal-header">
       <h2 id="mdl-title" class="modal-title">
         {#if phase === 'error'}
-          Download failed
+          {t('views.modelDownloadError')}
         {:else if phase === 'pulling'}
-          Downloading model
+          {t('views.modelDownloadPulling')}
         {:else}
           {confirmTitle}
         {/if}
       </h2>
       {#if phase !== 'pulling'}
-        <button class="close-btn" onclick={onCancel} aria-label="Close">✕</button>
+        <button class="close-btn" onclick={onCancel} aria-label={t('common.close')}>✕</button>
       {/if}
     </div>
 
@@ -78,7 +83,7 @@
           class:caution={hardwareWarning.level === 'caution'}
           role="note"
         >
-          <strong>Hardware check</strong>
+          <strong>{t('views.modelDownloadHwCheck')}</strong>
           <ul>
             {#each hardwareWarning.lines as line}
               <li>{line}</li>
@@ -89,19 +94,19 @@
 
       {#if confirmKind === 'downloadMissing'}
         <p class="modal-message">
-          <strong>{model}</strong> is not available locally. Ollama can download it from the internet (this may use a lot of disk space and time). Continue?
+          {t('views.modelDownloadMissingBody', { model })}
         </p>
       {:else}
         <p class="modal-message">
-          <strong>{model}</strong> is already installed, but it may be a poor match for this machine. You can pick a smaller model in Settings → Hardware if chat is unstable.
+          {t('views.modelDownloadRiskBody', { model })}
         </p>
       {/if}
       <div class="modal-actions">
         <button class="btn-primary" bind:this={primaryBtn} onclick={onDownload}>{primaryLabel}</button>
-        <button class="btn-cancel" onclick={onCancel}>Cancel</button>
+        <button class="btn-cancel" onclick={onCancel}>{t('common.cancel')}</button>
       </div>
     {:else if phase === 'pulling'}
-      <p class="modal-message">Pulling <strong>{model}</strong> via Ollama…</p>
+      <p class="modal-message">{t('views.modelDownloadPullingVia', { model })}</p>
       {#if hardwareWarning?.lines?.length}
         <div
           class="modal-hw-warn"
@@ -109,7 +114,7 @@
           class:caution={hardwareWarning.level === 'caution'}
           role="note"
         >
-          <strong>Reminder</strong>
+          <strong>{t('views.modelDownloadReminder')}</strong>
           <ul>
             {#each hardwareWarning.lines as line}
               <li>{line}</li>
@@ -122,18 +127,18 @@
       {/if}
       {#if pct !== null}
         <div class="progress-wrap">
-          <div class="progress-bar" aria-label="Model download progress" aria-valuenow={pct} aria-valuemin="0" aria-valuemax="100" role="progressbar">
+          <div class="progress-bar" aria-label={t('views.modelDownloadProgressAria')} aria-valuenow={pct} aria-valuemin="0" aria-valuemax="100" role="progressbar">
             <div class="progress-fill" style="width: {pct}%"></div>
           </div>
         </div>
       {/if}
       <div class="modal-actions">
-        <button class="btn-cancel" type="button" disabled>Please wait…</button>
+        <button class="btn-cancel" type="button" disabled>{t('views.modelDownloadWait')}</button>
       </div>
     {:else}
-      <p class="modal-message">{errorMessage || 'The download could not be completed.'}</p>
+      <p class="modal-message">{errorMessage || t('views.modelDownloadFailed')}</p>
       <div class="modal-actions">
-        <button class="btn-primary" onclick={onCancel}>OK</button>
+        <button class="btn-primary" onclick={onCancel}>{t('common.ok')}</button>
       </div>
     {/if}
   </div>

@@ -3,6 +3,7 @@
   import { save } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
   import ConfirmModal from './ConfirmModal.svelte';
+  import { t, tp } from './i18n/t.js';
 
   // ---------------------------------------------------------------------------
   // State
@@ -109,12 +110,12 @@
       const dateStr = new Date().toISOString().slice(0, 10);
       const ext = format === 'csv' ? 'csv' : 'json';
       const path = await save({
-        title: 'Export audit log',
+        title: t('views.auditExportDialogTitle'),
         defaultPath: `grimoire-audit-${dateStr}.${ext}`,
         filters: [
           format === 'csv'
-            ? { name: 'CSV', extensions: ['csv'] }
-            : { name: 'JSON', extensions: ['json'] },
+            ? { name: t('views.auditFilterCsv'), extensions: ['csv'] }
+            : { name: t('views.auditFilterJson'), extensions: ['json'] },
         ],
       });
       if (!path) return;
@@ -128,10 +129,14 @@
       const exported = result?.exported ?? 0;
       exportStatus =
         skipped > 0
-          ? `Exported ${exported} entr${exported === 1 ? 'y' : 'ies'}. Skipped ${skipped} locked-folder note row${skipped === 1 ? '' : 's'}.`
-          : `Exported ${exported} entr${exported === 1 ? 'y' : 'ies'}.`;
+          ? (exported === 1
+            ? t('views.auditExportSuccess', { exported, skipped })
+            : t('views.auditExportSuccessPlural', { exported, skipped }))
+          : (exported === 1
+            ? t('views.auditExportSuccessSimple', { exported })
+            : t('views.auditExportSuccessSimplePlural', { exported }));
     } catch (e) {
-      exportStatus = `Export failed: ${e?.message ?? e}`;
+      exportStatus = t('views.auditExportFailed', { msg: e?.message ?? e });
     }
   }
 
@@ -151,50 +156,57 @@
   }
 
   // Map action string to a display label and category class.
-  const ACTION_META = {
-    note_open:        { label: 'Note opened',   cat: 'note'    },
-    note_create:      { label: 'Note created',  cat: 'note'    },
-    note_update:      { label: 'Note updated',  cat: 'note'    },
-    note_delete:      { label: 'Note deleted',  cat: 'note'    },
-    note_export:      { label: 'Export',        cat: 'note'    },
-    folder_create:    { label: 'Folder created',  cat: 'folder' },
-    folder_rename:    { label: 'Folder renamed',  cat: 'folder' },
-    folder_delete:    { label: 'Folder deleted',  cat: 'folder' },
-    search_fts:       { label: 'Text search',   cat: 'search'  },
-    search_semantic:  { label: 'Semantic search', cat: 'search' },
-    search_combined:  { label: 'Combined search', cat: 'search' },
-    llm_chat:         { label: 'LLM chat',      cat: 'llm'     },
-    llm_improve:      { label: 'LLM improve',   cat: 'llm'     },
-    file_scan:        { label: 'File scan',     cat: 'file'    },
-    file_import:      { label: 'File import',   cat: 'file'    },
-    wikipedia_read:   { label: 'Wikipedia',     cat: 'wiki'    },
-  };
-
   function meta(action) {
-    return ACTION_META[action] ?? { label: action, cat: 'other' };
+    const labels = {
+      note_open: t('views.auditActionNoteOpen'),
+      note_create: t('views.auditActionNoteCreate'),
+      note_update: t('views.auditActionNoteUpdate'),
+      note_delete: t('views.auditActionNoteDelete'),
+      note_export: t('views.auditActionNoteExport'),
+      folder_create: t('views.auditActionFolderCreate'),
+      folder_rename: t('views.auditActionFolderRename'),
+      folder_delete: t('views.auditActionFolderDelete'),
+      search_fts: t('views.auditActionSearchFts'),
+      search_semantic: t('views.auditActionSearchSemantic'),
+      search_combined: t('views.auditActionSearchCombined'),
+      llm_chat: t('views.auditActionLlmChat'),
+      llm_improve: t('views.auditActionLlmImprove'),
+      file_scan: t('views.auditActionFileScan'),
+      file_import: t('views.auditActionFileImport'),
+      wikipedia_read: t('views.auditActionWikipedia'),
+    };
+    const cats = {
+      note_open: 'note', note_create: 'note', note_update: 'note', note_delete: 'note', note_export: 'note',
+      folder_create: 'folder', folder_rename: 'folder', folder_delete: 'folder',
+      search_fts: 'search', search_semantic: 'search', search_combined: 'search',
+      llm_chat: 'llm', llm_improve: 'llm',
+      file_scan: 'file', file_import: 'file',
+      wikipedia_read: 'wiki',
+    };
+    return { label: labels[action] ?? action, cat: cats[action] ?? 'other' };
   }
 </script>
 
 <div class="audit-log">
   <!-- Controls -->
   <div class="audit-controls">
-    <select class="filter-select" value={filter} onchange={onFilterChange} aria-label="Filter by category">
-      <option value="all">All actions</option>
-      <option value="notes">Notes</option>
-      <option value="folders">Folders</option>
-      <option value="search">Search</option>
-      <option value="llm">LLM</option>
-      <option value="file_scanner">File Scanner</option>
-      <option value="wikipedia">Wikipedia</option>
+    <select class="filter-select" value={filter} onchange={onFilterChange} aria-label={t('views.auditFilterAria')}>
+      <option value="all">{t('views.auditAllActions')}</option>
+      <option value="notes">{t('views.auditNotes')}</option>
+      <option value="folders">{t('views.auditFolders')}</option>
+      <option value="search">{t('views.auditSearch')}</option>
+      <option value="llm">{t('views.auditLlm')}</option>
+      <option value="file_scanner">{t('views.auditFileScanner')}</option>
+      <option value="wikipedia">{t('views.auditWikipedia')}</option>
     </select>
 
     <input
       class="search-input"
       type="search"
-      placeholder="Filter by name or detail…"
+      placeholder={t('views.auditSearchPlaceholder')}
       value={searchInput}
       oninput={onSearchInput}
-      aria-label="Search audit log"
+      aria-label={t('views.auditSearchAria')}
     />
 
     <button
@@ -202,21 +214,21 @@
       class="export-btn"
       onclick={() => exportAudit('csv')}
       disabled={loading || totalCount === 0}
-      title="Export all rows matching the current filter as CSV"
+      title={t('views.auditExportTitle')}
     >
-      Export CSV
+      {t('views.auditExportCsv')}
     </button>
     <button
       type="button"
       class="export-btn"
       onclick={() => exportAudit('json')}
       disabled={loading || totalCount === 0}
-      title="Export all rows matching the current filter as JSON"
+      title={t('views.auditExportJsonTitle')}
     >
-      Export JSON
+      {t('views.auditExportJson')}
     </button>
     <button class="clear-btn" onclick={() => (showClear = true)} disabled={totalCount === 0}>
-      Clear log
+      {t('views.auditClear')}
     </button>
   </div>
 
@@ -226,18 +238,18 @@
 
   <!-- Table -->
   {#if loading && entries.length === 0}
-    <p class="empty-state" role="status" aria-live="polite">Loading…</p>
+    <p class="empty-state" role="status" aria-live="polite">{t('views.auditLoading')}</p>
   {:else if entries.length === 0}
-    <p class="empty-state">No entries{searchQuery || filter !== 'all' ? ' matching your filter' : ''}.</p>
+    <p class="empty-state">{searchQuery || filter !== 'all' ? t('views.auditEmptyFiltered') : t('views.auditEmptyAll')}</p>
   {:else}
     <div class="audit-table-wrap">
       <table class="audit-table">
         <thead>
           <tr>
-            <th>Time</th>
-            <th>Action</th>
-            <th>Resource</th>
-            <th>Detail</th>
+            <th>{t('views.auditColTime')}</th>
+            <th>{t('views.auditColAction')}</th>
+            <th>{t('views.auditColResource')}</th>
+            <th>{t('views.auditColDetail')}</th>
           </tr>
         </thead>
         <tbody>
@@ -248,7 +260,7 @@
               <td class="col-action">
                 <span class="action-badge cat-{m.cat}">{m.label}</span>
               </td>
-              <td class="col-resource">{entry.resource_name ?? '—'}</td>
+              <td class="col-resource">{entry.resource_name ?? t('views.emDash')}</td>
               <td class="col-detail">{entry.detail ?? ''}</td>
             </tr>
           {/each}
@@ -259,9 +271,9 @@
     <!-- Pagination -->
     {#if totalPages > 1}
       <div class="pagination">
-        <button onclick={() => { page = Math.max(1, page - 1); }} disabled={page <= 1}>← Prev</button>
-        <span class="page-info">Page {page} of {totalPages}</span>
-        <button onclick={() => { page = Math.min(totalPages, page + 1); }} disabled={page >= totalPages}>Next →</button>
+        <button onclick={() => { page = Math.max(1, page - 1); }} disabled={page <= 1}>{t('views.auditPrev')}</button>
+        <span class="page-info">{t('views.auditPageOf', { page, total: totalPages })}</span>
+        <button onclick={() => { page = Math.min(totalPages, page + 1); }} disabled={page >= totalPages}>{t('views.auditNext')}</button>
       </div>
     {/if}
   {/if}
@@ -269,9 +281,9 @@
 
 {#if showClear}
   <ConfirmModal
-    title="Clear audit log"
-    message="All {totalCount} entries will be permanently deleted. This cannot be undone."
-    confirmLabel="Clear"
+    title={t('views.auditClearTitle')}
+    message={t('views.auditClearMessage', { count: totalCount })}
+    confirmLabel={t('views.auditClearConfirm')}
     onConfirm={confirmClear}
     onCancel={() => (showClear = false)}
   />

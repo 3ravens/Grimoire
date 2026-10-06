@@ -2,6 +2,8 @@
   import { invoke } from '@tauri-apps/api/core';
   import { tick } from 'svelte';
   import { getContext } from 'svelte';
+  import { en } from './i18n/en.js';
+  import { t } from './i18n/t.js';
 
   const settings = getContext('settings');
 
@@ -17,18 +19,10 @@
 
   // ── Constants ──────────────────────────────────────────────────────────────
 
-  const DOW_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-  const MONTH_NAMES = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
-  ];
-
-  const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-  // Labels for the heatmap day-of-week axis (Mon = row 0).
-  // Only Mon, Wed, Fri are shown to avoid crowding at 14px cell height.
-  const DOW_AXIS = ['Mo', '', 'We', '', 'Fr', '', ''];
+  const DOW_LABELS = en.calendar.dowLabels;
+  const MONTH_NAMES = en.calendar.months;
+  const MONTH_SHORT = en.calendar.monthsShort;
+  const DOW_AXIS = en.calendar.dowAxis;
 
   // ── State ──────────────────────────────────────────────────────────────────
 
@@ -430,7 +424,7 @@
   }
 </script>
 
-<div class="calendar-overlay" role="region" aria-label="Calendar">
+<div class="calendar-overlay" role="region" aria-label={t('views.calendarAria')}>
 
   <!-- ── Header ───────────────────────────────────────────────────────────── -->
   <div class="cal-header">
@@ -443,7 +437,7 @@
         aria-selected={subView === 'calendar'}
         aria-controls="cal-panel-calendar"
         onclick={() => (subView = 'calendar')}
-      >Calendar</button>
+      >{t('views.calendarTab')}</button>
       <button
         class="cal-tab"
         class:active={subView === 'heatmap'}
@@ -452,7 +446,7 @@
         aria-selected={subView === 'heatmap'}
         aria-controls="cal-panel-heatmap"
         onclick={() => (subView = 'heatmap')}
-      >Activity</button>
+      >{t('views.heatmapTab')}</button>
     </div>
     <!-- Close button is provided by the tab-fullview-close button in App.svelte -->
   </div>
@@ -464,12 +458,12 @@
       <!-- ── Monthly calendar grid ──────────────────────────────────────── -->
       <div class="cal-view" id="cal-panel-calendar" role="tabpanel" aria-labelledby="cal-tab-calendar">
         <div class="cal-month-nav">
-          <button class="cal-nav-btn" onclick={prevYear} aria-label="Previous year">«</button>
-          <button class="cal-nav-btn" onclick={prevMonth} aria-label="Previous month">‹</button>
+          <button class="cal-nav-btn" onclick={prevYear} aria-label={t('views.prevYear')}>«</button>
+          <button class="cal-nav-btn" onclick={prevMonth} aria-label={t('views.prevMonth')}>‹</button>
           <span class="cal-month-label">{monthLabel}</span>
-          <button class="cal-nav-btn" onclick={nextMonth} aria-label="Next month">›</button>
-          <button class="cal-nav-btn" onclick={nextYear} aria-label="Next year">»</button>
-          <button class="cal-today-btn" onclick={goToday} aria-label="Go to today">Today</button>
+          <button class="cal-nav-btn" onclick={nextMonth} aria-label={t('views.nextMonth')}>›</button>
+          <button class="cal-nav-btn" onclick={nextYear} aria-label={t('views.nextYear')}>»</button>
+          <button class="cal-today-btn" onclick={goToday} aria-label={t('views.goToToday')}>{t('views.today')}</button>
         </div>
 
         <div class="cal-grid" role="grid" aria-label={monthLabel} tabindex="-1" bind:this={calGridEl} onkeydown={handleCalGridKeydown}>
@@ -491,7 +485,7 @@
                 data-day={cell}
                 tabindex={calendarFocusedDay === cell ? 0 : (calendarFocusedDay === null && isCellToday(cell) ? 0 : -1)}
                 aria-selected={calendarFocusedDay === cell}
-                aria-label="{cellISO(cell)}{isCellToday(cell) ? ' (today)' : ''}{dailyNoteDates.has(cellISO(cell)) ? ', has note' : ''}"
+                aria-label="{cellISO(cell)}{isCellToday(cell) ? t('views.calDayTodaySuffix') : ''}{dailyNoteDates.has(cellISO(cell)) ? t('views.calDayHasNoteSuffix') : ''}"
                 onclick={() => { calendarFocusedDay = cell; openDay(cell); }}
               >
                 <span class="cal-day-num">{cell}</span>
@@ -503,7 +497,7 @@
           {/each}
         </div>
 
-        <p class="cal-hint">Click a day to open or create a daily note.</p>
+        <p class="cal-hint">{t('views.calHint')}</p>
       </div>
 
     {:else}
@@ -539,7 +533,7 @@
               <div
                 class="heat-grid"
                 role="grid"
-                aria-label="Activity heatmap"
+                aria-label={t('views.heatmapAria')}
                 tabindex="-1"
                 bind:this={heatGridEl}
                 onkeydown={handleHeatGridKeydown}
@@ -557,12 +551,12 @@
                           role="gridcell"
                           tabindex={cell.date === heatmapFocusedIso ? 0 : -1}
                           data-heat-date={cell.date}
-                          aria-label="{cell.date}: {cell.created} created, {cell.modified} modified"
+                          aria-label={t('views.heatDayAria', { date: cell.date, created: cell.created, modified: cell.modified })}
                           onclick={() => {
                             if (cell.total > 0) selectHeatmapDay(cell.date);
                             heatmapFocusedIso = cell.date;
                           }}
-                          onmouseenter={cell.total > 0 ? (e) => showTooltip(e, `${formatDateStr(cell.date)}\n${cell.created} created \u00b7 ${cell.modified} modified`) : null}
+                          onmouseenter={cell.total > 0 ? (e) => showTooltip(e, `${formatDateStr(cell.date)}\n${t('views.heatTooltipLine', { created: cell.created, modified: cell.modified })}`) : null}
                           onmousemove={cell.total > 0 ? moveTooltip : null}
                           onmouseleave={cell.total > 0 ? hideTooltip : null}
                         >
@@ -575,13 +569,13 @@
 
               <!-- Legend -->
               <div class="heat-legend" aria-hidden="true">
-                <span>Less</span>
+                <span>{t('views.heatmapLess')}</span>
                 <div class="heat-cell heat-0"></div>
                 <div class="heat-cell heat-1"></div>
                 <div class="heat-cell heat-2"></div>
                 <div class="heat-cell heat-3"></div>
                 <div class="heat-cell heat-4"></div>
-                <span>More</span>
+                <span>{t('views.heatmapMore')}</span>
               </div>
             </div>
 
@@ -598,26 +592,26 @@
         {/if}
 
         <!-- Detail panel below the heatmap -->
-        <div class="heat-sidebar" role="region" aria-label="Day detail" aria-live="polite">
+        <div class="heat-sidebar" role="region" aria-label={t('views.dayDetailAria')} aria-live="polite">
           {#if selectedHeatmapDay}
             <div class="heat-detail-header">
               <span class="heat-detail-date">{formatDateStr(selectedHeatmapDay)}</span>
-              <button class="heat-detail-close" aria-label="Close day detail" onclick={() => { selectedHeatmapDay = null; dayNotes = []; }}>✕</button>
+              <button class="heat-detail-close" aria-label={t('views.closeDayDetail')} onclick={() => { selectedHeatmapDay = null; dayNotes = []; }}>✕</button>
             </div>
             {#if dayNotes.length === 0}
-              <p class="heat-detail-empty">No notes found for this day.</p>
+              <p class="heat-detail-empty">{t('views.heatDetailEmpty')}</p>
             {:else}
               <div class="heat-detail-list" role="list">
                 {#each dayNotes as note}
                   <button
                     class="heat-note-pill"
                     onclick={() => { onSelectNote(note); }}
-                  >{note.locked ? '🔒 Locked note' : note.title}</button>
+                  >{note.locked ? t('views.heatLockedNote') : note.title}</button>
                 {/each}
               </div>
             {/if}
           {:else}
-            <p class="heat-sidebar-empty">Select a day on the heatmap to see its notes.</p>
+            <p class="heat-sidebar-empty">{t('views.heatSidebarEmpty')}</p>
           {/if}
         </div>
 

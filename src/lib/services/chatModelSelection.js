@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { t } from '../i18n/t.js';
 
 let pullInFlight = false;
 
@@ -23,7 +24,7 @@ export async function deleteOllamaModel(model) {
 /** @param {(payload: Record<string, unknown>) => void} [onProgress] */
 export async function pullChatModel(model, onProgress) {
   if (pullInFlight) {
-    throw new Error('Another model download is already in progress.');
+    throw new Error(t('errors.pullInProgress'));
   }
   let unlisten = null;
   unlisten = await listen('ollama:pull_progress', (e) => onProgress?.(e.payload));

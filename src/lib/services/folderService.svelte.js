@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { tick } from "svelte";
 import { folderSubtreeIds } from "../utils/folderTree.js";
+import { t } from "../i18n/t.js";
 
 /**
  * @param {{
@@ -61,12 +62,12 @@ export function createFolderService({
       const parentId =
         typeof selectedFolderId === "number" ? selectedFolderId : null;
       const folder = await invoke("create_folder", {
-        name: "Untitled",
+        name: t("common.untitled"),
         parentId,
       });
       await loadFolders();
       if (parentId) folderExpanded = { ...folderExpanded, [parentId]: true };
-      inlineRenaming = { id: folder.id, type: "folder", value: "Untitled" };
+      inlineRenaming = { id: folder.id, type: "folder", value: t("common.untitled") };
     } catch (e) {
       onError?.(e);
     }
@@ -75,7 +76,7 @@ export function createFolderService({
   async function confirmInlineRename() {
     if (!inlineRenaming) return null;
     const { id, type, value } = inlineRenaming;
-    const name = value.trim() || "Untitled";
+    const name = value.trim() || t("common.untitled");
     inlineRenaming = null;
     try {
       if (type === "folder") {
@@ -111,7 +112,7 @@ export function createFolderService({
   /** @param {any} id */
   function deleteFolder(id) {
     const folder = folders.find((f) => f.id === id);
-    folderDeletePending = { id, name: folder?.name ?? "this folder" };
+    folderDeletePending = { id, name: folder?.name ?? t("notes.thisFolder") };
   }
 
   async function confirmDeleteFolder() {

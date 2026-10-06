@@ -3,6 +3,7 @@
   import { onMount, onDestroy } from 'svelte';
   import AuditLog from '../AuditLog.svelte';
   import ConfirmModal from '../ConfirmModal.svelte';
+  import { t, tp, tParts } from '../i18n/t.js';
 
   let { onOpenPrivacyPolicy = () => {} } = $props();
 
@@ -15,6 +16,14 @@
   let showPruneConfirm = $state(false);
 
   let retentionDebounce;
+
+  const pruneModalMessage = $derived.by(() => {
+    const count = previewCount;
+    const days = retentionDays;
+    const entryWord = count === 1 ? t('settings.privacy.entryWordOne') : t('settings.privacy.entryWordOther');
+    const dayWord = days === 1 ? t('settings.privacy.dayWordOne') : t('settings.privacy.dayWordOther');
+    return t('settings.privacy.pruneModalMessage', { count, entryWord, days, dayWord });
+  });
 
   async function refreshPreview() {
     if (retentionDays <= 0) {
@@ -51,7 +60,7 @@
       await refreshPreview();
       window.dispatchEvent(new CustomEvent('grimoire:audit-pruned'));
     } catch (e) {
-      alert(`Prune failed: ${e?.message ?? e}`);
+      alert(t('settings.privacy.pruneFailed', { msg: e?.message ?? e }));
       showPruneConfirm = false;
     }
   }
@@ -78,74 +87,67 @@
   }
 </script>
 
-<h3>Privacy</h3>
+<h3>{t('settings.privacy.title')}</h3>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Local only</span>
-    <span class="setting-desc">No data ever leaves this machine. Cannot be disabled.</span>
+    <span class="setting-name">{t('settings.privacy.localOnly')}</span>
+    <span class="setting-desc">{t('settings.privacy.localOnlyDesc')}</span>
   </div>
   <label class="toggle toggle-locked">
     <input type="checkbox" checked disabled />
-    <span class="toggle-label">Always on</span>
+    <span class="toggle-label">{t('settings.privacy.alwaysOn')}</span>
   </label>
 </div>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Privacy policy</span>
-    <span class="setting-desc">
-      The official, lawyer-approved, extremely thorough disclosure. You will want to sit down for this one.
-    </span>
+    <span class="setting-name">{t('settings.privacy.privacyPolicy')}</span>
+    <span class="setting-desc">{t('settings.privacy.privacyPolicyDesc')}</span>
   </div>
   <div class="setting-actions">
     <button type="button" class="settings-action-btn" onclick={onOpenPrivacyPolicy}>
-      Open privacy policy…
+      {t('settings.privacy.openPrivacyPolicy')}
     </button>
   </div>
 </div>
 
-<h3>Audit Log</h3>
+<h3>{t('settings.privacy.auditLogTitle')}</h3>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Enable audit log</span>
-    <span class="setting-desc">
-      Records every privacy-sensitive action — note opens, searches, LLM queries,
-      exports — to a local log stored on this machine. Never transmitted.
-    </span>
+    <span class="setting-name">{t('settings.privacy.enableAuditLog')}</span>
+    <span class="setting-desc">{t('settings.privacy.enableAuditLogDesc')}</span>
   </div>
   <label class="toggle">
     <input type="checkbox" checked={auditEnabled} onchange={e => { auditEnabled = e.currentTarget.checked; save('audit_enabled', auditEnabled); }} />
-    <span class="toggle-label">{auditEnabled ? 'On' : 'Off'}</span>
+    <span class="toggle-label">{auditEnabled ? t('common.on') : t('common.off')}</span>
   </label>
 </div>
 
-<h4>File Scanner</h4>
+<h4>{t('settings.privacy.fileScannerHeading')}</h4>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Log file access</span>
-    <span class="setting-desc">
-      Include file scanner reads in the audit log. Only active when the audit log is enabled.
-    </span>
+    <span class="setting-name">{t('settings.privacy.logFileAccess')}</span>
+    <span class="setting-desc">{t('settings.privacy.logFileAccessDesc')}</span>
   </div>
   <label class="toggle" class:toggle-locked={!auditEnabled}>
     <input type="checkbox" checked={logFileAccess} disabled={!auditEnabled} onchange={e => { logFileAccess = e.currentTarget.checked; save('log_file_access', logFileAccess); }} />
-    <span class="toggle-label">{logFileAccess ? 'On' : 'Off'}</span>
+    <span class="toggle-label">{logFileAccess ? t('common.on') : t('common.off')}</span>
   </label>
 </div>
 
 {#if auditEnabled}
-  <h4>Retention</h4>
+  <h4>{t('settings.privacy.retentionHeading')}</h4>
 
   <div class="setting-row retention-row">
     <div class="setting-label">
-      <span class="setting-name">Auto-delete entries older than</span>
+      <span class="setting-name">{t('settings.privacy.retentionLabel')}</span>
       <span class="setting-desc">
-        Number of days to keep (based on each entry’s timestamp). <strong>0</strong> means retain indefinitely
-        (default). Old rows are removed automatically when the app starts, and you can prune immediately with the
-        button below.
+        {#each tParts('settings.privacy.retentionDesc') as part}
+          {#if part.type === 'text'}{part.value}{:else if part.name === 'zero'}<strong>0</strong>{/if}
+        {/each}
       </span>
     </div>
     <div class="retention-controls">
@@ -156,14 +158,14 @@
         step="1"
         value={retentionDays}
         oninput={onRetentionInput}
-        aria-label="Audit log retention in days"
+        aria-label={t('settings.privacy.retentionAria')}
       />
-      <span class="retention-suffix">days</span>
+      <span class="retention-suffix">{t('settings.shared.days')}</span>
     </div>
   </div>
 
   {#if retentionDays > 0 && previewCount > 0}
-    <p class="retention-preview" role="status" aria-live="polite">~{previewCount.toLocaleString()} entr{previewCount === 1 ? 'y' : 'ies'} would be removed.</p>
+    <p class="retention-preview" role="status" aria-live="polite">{tp('settings.privacy.retentionPreview', previewCount, { count: previewCount.toLocaleString() })}</p>
   {/if}
 
   <div class="retention-actions">
@@ -173,20 +175,20 @@
       disabled={retentionDays <= 0 || previewCount === 0}
       onclick={() => (showPruneConfirm = true)}
     >
-      Prune now
+      {t('settings.privacy.pruneNow')}
     </button>
   </div>
 
   <AuditLog />
 {:else}
-  <p class="audit-disabled-note">Enable the audit log above to view and manage entries.</p>
+  <p class="audit-disabled-note">{t('settings.privacy.auditDisabledNote')}</p>
 {/if}
 
 {#if showPruneConfirm}
   <ConfirmModal
-    title="Prune audit log"
-    message={`Permanently delete ${previewCount} entr${previewCount === 1 ? 'y' : 'ies'} older than ${retentionDays} day${retentionDays === 1 ? '' : 's'}. This cannot be undone.`}
-    confirmLabel="Delete"
+    title={t('settings.privacy.pruneModalTitle')}
+    message={pruneModalMessage}
+    confirmLabel={t('common.delete')}
     onConfirm={confirmPrune}
     onCancel={() => (showPruneConfirm = false)}
   />

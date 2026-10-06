@@ -25,6 +25,11 @@
     import FolderSidebar from "./lib/FolderSidebar.svelte";
     import NoteList from "./lib/NoteList.svelte";
     import NoteEditor from "./lib/NoteEditor.svelte";
+    import ToggleFoldersIcon from "./lib/icons/ToggleFoldersIcon.svelte";
+    import ToggleNotesListIcon from "./lib/icons/ToggleNotesListIcon.svelte";
+    import FocusCompressIcon from "./lib/icons/FocusCompressIcon.svelte";
+    import FocusExpandIcon from "./lib/icons/FocusExpandIcon.svelte";
+    import ChatBubbleIcon from "./lib/icons/ChatBubbleIcon.svelte";
     import { createSettings } from "./lib/stores/settings.svelte.js";
     import { createPanelLayout } from "./lib/stores/panelLayout.svelte.js";
     import { createBookmarks } from "./lib/stores/bookmarks.svelte.js";
@@ -45,6 +50,7 @@
         FIRST_START_TOUR_SETTING_KEY,
         FIRST_START_TOUR_STEPS,
     } from "./lib/utils/firstStartTour.js";
+    import { t, tParts } from "./lib/i18n/t.js";
 
     const appWindow = getCurrentWindow();
 
@@ -687,7 +693,7 @@
                         const p = /** @type {any} */ (ev.payload);
                         err.showError(
                             p?.message ??
-                                "Semantic indexing failed for unlocked folder.",
+                                t("app.semanticIndexFailed"),
                         );
                         folderUnlockReindex = null;
                     }),
@@ -799,7 +805,7 @@
             directory: false,
             multiple: false,
             filters: [
-                { name: "Supported files", extensions: ["txt", "md", "pdf"] },
+                { name: t("app.supportedFiles"), extensions: ["txt", "md", "pdf"] },
             ],
         }).catch(() => null);
         if (!selected) return;
@@ -851,7 +857,7 @@
                 : (fs.selectedFolderId ?? null);
         try {
             const note = await invoke("create_note", {
-                title: "Untitled",
+                title: t("common.untitled"),
                 folderId,
             });
             await loadNotes();
@@ -875,7 +881,7 @@
                 ns.isDirty = true;
                 invoke("save_note_with_version", {
                     id: note.id,
-                    title: "Untitled",
+                    title: t("common.untitled"),
                     content: templateContent,
                 }).catch(() => {});
             }
@@ -883,7 +889,7 @@
                 ns.indexState = "indexing";
                 invoke("index_note", {
                     noteId: note.id,
-                    title: "Untitled",
+                    title: t("common.untitled"),
                     content: templateContent,
                 })
                     .then(() => {
@@ -896,7 +902,7 @@
             fs.inlineRenaming = {
                 id: note.id,
                 type: "note",
-                value: "Untitled",
+                value: t("common.untitled"),
             };
         } catch (e) {
             err.showError(e);
@@ -1164,9 +1170,9 @@
         <p class="startup-loading-title">Grimoire</p>
         <p class="startup-loading-detail">
             {#if !vault.lockCheckDone}
-                Checking vault…
+                {t("app.checkingVault")}
             {:else}
-                Preparing workspace…
+                {t("app.preparingWorkspace")}
             {/if}
         </p>
     </div>
@@ -1187,18 +1193,18 @@
     {#if vaultReindexBanner && !ns.isReindexing && settings.llmEnabled}
         <div class="vault-reindex-banner" role="status">
             <span>
-                Semantic search re-index is incomplete:
-                <strong>{vaultReindexBanner.indexedOk}</strong> notes embedded so far,
-                <strong>{vaultReindexBanner.nextPos}</strong> of
-                <strong>{vaultReindexBanner.total}</strong> unlockable notes processed.
-                Already-embedded notes stay searchable. Resume to continue (model:
-                {vaultReindexBanner.embeddingModel}).
+                {t("app.vaultReindexIncomplete", {
+                    indexed: vaultReindexBanner.indexedOk,
+                    next: vaultReindexBanner.nextPos,
+                    total: vaultReindexBanner.total,
+                    model: vaultReindexBanner.embeddingModel,
+                })}
             </span>
             <span class="banner-actions">
                 <button type="button" class="primary" onclick={resumeVaultReindexFromBanner}>
-                    Resume
+                    {t("app.resume")}
                 </button>
-                <button type="button" onclick={dismissVaultReindexBanner}>Dismiss</button>
+                <button type="button" onclick={dismissVaultReindexBanner}>{t("common.dismiss")}</button>
             </span>
         </div>
     {/if}
@@ -1207,7 +1213,7 @@
         <div class="vault-reindex-banner" role="status">
             <span>{appDataMigrationBanner}</span>
             <span class="banner-actions">
-                <button type="button" onclick={dismissAppDataMigrationBanner}>Dismiss</button>
+                <button type="button" onclick={dismissAppDataMigrationBanner}>{t("common.dismiss")}</button>
             </span>
         </div>
     {/if}
@@ -1215,14 +1221,16 @@
     {#if updateBanner}
         <div class="vault-reindex-banner" role="status">
             <span>
-                A newer version of Grimoire is available:
-                <strong>{updateBanner.latest}</strong> (you have {updateBanner.current}).
+                {t("app.updateAvailable", {
+                    latest: updateBanner.latest,
+                    current: updateBanner.current,
+                })}
             </span>
             <span class="banner-actions">
                 <button type="button" class="primary" onclick={openUpdateDownload}>
-                    View download
+                    {t("app.viewDownload")}
                 </button>
-                <button type="button" onclick={dismissUpdateBanner}>Dismiss</button>
+                <button type="button" onclick={dismissUpdateBanner}>{t("common.dismiss")}</button>
             </span>
         </div>
     {/if}
@@ -1230,8 +1238,8 @@
     <!-- Password modals (rendered above everything) -->
     {#if fs.folderUnlockTarget}
         <PasswordModal
-            title="Locked folder"
-            confirmLabel="Unlock"
+            title={t("app.lockedFolder")}
+            confirmLabel={t("app.unlock")}
             onSubmit={handleFolderUnlockSafe}
             onCancel={() => (fs.folderUnlockTarget = null)}
         />
@@ -1239,26 +1247,26 @@
 
     {#if vault.vaultPwModal === "set"}
         <PasswordModal
-            title="Set vault password"
-            confirmLabel="Set password"
-            warning="If you forget this password, your notes cannot be recovered. There is no reset option."
+            title={t("app.setVaultPassword")}
+            confirmLabel={t("app.setPassword")}
+            warning={t("app.vaultPwWarning")}
             requireAck={true}
             onSubmit={handleVaultPwSubmit}
             onCancel={() => (vault.vaultPwModal = null)}
         />
     {:else if vault.vaultPwModal === "change"}
         <PasswordModal
-            title="Change vault password"
-            confirmLabel="Set new password"
-            warning="If you forget this password, your notes cannot be recovered. There is no reset option."
+            title={t("app.changeVaultPassword")}
+            confirmLabel={t("app.setNewPassword")}
+            warning={t("app.vaultPwWarning")}
             requireAck={true}
             onSubmit={handleVaultPwSubmit}
             onCancel={() => (vault.vaultPwModal = null)}
         />
     {:else if vault.vaultPwModal === "remove"}
         <PasswordModal
-            title="Remove vault password"
-            confirmLabel="Remove password"
+            title={t("app.removeVaultPassword")}
+            confirmLabel={t("app.removePassword")}
             onSubmit={handleVaultPwSubmit}
             onCancel={() => (vault.vaultPwModal = null)}
         />
@@ -1266,17 +1274,17 @@
 
     {#if fs.folderPwModal?.mode === "set"}
         <PasswordModal
-            title="Set folder password"
-            confirmLabel="Set password"
-            warning="If you forget this password, notes in this folder cannot be recovered."
+            title={t("app.setFolderPassword")}
+            confirmLabel={t("app.setPassword")}
+            warning={t("app.folderPwWarning")}
             requireAck={true}
             onSubmit={handleFolderPwSubmit}
             onCancel={() => (fs.folderPwModal = null)}
         />
     {:else if fs.folderPwModal?.mode === "remove"}
         <PasswordModal
-            title="Remove folder password"
-            confirmLabel="Remove password"
+            title={t("app.removeFolderPassword")}
+            confirmLabel={t("app.removePassword")}
             onSubmit={handleFolderPwSubmit}
             onCancel={() => (fs.folderPwModal = null)}
         />
@@ -1297,11 +1305,11 @@
 
     {#if ns.noteDeletePending}
         <ConfirmModal
-            title="Delete note"
-            message={"Are you sure you want to delete \u201c" +
-                ns.noteDeletePending.title +
-                "\u201d?"}
-            confirmLabel="Delete"
+            title={t("app.deleteNoteTitle")}
+            message={t("app.deleteNoteMessage", {
+                title: ns.noteDeletePending.title,
+            })}
+            confirmLabel={t("common.delete")}
             onConfirm={confirmDeleteNote}
             onCancel={() => (ns.noteDeletePending = null)}
         />
@@ -1309,11 +1317,11 @@
 
     {#if fs.folderDeletePending}
         <ConfirmModal
-            title="Delete folder"
-            message={"Are you sure you want to delete \u201c" +
-                fs.folderDeletePending.name +
-                "\u201d? Notes inside will become unfiled."}
-            confirmLabel="Delete"
+            title={t("app.deleteFolderTitle")}
+            message={t("app.deleteFolderMessage", {
+                name: fs.folderDeletePending.name,
+            })}
+            confirmLabel={t("common.delete")}
             onConfirm={confirmDeleteFolder}
             onCancel={() => (fs.folderDeletePending = null)}
         />
@@ -1345,39 +1353,16 @@
             <button
                 class="titlebar-btn"
                 onclick={() => (layout.foldersOpen = !layout.foldersOpen)}
-                title="Toggle folders"
+                title={t("app.toggleFolders")}
             >
-                <svg
-                    width="15"
-                    height="15"
-                    viewBox="0 0 15 15"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    stroke-linecap="round"
-                >
-                    <rect x="1" y="1" width="13" height="13" rx="1" />
-                    <line x1="5" y1="1" x2="5" y2="14" />
-                </svg>
+                <ToggleFoldersIcon size={15} />
             </button>
             <button
                 class="titlebar-btn"
                 onclick={() => (layout.notesOpen = !layout.notesOpen)}
-                title="Toggle notes list"
+                title={t("app.toggleNotesList")}
             >
-                <svg
-                    width="15"
-                    height="15"
-                    viewBox="0 0 15 15"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    stroke-linecap="round"
-                >
-                    <line x1="4" y1="4" x2="11" y2="4" />
-                    <line x1="4" y1="7.5" x2="11" y2="7.5" />
-                    <line x1="4" y1="11" x2="9" y2="11" />
-                </svg>
+                <ToggleNotesListIcon size={15} />
             </button>
         </div>
 
@@ -1394,41 +1379,13 @@
                 class="titlebar-btn"
                 class:titlebar-btn-active={layout.focusMode}
                 onclick={layout.toggleFocusMode}
-                title="Focus mode (F11)"
+                title={t("app.focusMode")}
             >
                 <!-- Compress icon when in focus mode, expand icon when normal -->
                 {#if layout.focusMode}
-                    <svg
-                        width="15"
-                        height="15"
-                        viewBox="0 0 15 15"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    >
-                        <polyline points="14,6 14,1 9,1" />
-                        <polyline points="1,9 1,14 6,14" />
-                        <line x1="14" y1="1" x2="9" y2="6" />
-                        <line x1="1" y1="14" x2="6" y2="9" />
-                    </svg>
+                    <FocusCompressIcon size={15} />
                 {:else}
-                    <svg
-                        width="15"
-                        height="15"
-                        viewBox="0 0 15 15"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    >
-                        <polyline points="1,6 1,1 6,1" />
-                        <polyline points="9,14 14,14 14,9" />
-                        <line x1="1" y1="1" x2="6" y2="6" />
-                        <line x1="14" y1="14" x2="9" y2="9" />
-                    </svg>
+                    <FocusExpandIcon size={15} />
                 {/if}
             </button>
             <button
@@ -1436,24 +1393,11 @@
                 class:titlebar-btn-active={layout.chatOpen}
                 onclick={() => (layout.chatOpen = !layout.chatOpen)}
                 title={settings.llmEnabled
-                    ? "Toggle chat"
-                    : "Chat unavailable — check Hardware settings"}
+                    ? t("app.toggleChat")
+                    : t("app.chatUnavailable")}
                 disabled={!settings.llmEnabled}
             >
-                <svg
-                    width="15"
-                    height="15"
-                    viewBox="0 0 15 15"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.5"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
-                    <path
-                        d="M2 2h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H5l-3 3V3a1 1 0 0 1 1-1z"
-                    />
-                </svg>
+                <ChatBubbleIcon size={15} />
             </button>
         </div>
 
@@ -1461,8 +1405,8 @@
             <button
                 class="winctl-btn"
                 onclick={() => appWindow.minimize()}
-                title="Minimise"
-                aria-label="Minimise"
+                title={t("app.minimise")}
+                aria-label={t("app.minimise")}
             >
                 <svg
                     width="11"
@@ -1475,8 +1419,8 @@
             <button
                 class="winctl-btn"
                 onclick={() => appWindow.toggleMaximize()}
-                title="Maximise"
-                aria-label="Maximise"
+                title={t("app.maximise")}
+                aria-label={t("app.maximise")}
             >
                 <svg
                     width="11"
@@ -1491,8 +1435,8 @@
             <button
                 class="winctl-btn close"
                 onclick={() => appWindow.close()}
-                title="Close"
-                aria-label="Close"
+                title={t("common.close")}
+                aria-label={t("common.close")}
             >
                 <svg
                     width="11"
@@ -1538,16 +1482,16 @@
                 <button
                     class="collapsed-strip"
                     onclick={() => (layout.foldersOpen = true)}
-                    title="Expand folders"
+                    title={t("app.expandFolders")}
                 >
-                    <span>Folders</span>
+                    <span>{t("app.foldersStrip")}</span>
                 </button>
             {/if}
         </aside>
 
         <button
             class="panel-divider folders-divider"
-            aria-label="Resize folders panel"
+            aria-label={t("app.resizeFolders")}
             class:dragging={layout.activeDrag?.panel === "folders"}
             onmousedown={(e) => layout.startDrag("folders", e)}
         ></button>
@@ -1586,16 +1530,16 @@
                 <button
                     class="collapsed-strip"
                     onclick={() => (layout.notesOpen = true)}
-                    title="Expand notes"
+                    title={t("app.expandNotes")}
                 >
-                    <span>Notes</span>
+                    <span>{t("app.notesStrip")}</span>
                 </button>
             {/if}
         </div>
 
         <button
             class="panel-divider notes-divider"
-            aria-label="Resize notes panel"
+            aria-label={t("app.resizeNotes")}
             class:dragging={layout.activeDrag?.panel === "notes"}
             onmousedown={(e) => layout.startDrag("notes", e)}
         ></button>
@@ -1616,7 +1560,7 @@
                         <button
                             class="tab-fullview-close"
                             onclick={() => (ts.tableViewOpen = false)}
-                            title="Close table">✕ Close</button
+                            title={t("app.closeTable")}>{t("app.closeView")}</button
                         >
                         {#key tmpl.dbKey}
                             <DatabaseView
@@ -1635,7 +1579,7 @@
                         <button
                             class="tab-fullview-close"
                             onclick={() => closeTab(ts.activeTabId)}
-                            title="Close graph">✕ Close</button
+                            title={t("app.closeGraph")}>{t("app.closeView")}</button
                         >
                         {#await import("./lib/Graph.svelte") then { default: Graph }}
                             <Graph
@@ -1650,7 +1594,7 @@
                         <button
                             class="tab-fullview-close"
                             onclick={() => closeTab(ts.activeTabId)}
-                            title="Close calendar">✕ Close</button
+                            title={t("app.closeCalendar")}>{t("app.closeView")}</button
                         >
                         <Calendar
                             onSelectNote={(note) => navigateToNote(note)}
@@ -1667,7 +1611,7 @@
                         <button
                             class="tab-fullview-close"
                             onclick={() => closeTab(ts.activeTabId)}
-                            title="Close kanban">✕ Close</button
+                            title={t("app.closeKanban")}>{t("app.closeView")}</button
                         >
                         <Kanban
                             folderId={ts.activeTab.folderId}
@@ -1737,7 +1681,7 @@
         {#if layout.chatOpen && ts.activeTab?.type !== "chat"}
             <button
                 class="panel-divider chat-divider"
-                aria-label="Resize chat panel"
+                aria-label={t("app.resizeChat")}
                 class:dragging={layout.activeDrag?.panel === "chat"}
                 onmousedown={(e) => layout.startDrag("chat", e)}
             ></button>

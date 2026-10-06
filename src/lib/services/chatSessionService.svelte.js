@@ -1,4 +1,8 @@
 import { listen } from '@tauri-apps/api/event';
+import { t } from '../i18n/t.js';
+
+/** Label used by all Clear conversation UI surfaces. */
+export const CLEAR_CONVERSATION_LABEL = t('chat.clearConversation');
 
 /**
  * Shared chat session state — owns conversation turns and streaming lifecycle
@@ -95,5 +99,3 @@ export function createChatSessionService() {
   };
 }
 
-/** Label used by all Clear conversation UI surfaces. */
-export const CLEAR_CONVERSATION_LABEL = 'Clear conversation';

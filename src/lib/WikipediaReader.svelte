@@ -1,4 +1,5 @@
 <script>
+  import { t } from './i18n/t.js';
   import { invoke } from '@tauri-apps/api/core';
   import TableOfContents from './TableOfContents.svelte';
   import { sanitizeWikipediaHtml } from './utils/sanitize.js';
@@ -234,7 +235,7 @@
         mark.className = hl.status === 'orphaned' ? 'wiki-highlight wiki-highlight-orphaned' : 'wiki-highlight';
         mark.dataset.highlightId = String(hl.id);
         if (hl.status === 'orphaned') {
-          mark.title = "This highlight's source text may have changed after a sync.";
+          mark.title = t('views.wikiHighlightOrphaned');
         }
         mark.textContent = needle;
 
@@ -303,10 +304,10 @@
           await loadArticle(result.bundle_id, result.article_path);
         }
       } else {
-        notInstalledBanner = `This article isn't available in your installed Wikipedia bundles. Install additional bundles from Settings → Wikipedia.`;
+        notInstalledBanner = t('views.wikiArticleNotInBundles');
       }
     } catch (err) {
-      notInstalledBanner = `Could not resolve link: ${err}`;
+      notInstalledBanner = t('views.wikiResolveFailed', { err: String(err) });
     }
   }
 
@@ -400,12 +401,12 @@
         const next = await invoke('suggest_wikipedia_articles', { bundleId, query: q });
         if (localSeq !== searchSuggestSeq) return;
         searchResults = next;
-        if (searchResults.length === 0) searchError = 'No results found.';
+        if (searchResults.length === 0) searchError = t('views.wikiNoResults');
       } catch (err) {
         if (localSeq !== searchSuggestSeq) return;
         console.error('Wikipedia suggest failed:', err);
         searchResults = [];
-        searchError = typeof err === 'string' ? err : 'Search failed.';
+        searchError = typeof err === 'string' ? err : (err?.message ?? t('views.wikiSearchFailed'));
       }
     }, 300);
   }
@@ -447,15 +448,15 @@
         class="wiki-nav-btn"
         onclick={navigateBack}
         disabled={!canGoBack}
-        aria-label="Back"
-        title="Back"
+        aria-label={t('views.wikiBack')}
+        title={t('views.wikiBack')}
       >←</button>
       <button
         class="wiki-nav-btn"
         onclick={navigateForward}
         disabled={!canGoForward}
-        aria-label="Forward"
-        title="Forward"
+        aria-label={t('views.wikiForward')}
+        title={t('views.wikiForward')}
       >→</button>
     </div>
 
@@ -463,16 +464,16 @@
       <input
         class="wiki-search-input"
         type="search"
-        placeholder="Search articles…"
+        placeholder={t('views.wikiSearchPlaceholder')}
         bind:value={searchQuery}
         oninput={onSearchInput}
         onkeydown={onSearchKeydown}
-        aria-label="Search Wikipedia articles"
+        aria-label={t('views.wikiSearchArticles')}
         aria-autocomplete="list"
         bind:this={searchInputEl}
       />
       {#if bundleName}
-        <span class="wiki-search-bundle-label" title={bundleName}>Searching: {bundleName}</span>
+        <span class="wiki-search-bundle-label" title={bundleName}>{t('views.wikiSearchingBundle', { name: bundleName })}</span>
       {/if}
       {#if searchOpen && searchResults.length > 0}
         <ul class="wiki-search-dropdown" role="listbox" bind:this={searchDropdownEl}>
@@ -487,7 +488,7 @@
       {:else if searchOpen && searchError}
         <div class="wiki-search-dropdown wiki-search-message">{searchError}</div>
       {:else if searchOpen}
-        <div class="wiki-search-dropdown wiki-search-message">Searching…</div>
+        <div class="wiki-search-dropdown wiki-search-message">{t('views.wikiSearching')}</div>
       {/if}
     </div>
 
@@ -496,7 +497,7 @@
     {/if}
 
     {#if onClose}
-      <button class="wiki-close-btn" onclick={onClose} aria-label="Close article" title="Close">✕</button>
+      <button class="wiki-close-btn" onclick={onClose} aria-label={t('views.wikiCloseArticle')} title={t('common.close')}>✕</button>
     {/if}
   </div>
 
@@ -504,7 +505,7 @@
   {#if notInstalledBanner}
     <div class="wiki-banner wiki-banner-info" role="alert">
       {notInstalledBanner}
-      <button class="wiki-banner-dismiss" onclick={() => (notInstalledBanner = '')} aria-label="Dismiss">✕</button>
+      <button class="wiki-banner-dismiss" onclick={() => (notInstalledBanner = '')} aria-label={t('common.dismiss')}>✕</button>
     </div>
   {/if}
 
@@ -514,7 +515,7 @@
 
     <div class="wiki-article-container">
       {#if isLoading}
-        <div class="wiki-loading" aria-live="polite">Loading…</div>
+        <div class="wiki-loading" aria-live="polite">{t('common.loading')}</div>
       {:else if loadError}
         <div class="wiki-error" role="alert">{loadError}</div>
       {:else}
@@ -525,7 +526,7 @@
           bind:this={articleEl}
           onclick={handleArticleClick}
           onmouseup={handleArticleMouseUp}
-          aria-label={articleTitle || 'Wikipedia article'}
+          aria-label={articleTitle || t('views.wikiArticle')}
           role="region"
         >
           <!-- Article HTML injected here by $effect after load -->
@@ -541,9 +542,9 @@
     class="wiki-highlight-toolbar"
     style="left: {highlightToolbar.x}px; top: {highlightToolbar.y}px; transform: translateX(-50%);"
     role="toolbar"
-    aria-label="Highlight selection"
+    aria-label={t('views.wikiHighlightSelection')}
   >
-    <button onclick={saveHighlight} aria-label="Highlight selected text">Highlight</button>
+    <button onclick={saveHighlight} aria-label={t('views.wikiHighlight')}>{t('views.wikiHighlight')}</button>
   </div>
 {/if}
 

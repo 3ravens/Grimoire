@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { t } from '../i18n/t.js';
 
 /**
  * @param {{ onError?: (e: unknown) => void }} opts
@@ -42,7 +43,7 @@ export function createTabService({ onError }) {
           };
         }
         if (t.type === 'kanban') {
-          return { ...base, folderId: t.folderId };
+          return { ...base, folderId: t.folderId, folderName: t.folderName ?? null };
         }
         return base;
       }),
@@ -59,7 +60,7 @@ export function createTabService({ onError }) {
 
   async function newTab() {
     const id = makeTabId();
-    tabs = [...tabs, { id, type: 'note', noteId: null, label: 'New Tab', customLabel: null, readMode: false }];
+    tabs = [...tabs, { id, type: 'note', noteId: null, label: t('tabs.newTab'), customLabel: null, readMode: false }];
     activeTabId = id;
     return { id, isNew: true };
   }
@@ -190,7 +191,7 @@ export function createTabService({ onError }) {
     const existing = tabs.find(t => t.type === 'graph');
     if (existing) { activeTabId = existing.id; return 'existing'; }
     const id = makeTabId();
-    tabs = [...tabs, { id, type: 'graph', noteId: null, label: 'Graph', customLabel: null }];
+    tabs = [...tabs, { id, type: 'graph', noteId: null, label: t('tabs.graph'), customLabel: null }];
     activeTabId = id;
     return 'new';
   }
@@ -199,7 +200,7 @@ export function createTabService({ onError }) {
     const existing = tabs.find(t => t.type === 'calendar');
     if (existing) { activeTabId = existing.id; return 'existing'; }
     const id = makeTabId();
-    tabs = [...tabs, { id, type: 'calendar', noteId: null, label: 'Calendar', customLabel: null }];
+    tabs = [...tabs, { id, type: 'calendar', noteId: null, label: t('tabs.calendar'), customLabel: null }];
     activeTabId = id;
     return 'new';
   }
@@ -209,7 +210,7 @@ export function createTabService({ onError }) {
     const existing = tabs.find(t => t.type === 'kanban' && t.folderId === folderId);
     if (existing) { activeTabId = existing.id; return 'existing'; }
     const id = makeTabId();
-    tabs = [...tabs, { id, type: 'kanban', noteId: null, label: `Kanban — ${folderName}`, customLabel: null, folderId }];
+    tabs = [...tabs, { id, type: 'kanban', noteId: null, label: t('tabs.kanban', { name: folderName }), customLabel: null, folderId, folderName }];
     activeTabId = id;
     return 'new';
   }
@@ -218,7 +219,7 @@ export function createTabService({ onError }) {
     const existing = tabs.find(t => t.type === 'chat');
     if (existing) { activeTabId = existing.id; return 'existing'; }
     const id = makeTabId();
-    tabs = [...tabs, { id, type: 'chat', noteId: null, label: 'Chat', customLabel: null }];
+    tabs = [...tabs, { id, type: 'chat', noteId: null, label: t('tabs.chat'), customLabel: null }];
     activeTabId = id;
     return 'new';
   }
@@ -251,7 +252,7 @@ export function createTabService({ onError }) {
   }
 
   function closeNoteInTab() {
-    tabs = tabs.map(t => t.id === activeTabId ? { ...t, noteId: null, label: 'New Tab' } : t);
+    tabs = tabs.map((tab) => tab.id === activeTabId ? { ...tab, noteId: null, label: t('tabs.newTab') } : tab);
   }
 
   /** @param {((note: any) => void) | null} [openNoteFn] */

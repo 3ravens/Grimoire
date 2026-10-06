@@ -1,5 +1,6 @@
 <script>
   import { focusTrap } from './utils/focusTrap.js';
+  import { t } from './i18n/t.js';
   /**
    * TemplateModal — modal for creating or editing a user-defined template.
    *
@@ -90,34 +91,34 @@
 <div class="modal-backdrop" onclick={onCancel} onkeydown={handleKeydown} role="dialog" aria-modal="true" aria-labelledby="tmpl-modal-title" tabindex="-1">
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div class="modal" use:focusTrap onclick={(e) => e.stopPropagation()}>
-    <h2 id="tmpl-modal-title" class="modal-title">{isEditing ? 'Edit Template' : 'New Template'}</h2>
+    <h2 id="tmpl-modal-title" class="modal-title">{isEditing ? t('views.templateEditTitle') : t('views.templateNewTitle')}</h2>
 
     <label class="field">
-      <span>Template name</span>
+      <span>{t('views.templateName')}</span>
       <input
         id="tmpl-modal-name"
         type="text"
         bind:value={name}
-        placeholder="e.g. Project Kickoff"
+        placeholder={t('views.templateNamePlaceholder')}
         disabled={loading}
       />
     </label>
 
     <label class="field">
-      <span>Default note title <span class="optional">(optional)</span></span>
+      <span>{t('views.templateDefaultTitle')} <span class="optional">{t('views.templateOptional')}</span></span>
       <input
         type="text"
         bind:value={title}
-        placeholder="Leave blank to use template name"
+        placeholder={t('views.templateTitlePlaceholder')}
         disabled={loading}
       />
     </label>
 
     <label class="field">
-      <span>Content <span class="optional">(optional)</span></span>
+      <span>{t('views.templateContent')} <span class="optional">{t('views.templateOptional')}</span></span>
       <textarea
         bind:value={content}
-        placeholder="Template body…"
+        placeholder={t('views.templateBodyPlaceholder')}
         rows="6"
         disabled={loading}
       ></textarea>
@@ -125,7 +126,7 @@
 
     <!-- Property definitions -->
     <div class="props-section">
-      <span class="props-section-label">Properties</span>
+      <span class="props-section-label">{t('views.templateProperties')}</span>
       {#if templateProps.length > 0}
         <div class="props-list">
           {#each templateProps as prop, i}
@@ -135,7 +136,7 @@
                 class="prop-spec-input"
                 value={prop.name}
                 oninput={(e) => updateProp(i, 'name', e.currentTarget.value)}
-                placeholder="Name"
+                placeholder={t('views.templatePropName')}
                 disabled={loading}
               />
               <select
@@ -144,11 +145,11 @@
                 onchange={(e) => updateProp(i, 'type', e.currentTarget.value)}
                 disabled={loading}
               >
-                <option value="text">Text</option>
-                <option value="number">Number</option>
-                <option value="date">Date</option>
-                <option value="boolean">Checkbox</option>
-                <option value="select">Select</option>
+                <option value="text">{t('views.propTypeText')}</option>
+                <option value="number">{t('views.propTypeNumber')}</option>
+                <option value="date">{t('views.propTypeDate')}</option>
+                <option value="boolean">{t('views.propTypeBoolean')}</option>
+                <option value="select">{t('views.propTypeSelect')}</option>
               </select>
               {#if prop.type === 'select'}
                 <input
@@ -156,7 +157,7 @@
                   class="prop-spec-input prop-spec-options"
                   value={prop.options}
                   oninput={(e) => updateProp(i, 'options', e.currentTarget.value)}
-                  placeholder="Options (comma-separated)"
+                  placeholder={t('views.templatePropOptions')}
                   disabled={loading}
                 />
               {/if}
@@ -164,14 +165,14 @@
                 class="prop-spec-delete"
                 onclick={() => removeProp(i)}
                 disabled={loading}
-                title="Remove"
-                aria-label="Remove property {prop.name || (i + 1)}"
+                title={t('views.templateRemoveProp')}
+                aria-label={t('views.templateRemovePropAria', { name: prop.name || String(i + 1) })}
               >✕</button>
             </div>
           {/each}
         </div>
       {/if}
-      <button class="prop-spec-add" onclick={addProp} disabled={loading}>+ Add property</button>
+      <button class="prop-spec-add" onclick={addProp} disabled={loading}>+ {t('views.templateAddProp')}</button>
     </div>
 
     {#if error}
@@ -179,13 +180,13 @@
     {/if}
 
     <div class="modal-actions">
-      <button class="modal-cancel" onclick={onCancel} disabled={loading}>Cancel</button>
+      <button class="modal-cancel" onclick={onCancel} disabled={loading}>{t('common.cancel')}</button>
       <button
         class="modal-confirm"
         onclick={submit}
         disabled={loading || !name.trim()}
       >
-        {loading ? 'Saving…' : (isEditing ? 'Save Changes' : 'Save Template')}
+        {loading ? t('views.templateSaving') : (isEditing ? t('views.templateSaveChanges') : t('views.templateSave'))}
       </button>
     </div>
   </div>

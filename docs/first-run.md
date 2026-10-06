@@ -8,6 +8,8 @@ User-facing guide to Grimoire’s first launch, installation wizard, and where y
 
 ## Where app data lives
 
+### Website / installed app (production)
+
 Notes, settings, the SQLite database, and the LanceDB vector index are stored under the OS app data directory for bundle id **`com.grimoire.app`**:
 
 | OS | Typical path |
@@ -16,7 +18,13 @@ Notes, settings, the SQLite database, and the LanceDB vector index are stored un
 | **macOS** | `~/Library/Application Support/com.grimoire.app` |
 | **Linux** | `~/.local/share/com.grimoire.app` or `$XDG_DATA_HOME/com.grimoire.app` |
 
-Inside that folder:
+### Local development (`npm run tauri:dev`)
+
+Dev uses a **separate** bundle id **`com.grimoire.app.dev`** (product name **Grimoire Dev**) via [`src-tauri/tauri.dev.conf.json`](../src-tauri/tauri.dev.conf.json). Paths are the same layout with `.dev` on the folder name (e.g. `%APPDATA%\com.grimoire.app.dev`). This vault starts empty and never shares SQLite/LanceDB with the website install.
+
+Running `src-tauri/target/release/app.exe` from the repo uses the **production** identity (same as the installed app). Set `GRIMOIRE_APP_DATA_DIR` if you need a sandboxed release binary.
+
+Inside the active app-data folder:
 
 - `grimoire.db` — SQLite database (note bodies, folders, settings, FTS)
 - `lancedb/` — semantic search vectors
@@ -96,7 +104,9 @@ If you already had notes or folders before the wizard shipped (e.g. upgraded fro
 
 Your normal install uses `%APPDATA%\com.grimoire.app` (see above). **Do not delete that folder** to re-test the wizard.
 
-Instead, use the wizard sandbox — it sets `GRIMOIRE_APP_DATA_DIR` to an isolated folder under `scripts/.local-sandboxes/` (gitignored). Your production notes and settings are never read or written.
+Everyday development already uses a separate vault: `npm run tauri:dev` → `com.grimoire.app.dev` (**Grimoire Dev**). That is enough to keep migrations and notes from colliding with the website install.
+
+For **wizard / first-run** testing specifically, use the wizard sandbox — it sets `GRIMOIRE_APP_DATA_DIR` to an isolated folder under `scripts/.local-sandboxes/` (gitignored), so neither the production vault nor the usual Dev vault is touched.
 
 ```powershell
 # From repo root — first-run wizard (empty sandbox)

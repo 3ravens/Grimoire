@@ -1,6 +1,7 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
   import { onMount, onDestroy } from 'svelte';
+  import { t } from './i18n/t.js';
   import {
     forceSimulation,
     forceLink,
@@ -548,7 +549,7 @@
 <canvas
   bind:this={canvas}
   style="touch-action: none;"
-  aria-label="Note relationship graph. Left-click a node to open it, drag a node to reposition, right-drag to pan, scroll wheel to zoom."
+  aria-label={t('views.graphAria')}
   onpointermove={onPointerMove}
   onpointerdown={onPointerDown}
   onpointerup={onPointerUp}

@@ -1,4 +1,6 @@
 <script>
+  import { t } from './i18n/t.js';
+
   /**
    * Reusable Table of Contents component.
    *
@@ -20,15 +22,15 @@
 </script>
 
 {#if headings.length > 0}
-  <nav class="toc" aria-label="Table of contents">
+  <nav class="toc" aria-label={t('views.tocAria')}>
     <div class="toc-header">
-      <span class="toc-title">Contents</span>
+      <span class="toc-title">{t('views.tocTitle')}</span>
       <button
         class="toc-toggle"
         onclick={() => (collapsed = !collapsed)}
         aria-expanded={!collapsed}
         aria-controls={tocListId}
-        title={collapsed ? 'Expand contents' : 'Collapse contents'}
+        title={collapsed ? t('views.tocExpand') : t('views.tocCollapse')}
       >
         {collapsed ? '▸' : '▾'}
       </button>

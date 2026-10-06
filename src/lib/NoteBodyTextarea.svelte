@@ -1,5 +1,6 @@
 <script>
     import { getContext } from "svelte";
+    import { t } from "./i18n/t.js";
 
     const ns = getContext("ns");
 
@@ -42,6 +43,6 @@
         bind:this={el}
         oninput={handleInput}
         {onkeydown}
-        placeholder="Write your note…"
+        placeholder={t("notes.writePlaceholder")}
     ></textarea>
 {/key}

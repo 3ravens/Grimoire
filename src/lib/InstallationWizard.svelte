@@ -13,6 +13,7 @@
   } from './services/chatModelSelection.js';
   import ModelDownloadModal from './ModelDownloadModal.svelte';
   import grimoireLogo from '../assets/brand/grimoire-logo.png';
+  import { t, tParts } from './i18n/t.js';
 
   /** @type {{ onCompleted: () => void }} */
   let { onCompleted } = $props();
@@ -61,12 +62,13 @@
   let dlModal = $state(null);
   let unsubPull = /** @type {null | (() => void)} */ (null);
 
-  const starterOptions = [
-    { id: 'empty', label: 'Empty workspace', hint: 'No folders or starter notes — just a blank vault.' },
-    { id: 'pkm', label: 'Knowledge builders (PKM)', hint: 'Inbox, fleeting, literature, permanent, and maps-of-content folders plus a welcome note.' },
-    { id: 'bullet_journal', label: 'Bullet journal', hint: 'Collections, future log, and monthly folders with a short setup note.' },
-    { id: 'para', label: 'PARA method', hint: 'Projects, Areas, Resources, and Archives — each with a short README note.' },
-  ];
+  const starterOptions = (
+    /** @type {const} */ (['empty', 'pkm', 'bullet_journal', 'para'])
+  ).map((id) => ({
+    id,
+    labelKey: `wizard.starter.options.${id}.label`,
+    hintKey: `wizard.starter.options.${id}.hint`,
+  }));
 
   const curatedForWizard = $derived.by(() => {
     const cap = /** @type {any} */ (hardwareReport)?.capability;
@@ -283,7 +285,13 @@
   async function onModalDownload() {
     if (!dlModal) return;
     const model = dlModal.model;
-    dlModal = { ...dlModal, phase: 'pulling', statusLine: 'Starting…', progress: null, errorMessage: '' };
+    dlModal = {
+      ...dlModal,
+      phase: 'pulling',
+      statusLine: t('wizard.download.starting'),
+      progress: null,
+      errorMessage: '',
+    };
     unsubPull?.();
     unsubPull = await listen('ollama:pull_progress', (ev) => {
       const p = /** @type {any} */ (ev.payload);
@@ -293,7 +301,7 @@
       const total = Number(p?.total ?? 0);
       dlModal = {
         ...dlModal,
-        statusLine: status || 'Downloading…',
+        statusLine: status || t('wizard.download.downloading'),
         progress: total > 0 ? { completed, total } : dlModal.progress,
       };
     });
@@ -330,7 +338,7 @@
 
   function continueWithoutAi() {
     skipAi = true;
-    wizardStatus = 'Continuing without AI features. Chat and semantic search stay off until you enable them in Settings → Hardware.';
+    wizardStatus = t('wizard.deps.skipAiStatus');
     if (mainStep === MS_DEPS || mainStep === MS_MODELS) {
       mainStep = MS_HW;
     }
@@ -347,16 +355,14 @@
         if (chat) {
           const ok = await checkChatModelInstalled(chat);
           if (!ok) {
-            err?.showError?.(
-              'Pull or pick an installed chat model before finishing, or clear the custom id.',
-            );
+            err?.showError?.(t('wizard.errors.chatModelRequired'));
             finishBusy = false;
             return;
           }
           await saveChatModelSetting(chat);
         }
         if (!(await checkChatModelInstalled(embedModel))) {
-          err?.showError?.('Pull the embedding model before finishing (required for semantic search).');
+          err?.showError?.(t('wizard.errors.embedRequired'));
           finishBusy = false;
           return;
         }
@@ -384,12 +390,12 @@
   }
 
   let stepTitle = $derived.by(() => {
-    if (mainStep === MS_STARTER) return 'Welcome to Grimoire';
-    if (mainStep === MS_DEPS) return 'Local AI runtime';
-    if (mainStep === MS_HW) return 'Your hardware';
-    if (mainStep === MS_MODELS) return 'Models';
-    if (mainStep === MS_WIKI) return 'Wikipedia (optional)';
-    return 'Setup';
+    if (mainStep === MS_STARTER) return t('wizard.titles.starter');
+    if (mainStep === MS_DEPS) return t('wizard.titles.deps');
+    if (mainStep === MS_HW) return t('wizard.titles.hw');
+    if (mainStep === MS_MODELS) return t('wizard.titles.models');
+    if (mainStep === MS_WIKI) return t('wizard.titles.wiki');
+    return t('wizard.titles.fallback');
   });
 
   const wizardStepNumber = $derived.by(() => {
@@ -406,9 +412,9 @@
     stepTitle;
     mainStep;
     if (mainStep === MS_DEPS && ollamaCheckBusy) {
-      wizardStatus = 'Checking local AI runtime…';
+      wizardStatus = t('wizard.deps.checking');
     } else if (mainStep === MS_HW && hwBusy) {
-      wizardStatus = 'Scanning hardware…';
+      wizardStatus = t('wizard.hw.scanning');
     } else if (mainStep !== MS_DEPS && mainStep !== MS_HW && !skipAi) {
       wizardStatus = '';
     }
@@ -418,131 +424,165 @@
 <div class="wiz-screen" use:focusTrap role="dialog" aria-modal="true" aria-labelledby="wiz-title">
   <div class="wiz-card">
     {#if wizardStepNumber}
-      <p class="wiz-step-count" id="wiz-step-count">Step {wizardStepNumber.current} of {wizardStepNumber.total}</p>
+      <p class="wiz-step-count" id="wiz-step-count">
+        {t('wizard.stepOf', {
+          current: wizardStepNumber.current,
+          total: wizardStepNumber.total,
+        })}
+      </p>
     {/if}
     <div class="sr-only" aria-live="polite" aria-atomic="true">{wizardStatus || stepTitle}</div>
     {#if mainStep === MS_STARTER}
       <img class="wiz-logo" src={grimoireLogo} alt="" width="72" height="50" />
     {/if}
     <h1 id="wiz-title" class="wiz-h1">{stepTitle}</h1>
-    <p class="wiz-privacy">
-      Grimoire is local-first: nothing here phones home. Network use is only what you explicitly start (for
-      example pulling an Ollama model or downloading Wikipedia later).
-    </p>
+    <p class="wiz-privacy">{t('wizard.privacy')}</p>
 
     {#if mainStep === MS_STARTER}
-      <p class="wiz-body">Pick a starting layout. You can change folders and notes freely afterwards.</p>
-      <div class="wiz-options" role="radiogroup" aria-label="Starter workspace">
+      <p class="wiz-body">{t('wizard.starter.body')}</p>
+      <div class="wiz-options" role="radiogroup" aria-label={t('wizard.starter.radiogroup')}>
         {#each starterOptions as o}
           <label class="wiz-opt" class:selected={starterPack === o.id}>
             <input type="radio" name="starter" value={o.id} bind:group={starterPack} />
-            <span class="wiz-opt-title">{o.label}</span>
-            <span class="wiz-opt-hint">{o.hint}</span>
+            <span class="wiz-opt-title">{t(o.labelKey)}</span>
+            <span class="wiz-opt-hint">{t(o.hintKey)}</span>
           </label>
         {/each}
       </div>
       <div class="wiz-row">
-        <button type="button" class="wiz-btn primary" onclick={stepNext}>Next</button>
+        <button type="button" class="wiz-btn primary" onclick={stepNext}>{t('common.next')}</button>
       </div>
     {:else if mainStep === MS_DEPS}
       {#if ollamaOk === null && ollamaCheckBusy}
-        <p class="wiz-body">Checking local AI runtime…</p>
+        <p class="wiz-body">{t('wizard.deps.checking')}</p>
       {:else if ollamaOk === true}
-        <p class="wiz-body" role="status">Ollama is running on this computer. You can pull models on the next step.</p>
+        <p class="wiz-body" role="status">{t('wizard.deps.ollamaRunning')}</p>
       {:else}
         <p class="wiz-body">
-          Grimoire does <strong>not</strong> install Ollama for you. Chat and semantic search stay off until Ollama is
-          running and you pull models (here or later in Settings → LLM).
+          {#each tParts('wizard.deps.noOllamaIntro') as part}
+            {#if part.type === 'text'}
+              {part.value}
+            {:else if part.name === 'not'}
+              <strong>{t('wizard.deps.notWord')}</strong>
+            {/if}
+          {/each}
         </p>
         <ol class="wiz-steps">
           <li>
-            <strong>Install Ollama</strong> from the official site
-            <button type="button" class="wiz-link" onclick={openOllamaDownload}>ollama.com/download</button>
-            (opens in your browser).
+            {#each tParts('wizard.deps.stepInstall') as part}
+              {#if part.type === 'text'}
+                {part.value}
+              {:else if part.name === 'installOllama'}
+                <strong>{t('wizard.deps.stepInstallTitle')}</strong>
+              {:else if part.name === 'downloadLink'}
+                <button type="button" class="wiz-link" onclick={openOllamaDownload}
+                  >{t('wizard.deps.downloadLinkLabel')}</button
+                >
+              {/if}
+            {/each}
           </li>
           <li>
-            <strong>Start the Ollama service.</strong> On most systems it runs automatically after install; otherwise
-            run <code class="wiz-code">ollama serve</code> in a terminal.
+            {#each tParts('wizard.deps.stepServe') as part}
+              {#if part.type === 'text'}
+                {part.value}
+              {:else if part.name === 'startService'}
+                <strong>{t('wizard.deps.stepServeTitle')}</strong>
+              {:else if part.name === 'serveCmd'}
+                <code class="wiz-code">{t('wizard.deps.serveCmd')}</code>
+              {/if}
+            {/each}
           </li>
           <li>
-            <strong>Check connection</strong> — Grimoire must reach Ollama on this machine before you continue with AI
-            setup.
+            {#each tParts('wizard.deps.stepCheck') as part}
+              {#if part.type === 'text'}
+                {part.value}
+              {:else if part.name === 'checkConnection'}
+                <strong>{t('wizard.deps.stepCheckTitle')}</strong>
+              {/if}
+            {/each}
           </li>
         </ol>
         {#if ollamaOk === false}
-          <p class="wiz-warn" role="alert">Could not reach Ollama on this computer.</p>
+          <p class="wiz-warn" role="alert">{t('wizard.deps.unreachable')}</p>
         {/if}
         <div class="wiz-row">
-          <button type="button" class="wiz-btn secondary" onclick={openOllamaDownload}>Open Ollama download</button>
+          <button type="button" class="wiz-btn secondary" onclick={openOllamaDownload}
+            >{t('wizard.deps.openDownload')}</button
+          >
           <button type="button" class="wiz-btn secondary" onclick={checkOllama} disabled={ollamaCheckBusy}
-            >{ollamaCheckBusy ? 'Checking…' : 'Check again'}</button
+            >{ollamaCheckBusy ? t('wizard.deps.checkingShort') : t('wizard.deps.checkAgain')}</button
           >
         </div>
       {/if}
       <div class="wiz-row">
-        <button type="button" class="wiz-btn secondary" onclick={continueWithoutAi}>Continue without AI features</button>
+        <button type="button" class="wiz-btn secondary" onclick={continueWithoutAi}
+          >{t('wizard.deps.continueWithoutAi')}</button
+        >
       </div>
       <div class="wiz-row">
-        <button type="button" class="wiz-btn secondary" onclick={stepBack}>Back</button>
+        <button type="button" class="wiz-btn secondary" onclick={stepBack}>{t('common.back')}</button>
         <button
           type="button"
           class="wiz-btn primary"
           onclick={stepNext}
           disabled={!depsCanAdvance}
-          title={depsCanAdvance ? '' : 'Install and start Ollama, then check again — or continue without AI features'}
-          >Next</button
+          title={depsCanAdvance ? '' : t('wizard.deps.nextDisabledTitle')}
+          >{t('common.next')}</button
         >
       </div>
     {:else if mainStep === MS_HW}
       {#if hwBusy}
-        <p class="wiz-body">Scanning hardware…</p>
+        <p class="wiz-body">{t('wizard.hw.scanning')}</p>
       {:else if hardwareReport}
         <ul class="wiz-list">
-          <li><strong>CPU:</strong> {String(hardwareReport.cpuName ?? '')}</li>
+          <li><strong>{t('wizard.hw.cpu')}</strong> {String(hardwareReport.cpuName ?? '')}</li>
           <li>
-            <strong>RAM:</strong>
-            {Math.round(Number(hardwareReport.ramTotalMb ?? 0) / 1024)} GB total (Grimoire uses this for indexing
-            speed hints)
+            <strong>{t('wizard.hw.ram')}</strong>
+            {t('wizard.hw.ramDetail', {
+              gb: Math.round(Number(hardwareReport.ramTotalMb ?? 0) / 1024),
+            })}
           </li>
-          <li><strong>LLM tier:</strong> {String(hardwareReport.capability ?? '')}</li>
+          <li><strong>{t('wizard.hw.llmTier')}</strong> {String(hardwareReport.capability ?? '')}</li>
           {#each (hardwareReport.gpus ?? []) as g}
-            <li><strong>GPU:</strong> {String(g?.name ?? '')}</li>
+            <li><strong>{t('wizard.hw.gpu')}</strong> {String(g?.name ?? '')}</li>
           {/each}
         </ul>
         {#if showAmdDriverHint}
           <p class="wiz-note">
-            AMD GPUs often need an up-to-date graphics driver (Vulkan) for smooth local inference.
-            <button type="button" class="wiz-link" onclick={openAmdDrivers}>AMD driver support</button>
+            {t('wizard.hw.amdHint')}
+            <button type="button" class="wiz-link" onclick={openAmdDrivers}
+              >{t('wizard.hw.amdDriversLink')}</button
+            >
           </p>
         {/if}
         {#if String(hardwareReport?.capability ?? '') !== 'full'}
-          <p class="wiz-note">
-            AI features are off by default on this hardware. You can enable chat and semantic search later in
-            Settings → Hardware.
-          </p>
+          <p class="wiz-note">{t('wizard.hw.limitedHardware')}</p>
         {/if}
       {:else}
-        <p class="wiz-body">Hardware details unavailable — you can review them later under Settings → Hardware.</p>
+        <p class="wiz-body">{t('wizard.hw.unavailable')}</p>
       {/if}
       <div class="wiz-row">
-        <button type="button" class="wiz-btn secondary" onclick={stepBack}>Back</button>
-        <button type="button" class="wiz-btn primary" onclick={stepNext}>Next</button>
+        <button type="button" class="wiz-btn secondary" onclick={stepBack}>{t('common.back')}</button>
+        <button type="button" class="wiz-btn primary" onclick={stepNext}>{t('common.next')}</button>
       </div>
     {:else if mainStep === MS_MODELS}
       {#if !chatInstalled || !embedInstalled}
-        <p class="wiz-body">
-          Third-party models are community weights — use them at your own risk. Grimoire does not vet model behaviour.
-        </p>
+        <p class="wiz-body">{t('wizard.models.disclaimer')}</p>
       {/if}
       {#if !chatInstalled}
       <label class="wiz-check">
         <input type="checkbox" bind:checked={useCustomModel} />
-        Use custom Ollama model id
+        {t('wizard.models.useCustomId')}
       </label>
       {#if useCustomModel}
-        <input class="wiz-input" aria-label="Custom Ollama model id" placeholder="e.g. mistral:7b-instruct" bind:value={customModel} />
+        <input
+          class="wiz-input"
+          aria-label={t('wizard.models.customIdAria')}
+          placeholder={t('wizard.models.customIdPlaceholder')}
+          bind:value={customModel}
+        />
       {:else}
-        <div class="wiz-options" role="radiogroup" aria-label="Chat model">
+        <div class="wiz-options" role="radiogroup" aria-label={t('wizard.models.chatRadiogroup')}>
           {#each curatedForWizard as m}
             <label class="wiz-opt" class:selected={chatPick === m.value}>
               <input type="radio" name="chat" value={m.value} bind:group={chatPick} />
@@ -553,7 +593,9 @@
         </div>
       {/if}
       <div class="wiz-model-actions">
-        <button type="button" class="wiz-btn secondary" onclick={startChatPull}>Pull / save chat model</button>
+        <button type="button" class="wiz-btn secondary" onclick={startChatPull}
+          >{t('wizard.models.pullChat')}</button
+        >
       </div>
       {/if}
       {#if !chatInstalled && !embedInstalled}
@@ -561,35 +603,42 @@
       {/if}
       {#if !embedInstalled}
       <p class="wiz-body">
-        <strong>Embedding model</strong> ({embedModel}) powers semantic search. It must be installed in Ollama.
+        {#each tParts('wizard.models.embedIntro', { model: embedModel }) as part}
+          {#if part.type === 'text'}
+            {part.value}
+          {:else if part.name === 'embedLabel'}
+            <strong>{t('wizard.models.embedLabel')}</strong>
+          {:else if part.name === 'model'}
+            {part.value}
+          {/if}
+        {/each}
       </p>
         <div class="wiz-row">
           <button type="button" class="wiz-btn secondary" onclick={pullEmbed} disabled={embedPullBusy}>
-            {embedPullBusy ? 'Pulling…' : `Pull ${embedModel}`}
+            {embedPullBusy
+              ? t('wizard.models.pulling')
+              : t('wizard.models.pullModel', { model: embedModel })}
           </button>
         </div>
       {/if}
       <div class="wiz-row">
-        <button type="button" class="wiz-btn secondary" onclick={stepBack}>Back</button>
-        <button type="button" class="wiz-btn primary" onclick={stepNext}>Next</button>
+        <button type="button" class="wiz-btn secondary" onclick={stepBack}>{t('common.back')}</button>
+        <button type="button" class="wiz-btn primary" onclick={stepNext}>{t('common.next')}</button>
       </div>
     {:else if mainStep === MS_WIKI}
-      <p class="wiz-body">
-        Wikipedia is fully offline after download. Nothing is downloaded during setup — enabling here only turns the
-        reader on. Bundles are large; fetch them later from Settings → Wikipedia when you are ready (explicit download).
-      </p>
+      <p class="wiz-body">{t('wizard.wiki.body')}</p>
       <label class="wiz-check">
         <input type="checkbox" bind:checked={wikipediaEnable} />
-        Enable Wikipedia in the app (you can download a language bundle from Settings → Wikipedia)
+        {t('wizard.wiki.enable')}
       </label>
       <label class="wiz-check">
         <input type="checkbox" bind:checked={openWikiSettings} disabled={!wikipediaEnable} />
-        Open Settings on Wikipedia after setup
+        {t('wizard.wiki.openSettingsAfter')}
       </label>
       <div class="wiz-row">
-        <button type="button" class="wiz-btn secondary" onclick={stepBack}>Back</button>
+        <button type="button" class="wiz-btn secondary" onclick={stepBack}>{t('common.back')}</button>
         <button type="button" class="wiz-btn primary" onclick={finishWizard} disabled={finishBusy}>
-          {finishBusy ? 'Finishing…' : 'Finish setup'}
+          {finishBusy ? t('wizard.finish.finishing') : t('wizard.finish.finishSetup')}
         </button>
       </div>
     {/if}

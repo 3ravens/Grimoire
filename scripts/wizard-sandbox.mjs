@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Run `npm run tauri dev` with an isolated app data folder so wizard / first-run
+ * Run `npm run tauri:dev` with an isolated app data folder so wizard / first-run
  * testing never touches %APPDATA%\com.grimoire.app (or the normal install path).
  *
  * Usage:
@@ -70,7 +70,9 @@ console.log('Your production install is NOT touched.');
 console.log('Look for a log line: GRIMOIRE_APP_DATA_DIR is set');
 console.log('');
 
-const child = spawn('npm', ['run', 'tauri', 'dev'], {
+// Use the isolated-dev entry so the Tauri identifier is com.grimoire.app.dev
+// (and GRIMOIRE_APP_DATA_DIR further redirects into this sandbox folder).
+const child = spawn('npm', ['run', 'tauri:dev'], {
   cwd: repoRoot,
   env,
   stdio: 'inherit',

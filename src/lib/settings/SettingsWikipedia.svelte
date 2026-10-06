@@ -4,6 +4,7 @@
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
   import { onMount, onDestroy } from 'svelte';
   import ConfirmModal from '../ConfirmModal.svelte';
+  import { t, tp } from '../i18n/t.js';
 
   let {
     wikipediaEnabled = false,
@@ -125,7 +126,7 @@
   }
 
   async function pickStorageFolder() {
-    const selected = await openDialog({ directory: true, multiple: false, title: 'Select Wikipedia storage folder' });
+    const selected = await openDialog({ directory: true, multiple: false, title: t('settings.wikipedia.storageDialogTitle') });
     if (selected) {
       storagePath = selected;
       await saveStoragePath();
@@ -182,31 +183,32 @@
         const remainingSec = (p.total - p.scanned) / rate;
         if (elapsedSec > 5 && remainingSec > 5) {
           const formatted = fmtEta(remainingSec);
-          if (formatted) etaPart = ` · ~${formatted} left`;
+          if (formatted) etaPart = t('settings.wikipedia.indexingEta', { eta: formatted });
         }
       }
 
+      const pctSeg = pct ? ` ${pct}` : '';
+      const articlesPart = t('settings.wikipedia.indexingArticles', { count: (p.indexed ?? 0).toLocaleString() });
       const entriesPart =
         p.total > 0
-          ? ` · ${(p.scanned ?? 0).toLocaleString()} / ${p.total.toLocaleString()} ZIM entries`
+          ? t('settings.wikipedia.indexingEntries', {
+              scanned: (p.scanned ?? 0).toLocaleString(),
+              total: p.total.toLocaleString(),
+            })
           : '';
-      // Article total in the bundle header is catalogue metadata; embedded count
-      // can differ (filters, skips). Show live embedded count only here.
-      const articlesPart = ` · ${(p.indexed ?? 0).toLocaleString()} articles embedded`;
-      const pctSeg = pct ? ` ${pct}` : '';
-      return `Indexing…${pctSeg}${articlesPart}${entriesPart}${etaPart}`;
+      return `${t('settings.wikipedia.stateIndexing')}${pctSeg}${articlesPart}${entriesPart}${etaPart}`;
     }
     if (bundle.indexing_state === 'done') {
       const p = progress[bundle.id];
       const skipped = p?.permanently_skipped ?? 0;
       if (p?.done && skipped > 0) {
-        return `Indexed (${skipped} items skipped after retries)`;
+        return t('settings.wikipedia.stateIndexedSkipped', { count: skipped });
       }
-      return 'Indexed';
+      return t('settings.wikipedia.stateIndexed');
     }
-    if (bundle.indexing_state === 'error') return 'Error';
-    if (bundle.indexing_state === 'indexing') return 'Indexing…';
-    return 'Not indexed';
+    if (bundle.indexing_state === 'error') return t('settings.wikipedia.stateError');
+    if (bundle.indexing_state === 'indexing') return t('settings.wikipedia.stateIndexing');
+    return t('settings.wikipedia.stateNotIndexed');
   }
 
   function performanceWarning(bundle) {
@@ -215,10 +217,10 @@
     const splits = p.batch_splits ?? 0;
     const singles = p.single_fallbacks ?? 0;
     if (singles > 0) {
-      return `Performance warning: ${singles} single-item embed fallback${singles === 1 ? '' : 's'} detected.`;
+      return tp('settings.wikipedia.perfWarningSingle', singles, { count: singles });
     }
     if (splits >= 10) {
-      return `Performance warning: batch requests were split ${splits} times.`;
+      return t('settings.wikipedia.perfWarningSplits', { count: splits });
     }
     return '';
   }
@@ -261,7 +263,7 @@
     try {
       const conn = await invoke('check_wikipedia_connectivity');
       if (!conn.online) {
-        catalogueError = conn.message || 'No internet connection';
+        catalogueError = conn.message || t('settings.wikipedia.noInternet');
         return;
       }
       catalogueItems = await invoke('fetch_wikipedia_catalogue');
@@ -274,14 +276,14 @@
 
   async function startDownload(item) {
     if (!storagePath) {
-      catalogueError = 'Set a storage path before downloading.';
+      catalogueError = t('settings.wikipedia.setStorageBeforeDownload');
       return;
     }
     catalogueError = '';
     try {
       const conn = await invoke('check_wikipedia_connectivity');
       if (!conn.online) {
-        catalogueError = conn.message || 'No internet connection';
+        catalogueError = conn.message || t('settings.wikipedia.noInternet');
         return;
       }
       await invoke('check_wikipedia_download_preflight', {
@@ -318,7 +320,7 @@
         await startIndexing(bundle);
       }
     } catch (e) {
-      catalogueError = `Download failed: ${e?.message ?? e}`;
+      catalogueError = t('settings.wikipedia.downloadFailed', { msg: e?.message ?? e });
       const next = { ...downloadProgress };
       delete next[item.id];
       downloadProgress = next;
@@ -362,7 +364,7 @@
     for (const bundle of bundles) {
       const ok = await startIndexing(bundle, true);
       if (!ok && !reindexAll.error) {
-        reindexAll = { ...reindexAll, error: `Some bundles failed to index. Check each row for details.` };
+        reindexAll = { ...reindexAll, error: t('settings.wikipedia.reindexAllPartialError') };
       }
       reindexAll = { ...reindexAll, done: reindexAll.done + 1 };
     }
@@ -373,14 +375,14 @@
 
   function confirmRemove(bundle) {
     confirmModal = {
-      message: `Remove "${bundle.title || bundle.name}"? This will delete the index. The .zim file will NOT be deleted from disk.`,
+      message: t('settings.wikipedia.removeConfirm', { title: bundle.title || bundle.name }),
       onConfirm: () => removeBundle(bundle, false),
     };
   }
 
   function confirmRemoveWithFile(bundle) {
     confirmModal = {
-      message: `Remove "${bundle.title || bundle.name}" AND delete the .zim file from disk? This cannot be undone.`,
+      message: t('settings.wikipedia.removeAndDeleteConfirm', { title: bundle.title || bundle.name }),
       onConfirm: () => removeBundle(bundle, true),
     };
   }
@@ -392,16 +394,13 @@
   }
 </script>
 
-<h3>Wikipedia</h3>
-<p class="settings-notice">
-  Download Kiwix Wikipedia bundles (nopic flavour) to enable Wikipedia as a local knowledge source
-  for the AI assistant. Nothing is sent to the internet — all indexing and search runs on-device.
-</p>
+<h3>{t('settings.wikipedia.title')}</h3>
+<p class="settings-notice">{t('settings.wikipedia.notice')}</p>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Enable Wikipedia search</span>
-    <span class="setting-desc">When enabled, relevant Wikipedia articles are included in AI chat context.</span>
+    <span class="setting-name">{t('settings.wikipedia.enableSearch')}</span>
+    <span class="setting-desc">{t('settings.wikipedia.enableSearchDesc')}</span>
   </div>
   <label class="toggle">
     <input
@@ -409,29 +408,29 @@
       checked={wikipediaEnabled}
       onchange={(e) => toggleEnabled(e.currentTarget.checked)}
     />
-    <span class="toggle-label">{wikipediaEnabled ? 'On' : 'Off'}</span>
+    <span class="toggle-label">{wikipediaEnabled ? t('common.on') : t('common.off')}</span>
   </label>
 </div>
 
 <div class="setting-row">
   <div class="setting-label">
-    <span class="setting-name">Storage path</span>
-    <span class="setting-desc">Directory where .zim files will be downloaded and read from.</span>
+    <span class="setting-name">{t('settings.wikipedia.storagePath')}</span>
+    <span class="setting-desc">{t('settings.wikipedia.storagePathDesc')}</span>
   </div>
   <div class="wiki-path-row">
     <span class="wiki-path-display" class:wiki-path-placeholder={!storagePath}>
-      {storagePath || 'No folder selected'}
+      {storagePath || t('settings.wikipedia.noFolderSelected')}
     </span>
-    <button class="wiki-btn" onclick={pickStorageFolder}>Browse…</button>
+    <button class="wiki-btn" onclick={pickStorageFolder}>{t('common.browse')}</button>
   </div>
 </div>
 
 <!-- Installed bundles -->
 {#if bundles.length > 0}
-  <h4 class="settings-subsection">Installed bundles</h4>
+  <h4 class="settings-subsection">{t('settings.wikipedia.installedBundles')}</h4>
   <div class="wiki-bulk-actions">
     <button class="wiki-btn" onclick={reindexAllBundles} disabled={reindexAll.running || hasActiveBundleIndexing()}>
-      {reindexAll.running ? `Re-indexing ${reindexAll.done}/${reindexAll.total}…` : 'Re-index all bundles'}
+      {reindexAll.running ? t('settings.wikipedia.reindexingProgress', { done: reindexAll.done, total: reindexAll.total }) : t('settings.wikipedia.reindexAll')}
     </button>
     {#if reindexAll.error}
       <span class="wiki-error">{reindexAll.error}</span>
@@ -444,7 +443,7 @@
         <div class="wiki-bundle-info">
           <span class="wiki-bundle-title">{bundle.title || bundle.name}</span>
           <span class="wiki-bundle-meta">
-            {bundle.article_count ? bundle.article_count.toLocaleString() + ' articles · ' : ''}
+            {bundle.article_count ? t('settings.wikipedia.articlesMeta', { count: bundle.article_count.toLocaleString() }) : ''}
             {fmt(bundle.size_bytes)}
           </span>
           <span class="wiki-bundle-state" class:state-done={bundle.indexing_state === 'done'} class:state-error={bundle.indexing_state === 'error'}>
@@ -462,15 +461,15 @@
         <div class="wiki-bundle-actions">
           {#if bundle.indexing_state !== 'indexing' && !(p && !p.done)}
             <button class="wiki-btn" onclick={() => startIndexing(bundle, bundle.indexing_state === 'done' || bundle.indexing_state === 'error')}>
-              {bundle.indexing_state === 'done' ? 'Re-index' : 'Index'}
+              {bundle.indexing_state === 'done' ? t('settings.wikipedia.reindex') : t('settings.wikipedia.index')}
             </button>
           {:else}
             <button class="wiki-btn" onclick={() => stopIndexing(bundle)}>
-              Stop
+              {t('settings.shared.stop')}
             </button>
           {/if}
-          <button class="wiki-btn wiki-btn-danger" onclick={() => confirmRemove(bundle)}>Remove</button>
-          <button class="wiki-btn wiki-btn-danger" onclick={() => confirmRemoveWithFile(bundle)}>Remove + delete file</button>
+          <button class="wiki-btn wiki-btn-danger" onclick={() => confirmRemove(bundle)}>{t('settings.wikipedia.remove')}</button>
+          <button class="wiki-btn wiki-btn-danger" onclick={() => confirmRemoveWithFile(bundle)}>{t('settings.wikipedia.removeAndDelete')}</button>
         </div>
       </div>
     {/each}
@@ -478,13 +477,10 @@
 {/if}
 
 <!-- Catalogue -->
-<h4 class="settings-subsection">Download bundles</h4>
-<p class="settings-notice">
-  Fetches the Kiwix catalogue to find available Wikipedia bundles. This is the only outbound
-  network request Grimoire makes for the Wikipedia feature.
-</p>
+<h4 class="settings-subsection">{t('settings.wikipedia.downloadBundles')}</h4>
+<p class="settings-notice">{t('settings.wikipedia.catalogueNotice')}</p>
 <button class="wiki-btn" onclick={fetchCatalogue} disabled={loadingCatalogue}>
-  {loadingCatalogue ? 'Fetching…' : 'Fetch catalogue'}
+  {loadingCatalogue ? t('settings.wikipedia.fetching') : t('settings.wikipedia.fetchCatalogue')}
 </button>
 {#if catalogueError}
   <p class="wiki-error">{catalogueError}</p>
@@ -495,11 +491,11 @@
     <input
       class="wiki-catalogue-search"
       type="search"
-      placeholder="Filter bundles…"
+      placeholder={t('settings.wikipedia.filterPlaceholder')}
       bind:value={catalogueSearch}
     />
     <span class="wiki-catalogue-count">
-      {filteredCatalogue.length} of {catalogueItems.length}
+      {t('settings.wikipedia.catalogueCount', { filtered: filteredCatalogue.length, total: catalogueItems.length })}
     </span>
   </div>
   <div class="wiki-catalogue">
@@ -510,11 +506,14 @@
         <div class="wiki-bundle-info">
           <span class="wiki-bundle-title">{item.title || item.name}</span>
           <span class="wiki-bundle-meta">
-            {item.article_count ? item.article_count.toLocaleString() + ' articles · ' : ''}{fmt(item.size_bytes)}
+            {item.article_count ? t('settings.wikipedia.articlesMeta', { count: item.article_count.toLocaleString() }) : ''}{fmt(item.size_bytes)}
           </span>
           {#if dl}
             <span class="wiki-bundle-state">
-              Downloading… {fmt(dl.downloaded_bytes)}{dl.total_bytes ? ' / ' + fmt(dl.total_bytes) : ''}
+              {t('settings.wikipedia.downloading', {
+                downloaded: fmt(dl.downloaded_bytes),
+                totalPart: dl.total_bytes ? t('settings.wikipedia.downloadingTotal', { total: fmt(dl.total_bytes) }) : '',
+              })}
             </span>
             {#if dl.total_bytes}
               <div class="wiki-progress-bar">
@@ -525,11 +524,11 @@
         </div>
         <div class="wiki-bundle-actions">
           {#if isInstalled}
-            <span class="wiki-installed-badge">Installed</span>
+            <span class="wiki-installed-badge">{t('settings.wikipedia.installed')}</span>
           {:else if !item.download_url}
-            <span class="wiki-bundle-meta">No download available</span>
+            <span class="wiki-bundle-meta">{t('settings.wikipedia.noDownloadAvailable')}</span>
           {:else if !dl}
-            <button class="wiki-btn" onclick={() => startDownload(item)}>Download</button>
+            <button class="wiki-btn" onclick={() => startDownload(item)}>{t('settings.wikipedia.download')}</button>
           {/if}
         </div>
       </div>

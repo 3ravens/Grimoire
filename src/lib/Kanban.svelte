@@ -7,6 +7,7 @@
    *   onOpenNote — callback(noteId) to open a note in the editor
    */
   import { tick, getContext } from 'svelte';
+  import { t, tParts } from './i18n/t.js';
   import { invoke } from '@tauri-apps/api/core';
 
   let { folderId, onOpenNote = () => {}, onDeleteNote = () => {} } = $props();
@@ -168,7 +169,7 @@
     }
 
     return [
-      { key: '__unset__', label: 'Unset', notes: applyOrder('__unset__', groups.get('__unset__') ?? []) },
+      { key: '__unset__', label: t('views.kanbanUnset'), notes: applyOrder('__unset__', groups.get('__unset__') ?? []) },
       ...options.map(opt => ({ key: opt, label: opt, notes: applyOrder(opt, groups.get(opt) ?? []) })),
     ];
   });
@@ -285,7 +286,8 @@
         const colIdx = columns.findIndex(c => c.key === col.key);
         const newIdx = e.key === 'ArrowLeft' ? colIdx - 1 : colIdx + 1;
         if (newIdx < 0 || newIdx >= columns.length) {
-          moveAnnouncement = `Already at the ${e.key === 'ArrowLeft' ? 'first' : 'last'} column.`;
+          moveAnnouncement =
+            e.key === 'ArrowLeft' ? t('views.kanbanMoveFirstCol') : t('views.kanbanMoveLastCol');
           return;
         }
         const newCol = columns[newIdx];
@@ -294,7 +296,7 @@
         try {
           await invoke('set_note_property', { noteId: note.id, defId: groupByDefId, value: newValue });
           await refreshNotes(folderId);
-          moveAnnouncement = `Moved to ${newCol.label}. Press arrow keys to move or reorder, Enter to confirm, Escape to cancel.`;
+          moveAnnouncement = t('views.kanbanMovedTo', { column: newCol.label });
           await tick();
           /** @type {HTMLElement | null} */ (document.querySelector(`[data-note-id="${note.id}"] .kanban-card-title`))?.focus();
         } catch (err) {
@@ -307,27 +309,30 @@
         if (idx === -1) return;
         const targetIdx = e.key === 'ArrowUp' ? idx - 1 : idx + 1;
         if (targetIdx < 0 || targetIdx >= noteIds.length) {
-          moveAnnouncement = `Already at the ${e.key === 'ArrowUp' ? 'top' : 'bottom'} of ${col.label}.`;
+          moveAnnouncement =
+            e.key === 'ArrowUp'
+              ? t('views.kanbanMoveTop', { column: col.label })
+              : t('views.kanbanMoveBottom', { column: col.label });
           return;
         }
         const targetId = noteIds[targetIdx];
         reorderWithinColumn(col.key, note.id, targetId, e.key === 'ArrowUp');
-        moveAnnouncement = `Reordered within ${col.label}. Press arrow keys to move or reorder, Enter to confirm, Escape to cancel.`;
+        moveAnnouncement = t('views.kanbanReorderedIn', { column: col.label });
         await tick();
         /** @type {HTMLElement | null} */ (document.querySelector(`[data-note-id="${note.id}"] .kanban-card-title`))?.focus();
       } else if (e.key === 'Enter') {
         e.preventDefault();
         movingNoteId = null;
-        moveAnnouncement = 'Note placed.';
+        moveAnnouncement = t('views.kanbanNotePlaced');
       } else if (e.key === 'Escape') {
         e.preventDefault();
         movingNoteId = null;
-        moveAnnouncement = 'Move cancelled.';
+        moveAnnouncement = t('views.kanbanMoveCancelled');
       }
     } else if (e.key === 'm' || e.key === 'M') {
       e.preventDefault();
       movingNoteId = note.id;
-      moveAnnouncement = `Moving "${note.title}" from ${col.label}. Press arrow keys to move between columns or reorder within a column, Enter to confirm, Escape to cancel.`;
+      moveAnnouncement = t('views.kanbanMovingFrom', { title: note.title, column: col.label });
     }
   }
 
@@ -392,7 +397,7 @@
   <!-- ── Toolbar ───────────────────────────────────────────────────────── -->
   <div class="kanban-toolbar">
     {#if selectDefs.length > 0}
-      <label class="kanban-toolbar-label" for="kanban-groupby">Group by</label>
+      <label class="kanban-toolbar-label" for="kanban-groupby">{t('views.kanbanGroupBy')}</label>
       <select
         id="kanban-groupby"
         class="kanban-select"
@@ -406,7 +411,7 @@
 
       {#if defs.filter(d => d.id !== groupByDefId).length > 0}
         <details class="kanban-fields-picker">
-          <summary class="kanban-fields-btn" aria-label="Show optional card fields">Show fields</summary>
+          <summary class="kanban-fields-btn" aria-label={t('views.kanbanShowFieldsAria')}>{t('views.kanbanShowFields')}</summary>
           <div class="kanban-fields-menu">
             {#each defs.filter(d => d.id !== groupByDefId) as def (def.id)}
               <label class="kanban-fields-row">
@@ -426,13 +431,15 @@
 
   <!-- ── Board ─────────────────────────────────────────────────────────── -->
   {#if loading}
-    <p class="kanban-status">Loading…</p>
+    <p class="kanban-status">{t('views.kanbanLoading')}</p>
   {:else if errorMsg}
     <p class="kanban-status kanban-error">{errorMsg}</p>
   {:else if selectDefs.length === 0}
     <div class="kanban-empty">
-      <p>This folder has no <strong>select</strong>-type properties.</p>
-      <p class="kanban-empty-hint">Open the table view for this folder and add a select property (e.g. "Status" with options Todo, In Progress, Done) to use the Kanban board.</p>
+      <p>
+        {#each tParts('views.kanbanNoSelectTitle', { selectStrong: t('views.kanbanSelectType') }) as part}{#if part.type === 'slot' && part.name === 'selectStrong'}<strong>{part.value}</strong>{:else}{part.value}{/if}{/each}
+      </p>
+      <p class="kanban-empty-hint">{t('views.kanbanNoSelectHint')}</p>
     </div>
   {:else}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -468,13 +475,13 @@
                 <div class="kanban-card-top">
                   <button
                     class="kanban-card-title"
-                    aria-label="{note.title}{movingNoteId === note.id ? '. Moving. Press left or right to change column, Enter to confirm, Escape to cancel.' : '. Press M to move between columns.'}"
+                    aria-label="{note.title}{movingNoteId === note.id ? t('views.kanbanCardMovingHint') : t('views.kanbanCardMoveHint')}"
                     onclick={() => onOpenNote(note.id)}
                     onkeydown={(e) => handleCardKeydown(e, note, col)}
                   >{note.title}</button>
                   <button
                     class="kanban-card-delete-btn"
-                    aria-label="Delete {note.title}"
+                    aria-label={t('views.kanbanDeleteNoteAria', { title: note.title })}
                     onclick={() => onDeleteNote(note.id)}
                   >✕</button>
                 </div>
@@ -490,15 +497,15 @@
                 {/if}
               </div>
             {:else}
-              <p class="kanban-col-empty">No notes</p>
+              <p class="kanban-col-empty">{t('views.kanbanNoNotes')}</p>
             {/each}
 
             {#if creating === col.key}
               <input
                 class="kanban-inline-input"
                 type="text"
-                placeholder="Note title…"
-                aria-label="New note title"
+                placeholder={t('views.kanbanNewNoteTitle')}
+                aria-label={t('views.kanbanNewNoteAria')}
                 bind:value={creatingTitle}
                 bind:this={creatingInput}
                 onkeydown={(e) => onInputKeydown(e, col.key)}
@@ -507,9 +514,9 @@
             {:else}
               <button
                 class="kanban-add-btn"
-                aria-label="New note in {col.label}"
+                aria-label={t('views.kanbanAddNoteInCol', { label: col.label })}
                 onclick={() => startCreating(col.key)}
-              >+ New</button>
+              >+ {t('views.dbAddNote')}</button>
             {/if}
           </div>
         </div>

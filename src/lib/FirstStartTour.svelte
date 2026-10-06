@@ -6,6 +6,7 @@
     computeCalloutPosition,
     computeSpotlightHole,
   } from './utils/firstStartTour.js';
+  import { t } from './i18n/t.js';
 
   /** @type {{
    *   stepIndex: number,
@@ -101,7 +102,7 @@
 
   {#if anchorMissing}
     <div class="first-start-tour-missing" role="status">
-      Could not highlight this part of the interface. You can skip the tour or try the next step.
+      {t('tour.missingAnchor')}
     </div>
   {/if}
 
@@ -118,10 +119,10 @@
       style:width="{calloutPos.width}px"
     >
       <p class="first-start-tour-step-count" id="fst-step-count">
-        Step {stepIndex + 1} of {total}
+        {t('tour.stepOf', { n: stepIndex + 1, total })}
       </p>
-      <h2 class="first-start-tour-title" id="fst-title">{step.title}</h2>
-      <p class="first-start-tour-body" id="fst-body">{step.body}</p>
+      <h2 class="first-start-tour-title" id="fst-title">{t(step.titleKey)}</h2>
+      <p class="first-start-tour-body" id="fst-body">{t(step.bodyKey)}</p>
       {#if persistError}
         <p class="first-start-tour-error" role="alert">{persistError}</p>
       {/if}
@@ -132,7 +133,7 @@
           onclick={onComplete}
           disabled={persistBusy}
         >
-          Skip tour
+          {t('tour.skipTour')}
         </button>
         <span class="first-start-tour-spacer"></span>
         {#if stepIndex > 0}
@@ -142,7 +143,7 @@
             onclick={onBack}
             disabled={persistBusy}
           >
-            Back
+            {t('tour.back')}
           </button>
         {/if}
         <button
@@ -152,11 +153,11 @@
           disabled={persistBusy}
         >
           {#if persistBusy}
-            Saving…
+            {t('tour.saving')}
           {:else if isLast}
-            Done
+            {t('tour.done')}
           {:else}
-            Next
+            {t('tour.next')}
           {/if}
         </button>
       </div>

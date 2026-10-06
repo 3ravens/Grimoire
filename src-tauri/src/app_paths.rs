@@ -1,22 +1,37 @@
 //! Resolve the Grimoire app data directory.
 //!
-//! Normal installs use Tauri's bundle-id path (`com.grimoire.app`). For local wizard /
-//! first-run testing, set `GRIMOIRE_APP_DATA_DIR` to an isolated folder so dev runs
-//! never touch the production vault under `%APPDATA%`.
+//! - **Release / website install:** Tauri bundle id `com.grimoire.app`
+//!   (`%APPDATA%\com.grimoire.app` on Windows).
+//! - **`tauri:dev` (with `tauri.dev.conf.json`):** bundle id `com.grimoire.app.dev`
+//!   — a separate vault from the installed app.
+//! - **Wizard sandbox:** set `GRIMOIRE_APP_DATA_DIR` to an isolated folder under
+//!   `scripts/.local-sandboxes/` so first-run testing never touches either vault.
+//!
+//! Debug builds also rewrite a bare `com.grimoire.app` path to
+//! `com.grimoire.app.dev` so `cargo run` without the overlay cannot mutate the
+//! production database.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager};
 
 pub const APP_DATA_DIR_ENV: &str = "GRIMOIRE_APP_DATA_DIR";
 pub const LEGACY_MIGRATION_FROM_ENV: &str = "GRIMOIRE_LEGACY_MIGRATION_FROM";
 
-/// App data root: override env when set, otherwise Tauri `app_data_dir()`.
+/// Production bundle id folder name (must never be written by debug builds).
+pub const PRODUCTION_APP_DATA_DIR_NAME: &str = "com.grimoire.app";
+
+/// Isolated local-dev vault folder name (matches `tauri.dev.conf.json` identifier).
+pub const DEV_APP_DATA_DIR_NAME: &str = "com.grimoire.app.dev";
+
+/// App data root: override env when set, otherwise Tauri `app_data_dir()`
+/// (with a debug-only safety rewrite away from the production folder).
 pub fn resolve_app_data_dir(app: &AppHandle) -> Result<PathBuf, tauri::Error> {
     if let Some(path) = app_data_dir_override() {
         return Ok(path);
     }
-    app.path().app_data_dir()
+    let path = app.path().app_data_dir()?;
+    Ok(apply_debug_production_vault_guard(path))
 }
 
 /// True when `GRIMOIRE_APP_DATA_DIR` points at a non-empty path.
@@ -31,6 +46,35 @@ fn app_data_dir_override() -> Option<PathBuf> {
         return None;
     }
     Some(PathBuf::from(trimmed))
+}
+
+/// In debug builds, never use the production vault folder even if the binary
+/// was launched without `tauri.dev.conf.json`.
+fn apply_debug_production_vault_guard(path: PathBuf) -> PathBuf {
+    #[cfg(debug_assertions)]
+    {
+        if path
+            .file_name()
+            .and_then(|s| s.to_str())
+            == Some(PRODUCTION_APP_DATA_DIR_NAME)
+        {
+            return path.with_file_name(DEV_APP_DATA_DIR_NAME);
+        }
+    }
+    path
+}
+
+/// Pure helper for unit tests (mirrors debug guard logic).
+#[cfg(test)]
+fn debug_guard_rewrite_for_test(path: PathBuf) -> PathBuf {
+    if path
+        .file_name()
+        .and_then(|s| s.to_str())
+        == Some(PRODUCTION_APP_DATA_DIR_NAME)
+    {
+        return path.with_file_name(DEV_APP_DATA_DIR_NAME);
+    }
+    path
 }
 
 /// Legacy migration source for sandbox testing only.
@@ -49,6 +93,7 @@ pub fn legacy_migration_from_for_sandbox() -> Option<PathBuf> {
     Some(PathBuf::from(trimmed))
 }
 
+/// Log which vault isolation mode is active (env override and/or debug guard).
 pub fn log_sandbox_banner_if_active() {
     if let Some(path) = app_data_dir_override() {
         log::warn!(
@@ -61,7 +106,23 @@ pub fn log_sandbox_banner_if_active() {
                 legacy.display()
             );
         }
+        return;
     }
+
+    #[cfg(debug_assertions)]
+    {
+        log::warn!(
+            "Debug build — app data uses `{DEV_APP_DATA_DIR_NAME}` (isolated from production `{PRODUCTION_APP_DATA_DIR_NAME}`). \
+Website / taskbar install is not touched."
+        );
+    }
+}
+
+/// True when `path`'s final component is the production vault directory name.
+pub fn is_production_app_data_dir_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|s| s.to_str())
+        == Some(PRODUCTION_APP_DATA_DIR_NAME)
 }
 
 #[cfg(test)]
@@ -124,6 +185,41 @@ mod tests {
         assert_eq!(
             legacy_migration_from_for_sandbox().unwrap(),
             PathBuf::from(r"C:\temp\legacy")
+        );
+    }
+
+    #[test]
+    fn debug_guard_rewrites_production_folder_name() {
+        let prod = PathBuf::from(r"C:\Users\me\AppData\Roaming\com.grimoire.app");
+        let rewritten = debug_guard_rewrite_for_test(prod);
+        assert_eq!(
+            rewritten,
+            PathBuf::from(r"C:\Users\me\AppData\Roaming\com.grimoire.app.dev")
+        );
+        assert!(!is_production_app_data_dir_name(&rewritten));
+    }
+
+    #[test]
+    fn debug_guard_leaves_dev_and_other_folders_alone() {
+        let already_dev = PathBuf::from(r"C:\Users\me\AppData\Roaming\com.grimoire.app.dev");
+        assert_eq!(
+            debug_guard_rewrite_for_test(already_dev.clone()),
+            already_dev
+        );
+        let other = PathBuf::from(r"C:\temp\sandbox");
+        assert_eq!(debug_guard_rewrite_for_test(other.clone()), other);
+    }
+
+    #[test]
+    fn env_override_takes_precedence_over_path_shape() {
+        let _g = env_lock().lock().unwrap();
+        let _restore = EnvRestore::clear(&[APP_DATA_DIR_ENV, LEGACY_MIGRATION_FROM_ENV]);
+        std::env::set_var(APP_DATA_DIR_ENV, r"D:\sandboxes\wizard");
+        // Override is returned as-is; resolve_app_data_dir would not apply the
+        // debug guard when override is active (tested via override() here).
+        assert_eq!(
+            app_data_dir_override().unwrap(),
+            PathBuf::from(r"D:\sandboxes\wizard")
         );
     }
 }

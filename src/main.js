@@ -1,6 +1,7 @@
 import { mount } from 'svelte'
 import './app.css'
 import App from './App.svelte'
+import { t } from './lib/i18n/t.js'
 
 function showBootError(message) {
   const el = document.getElementById('grimoire-boot-error')
@@ -10,7 +11,10 @@ function showBootError(message) {
 }
 
 window.addEventListener('error', (ev) => {
-  showBootError(`Script error: ${ev.message}\n${ev.filename ?? ''}:${ev.lineno ?? ''}`)
+  showBootError(t('boot.scriptError', {
+    message: ev.message,
+    location: `${ev.filename ?? ''}:${ev.lineno ?? ''}`,
+  }))
 })
 
 window.addEventListener('unhandledrejection', (ev) => {
@@ -21,7 +25,7 @@ window.addEventListener('unhandledrejection', (ev) => {
       : r && typeof r === 'object' && 'message' in r
         ? String(r.message)
         : String(r)
-  showBootError(`Unhandled: ${msg}`)
+  showBootError(t('boot.unhandled', { msg }))
 })
 
 let app
@@ -30,7 +34,7 @@ try {
     target: document.getElementById('app'),
   })
 } catch (e) {
-  showBootError(`Mount failed: ${e}`)
+  showBootError(t('boot.mountFailed', { error: e }))
   throw e
 }
 

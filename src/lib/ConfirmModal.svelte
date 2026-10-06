@@ -1,5 +1,6 @@
 <script>
   import { focusTrap } from './utils/focusTrap.js';
+  import { t } from './i18n/t.js';
   /**
    * ConfirmModal — a centered confirmation dialog replacing browser confirm().
    *
@@ -12,9 +13,9 @@
    *   dangerousDefaultFocus — when true, focus confirm on open (Enter deletes). Default false (Cancel focused).
    */
   let {
-    title = 'Are you sure?',
+    title = t('modals.confirmDefaultTitle'),
     message = '',
-    confirmLabel = 'Delete',
+    confirmLabel = t('modals.confirmDefaultLabel'),
     onConfirm,
     onCancel,
     dangerousDefaultFocus = false,
@@ -40,7 +41,7 @@
   <div class="modal" use:focusTrap onclick={(e) => e.stopPropagation()}>
     <div class="modal-header">
       <h2 id="confirm-title" class="modal-title">{title}</h2>
-      <button class="close-btn" onclick={onCancel} aria-label="Close">✕</button>
+      <button class="close-btn" onclick={onCancel} aria-label={t('modals.confirmClose')}>✕</button>
     </div>
 
     {#if message}
@@ -49,7 +50,7 @@
 
     <div class="modal-actions">
       <button class="btn-confirm" bind:this={confirmBtn} onclick={onConfirm}>{confirmLabel}</button>
-      <button class="btn-cancel" bind:this={cancelBtn} onclick={onCancel}>Cancel</button>
+      <button class="btn-cancel" bind:this={cancelBtn} onclick={onCancel}>{t('modals.confirmCancel')}</button>
     </div>
   </div>
 </div>

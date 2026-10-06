@@ -13,8 +13,8 @@ describe('firstStartTour', () => {
     expect(new Set(ids).size).toBe(5);
     for (const step of FIRST_START_TOUR_STEPS) {
       expect(step.selector).toMatch(/^\[data-tour=/);
-      expect(step.title.length).toBeGreaterThan(0);
-      expect(step.body.length).toBeGreaterThan(0);
+      expect(step.titleKey.length).toBeGreaterThan(0);
+      expect(step.bodyKey.length).toBeGreaterThan(0);
     }
   });
 

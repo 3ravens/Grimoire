@@ -1,4 +1,5 @@
 <script>
+  import { t } from './i18n/t.js';
   import { focusTrap } from './utils/focusTrap.js';
 
   import SettingsLLM from './settings/SettingsLLM.svelte';
@@ -54,17 +55,17 @@
   }
 
   const sections = $derived([
-    { id: 'llm',        label: 'LLM' },
-    { id: 'hardware',   label: 'Hardware' },
-    { id: 'appearance', label: 'Appearance' },
-    { id: 'security',   label: 'Security' },
-    { id: 'privacy',    label: 'Privacy' },
-    { id: 'data',       label: 'Data' },
-    { id: 'wikipedia',    label: 'Wikipedia' },
-    { id: 'file_scanner', label: 'File Scanner' },
-    { id: 'keybinds',   label: 'Keybinds' },
-    { id: 'help',       label: 'Help' },
-    ...(isDev ? [{ id: 'developer', label: 'Developer' }] : []),
+    { id: 'llm',        label: t('settings.nav.llm') },
+    { id: 'hardware',   label: t('settings.nav.hardware') },
+    { id: 'appearance', label: t('settings.nav.appearance') },
+    { id: 'security',   label: t('settings.nav.security') },
+    { id: 'privacy',    label: t('settings.nav.privacy') },
+    { id: 'data',       label: t('settings.nav.data') },
+    { id: 'wikipedia',    label: t('settings.nav.wikipedia') },
+    { id: 'file_scanner', label: t('settings.nav.fileScanner') },
+    { id: 'keybinds',   label: t('settings.nav.keybinds') },
+    { id: 'help',       label: t('settings.nav.help') },
+    ...(isDev ? [{ id: 'developer', label: t('settings.nav.developer') }] : []),
   ]);
 
   $effect(() => {
@@ -80,8 +81,8 @@
 <div class="settings-overlay" use:focusTrap>
   <div class="settings-overlay-main" inert={showPrivacyPolicy}>
     <div class="settings-header">
-      <span class="settings-title">Settings</span>
-      <button class="settings-close" onclick={onClose}>✕ Close</button>
+      <span class="settings-title">{t('common.settings')}</span>
+      <button class="settings-close" onclick={onClose}>{t('settings.close')}</button>
     </div>
 
     <div class="settings-body">

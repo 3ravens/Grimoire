@@ -1,6 +1,7 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
   import grimoireLogo from '../assets/brand/grimoire-logo.png';
+  import { t } from './i18n/t.js';
 
   // Props
   let { onUnlocked } = $props();
@@ -18,7 +19,7 @@
       if (ok) {
         await onUnlocked?.();
       } else {
-        error = 'Incorrect password.';
+        error = t('lock.incorrect');
         password = '';
       }
     } catch (e) {
@@ -41,15 +42,15 @@
   <div class="lock-box">
     <img class="lock-logo" src={grimoireLogo} alt="" width="64" height="45" />
     <h1 class="lock-title">Grimoire</h1>
-    <p id="lock-subtitle" class="lock-subtitle">This vault is locked.</p>
+    <p id="lock-subtitle" class="lock-subtitle">{t('lock.subtitle')}</p>
 
     <div class="lock-field">
       <input
         type="password"
         bind:value={password}
         onkeydown={handleKeydown}
-        placeholder="Enter password…"
-        aria-label="Password"
+        placeholder={t('lock.passwordPlaceholder')}
+        aria-label={t('lock.passwordAria')}
         aria-describedby="lock-subtitle"
         disabled={loading}
         use:focus
@@ -61,7 +62,7 @@
     {/if}
 
     <button onclick={submit} disabled={loading || !password} class="lock-btn">
-      {loading ? 'Unlocking…' : 'Unlock'}
+      {loading ? t('lock.unlocking') : t('lock.unlock')}
     </button>
   </div>
 </div>
