@@ -5,7 +5,7 @@
 //! Distinct from [`crate::hardware::LlmCapability`], which gates default LLM UX.
 //! Tiers are derived from RAM, CPU core count, and best-effort GPU memory.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, RwLock};
 
 use rayon::ThreadPool;
 use serde::Serialize;
@@ -31,7 +31,31 @@ const HIGH_UNIFIED_VRAM_MB: u64 = 20480;
 /// Minimum logical CPU cores for high tier.
 const HIGH_MIN_CPU_CORES: usize = 6;
 
-static GLOBAL_PLAN: OnceLock<Arc<IndexingThroughputPlan>> = OnceLock::new();
+static GLOBAL_PLAN: RwLock<Option<Arc<IndexingThroughputPlan>>> = RwLock::new(None);
+
+/// Tauri-managed handle so IPC and background detect can replace the plan after
+/// full hardware detection completes (provisional Low tier at first paint).
+#[derive(Clone)]
+pub struct SharedIndexingPlan(pub Arc<RwLock<Arc<IndexingThroughputPlan>>>);
+
+impl SharedIndexingPlan {
+    pub fn new(plan: Arc<IndexingThroughputPlan>) -> Self {
+        Self(Arc::new(RwLock::new(plan)))
+    }
+
+    pub fn current(&self) -> Arc<IndexingThroughputPlan> {
+        self.0
+            .read()
+            .map(|g| Arc::clone(&*g))
+            .unwrap_or_else(|_| Arc::new(plan_for_tier(IndexingThroughputTier::Low)))
+    }
+
+    pub fn replace(&self, plan: Arc<IndexingThroughputPlan>) {
+        if let Ok(mut g) = self.0.write() {
+            *g = plan;
+        }
+    }
+}
 
 /// Throughput tier for background indexing (Wikipedia, file scanner, vault re-embed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -197,9 +221,16 @@ fn model_max_embed_batch(model: &str) -> usize {
     }
 }
 
-/// Install the process-wide indexing plan (call once from Tauri `setup`).
+/// Install (or replace) the process-wide indexing plan.
 pub fn init_global(plan: Arc<IndexingThroughputPlan>) {
-    let _ = GLOBAL_PLAN.set(plan);
+    if let Ok(mut g) = GLOBAL_PLAN.write() {
+        *g = Some(plan);
+    }
+}
+
+/// Replace the process-wide plan after deferred hardware detection.
+pub fn set_global(plan: Arc<IndexingThroughputPlan>) {
+    init_global(plan);
 }
 
 /// Effective `/api/embed` slice size for `model`, using the global plan when set
@@ -212,7 +243,7 @@ pub fn effective_embed_slice_cap(model: &str) -> usize {
 
 /// Returns installed plan, or `None` before init (unit tests / partial harness).
 pub fn try_global() -> Option<Arc<IndexingThroughputPlan>> {
-    GLOBAL_PLAN.get().cloned()
+    GLOBAL_PLAN.read().ok().and_then(|g| g.clone())
 }
 
 #[cfg(test)]

@@ -910,7 +910,7 @@ pub async fn index_wikipedia_bundle(
     vdb: State<'_, crate::vector::VectorDb>,
     cancel_map: State<'_, super::CancelMap>,
     config: State<'_, SharedConfig>,
-    indexing_plan: State<'_, Arc<crate::indexing_profile::IndexingThroughputPlan>>,
+    indexing_plan: State<'_, crate::indexing_profile::SharedIndexingPlan>,
     bundle_id: String,
     reset: Option<bool>,
 ) -> AppResult<()> {
@@ -985,7 +985,7 @@ pub async fn index_wikipedia_bundle(
     let max_retries = config.read().unwrap().background_max_retries;
     let permanently_skipped_arc = Arc::new(AtomicI64::new(0));
     let permanently_skipped_inner = permanently_skipped_arc.clone();
-    let indexing_plan_spawn = indexing_plan.inner().clone();
+    let indexing_plan_spawn = indexing_plan.current();
 
     let result: AppResult<()> = tokio::task::spawn_blocking(move || {
         let plan = &*indexing_plan_spawn;
@@ -2367,7 +2367,7 @@ pub async fn benchmark_wikipedia_quality(
 #[tauri::command]
 pub async fn benchmark_wikipedia_indexing(
     config: State<'_, SharedConfig>,
-    indexing_plan: State<'_, Arc<crate::indexing_profile::IndexingThroughputPlan>>,
+    indexing_plan: State<'_, crate::indexing_profile::SharedIndexingPlan>,
     zim_path: String,
     max_entries: Option<u32>,
 ) -> AppResult<WikiIndexBenchmarkResult> {
@@ -2375,7 +2375,7 @@ pub async fn benchmark_wikipedia_indexing(
     let scan_budget = max_entries.unwrap_or(20_000).max(1);
     let model_for_task = embedding_model.clone();
     let path_for_task = zim_path.clone();
-    let plan_arc = indexing_plan.inner().clone();
+    let plan_arc = indexing_plan.current();
 
     let result = tokio::task::spawn_blocking(move || {
         let plan = &*plan_arc;

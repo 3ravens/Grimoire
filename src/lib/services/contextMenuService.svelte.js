@@ -34,6 +34,8 @@ import { t } from "../i18n/t.js";
  *   loadNotes: () => void,
  *   lockFolderSession: (id: any) => void | Promise<void>,
  *   onError: (e: unknown) => void,
+ *   pins?: { unpin: (id: string) => void | Promise<void> },
+ *   openPinnedActionsSettings?: () => void,
  * }} deps
  */
 export function createContextMenuService(deps) {
@@ -97,7 +99,11 @@ export function createContextMenuService(deps) {
       loadNotes,
       lockFolderSession,
       onError,
+      pins,
+      openPinnedActionsSettings,
     } = deps;
+    const pinnedActionEl = target.closest("[data-pinned-action-id]");
+    const pinnedSectionLabel = target.closest("[data-pinned-section-label]");
     const tabEl = target.closest("[data-tab-id]");
     const noteLiEl = target.closest("[data-note-id]");
     const folderLiEl = target.closest("[data-folder-id]");
@@ -106,7 +112,29 @@ export function createContextMenuService(deps) {
 
     let items = /** @type {any[]} */ ([]);
 
-    if (createNoteBtn) {
+    if (pinnedActionEl) {
+      const pinId = /** @type {HTMLElement} */ (pinnedActionEl).dataset
+        .pinnedActionId;
+      items = [
+        {
+          label: t("contextMenu.unpinAction"),
+          action: () => {
+            if (pinId) void pins?.unpin(pinId);
+          },
+        },
+        {
+          label: t("contextMenu.managePinnedActions"),
+          action: () => openPinnedActionsSettings?.(),
+        },
+      ];
+    } else if (pinnedSectionLabel) {
+      items = [
+        {
+          label: t("contextMenu.managePinnedActions"),
+          action: () => openPinnedActionsSettings?.(),
+        },
+      ];
+    } else if (createNoteBtn) {
       items = tmpl.templates.map((tmplItem) => ({
         label: tmplItem.name,
         action: () => startNoteInline(tmplItem.id),

@@ -1,5 +1,7 @@
 <script>
+  import { getContext } from 'svelte';
   import { t } from './i18n/t.js';
+  import { getCommand } from './commands/commandRegistry.js';
   import SearchIcon from './icons/SearchIcon.svelte';
   import GraphIcon from './icons/GraphIcon.svelte';
   import CalendarIcon from './icons/CalendarIcon.svelte';
@@ -13,10 +15,10 @@
   import BugIcon from './icons/BugIcon.svelte';
 
   const {
-    searchActive      = false,
-    showLock          = false,
-    wikipediaEnabled  = false,
-    updateAvailable   = false,
+    searchActive = false,
+    showLock = false,
+    wikipediaEnabled = false,
+    updateAvailable = false,
     onSearch,
     onGraph,
     onCalendar,
@@ -30,10 +32,32 @@
     onReportBug,
     reportBugBusy = false,
   } = $props();
+
+  /** @type {{ run: (id: string) => void, isAvailable: (id: string) => boolean, isActive: (id: string) => boolean } | undefined} */
+  const commands = getContext('commands');
+  /** @type {{ orderedIds: string[] } | undefined} */
+  const pins = getContext('pins');
+
+  const visiblePins = $derived(
+    (pins?.orderedIds ?? []).filter((id) => {
+      if (!getCommand(id)) return false;
+      return commands ? commands.isAvailable(id) : true;
+    }),
+  );
+
+  /** @param {string} id */
+  function runPin(id) {
+    commands?.run(id);
+  }
+
+  /** @param {string} id */
+  function pinActive(id) {
+    return commands?.isActive(id) ?? false;
+  }
 </script>
 
 <nav class="activity-bar">
-  <!-- ── Top group ──────────────────────────────────────────────────────── -->
+  <!-- ── Top group (fixed chrome) ───────────────────────────────────────── -->
   <div class="activity-bar-top">
     <button
       class="activity-bar-btn"
@@ -41,7 +65,7 @@
       onclick={onSearch}
       title={t('activityBar.searchTitle')}
       aria-label={t('activityBar.searchAria')}
-      aria-current={searchActive ? 'page' : undefined}
+      aria-pressed={searchActive}
       data-tour="search"
     >
       <SearchIcon size={16} />
@@ -65,7 +89,6 @@
       <CalendarIcon size={16} />
     </button>
 
-    <!-- New Daily Note: calendar icon with a + in the body -->
     <button
       class="activity-bar-btn"
       onclick={onDailyNote}
@@ -75,7 +98,6 @@
       <DailyNoteIcon size={16} />
     </button>
 
-    <!-- Quick Switcher: list with magnifying glass -->
     <button
       class="activity-bar-btn"
       onclick={onQuickSwitcher}
@@ -86,7 +108,6 @@
     </button>
 
     {#if wikipediaEnabled}
-      <!-- Wikipedia article search -->
       <button
         class="activity-bar-btn"
         onclick={onWikipedia}
@@ -96,10 +117,46 @@
         <DocumentIcon size={16} />
       </button>
     {/if}
+  </div>
 
-    <!-- Pinned actions placeholder (deferred) -->
+  <!-- ── Pinned actions (scrollable) ────────────────────────────────────── -->
+  <div class="activity-bar-pins-section">
     <div class="activity-bar-separator"></div>
-    <span class="activity-bar-section-label">{t('activityBar.pinned')}</span>
+    <span
+      class="activity-bar-section-label"
+      data-pinned-section-label
+    >{t('activityBar.pinned')}</span>
+
+    <div class="activity-bar-pins">
+      {#each visiblePins as id (id)}
+        {@const cmd = getCommand(id)}
+        {#if cmd}
+          {@const Icon = cmd.icon}
+          {@const active = pinActive(id)}
+          <button
+            type="button"
+            class="activity-bar-btn"
+            class:active={active}
+            class:has-badge={id === 'settings' && updateAvailable}
+            disabled={id === 'report-bug' && reportBugBusy}
+            onclick={() => runPin(id)}
+            title={id === 'settings' && updateAvailable
+              ? t('activityBar.settingsUpdateTitle')
+              : t(cmd.titleKey)}
+            aria-label={id === 'settings' && updateAvailable
+              ? t('activityBar.settingsUpdateAria')
+              : t(cmd.ariaKey)}
+            aria-pressed={id === 'search' ? active : undefined}
+            data-pinned-action-id={id}
+          >
+            <Icon size={16} />
+            {#if id === 'settings' && updateAvailable}
+              <span class="activity-bar-badge" aria-hidden="true"></span>
+            {/if}
+          </button>
+        {/if}
+      {/each}
+    </div>
   </div>
 
   <!-- ── Bottom group ───────────────────────────────────────────────────── -->

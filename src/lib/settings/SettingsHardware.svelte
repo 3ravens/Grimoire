@@ -39,7 +39,7 @@
     hwLoading = true;
     try {
       [hw, runningModels] = await Promise.all([
-        invoke('get_hardware_info'),
+        invoke('get_hardware_info', { refresh: true }),
         invoke('get_running_models'),
       ]);
       hwError = '';
@@ -64,7 +64,7 @@
     if (hw === null && !hwLoading) {
       hwLoading = true;
       Promise.all([
-        invoke('get_hardware_info'),
+        invoke('get_hardware_info', { refresh: true }),
         invoke('get_running_models'),
       ])
         .then(([r, models]) => { hw = r; runningModels = models; hwError = ''; })
@@ -74,7 +74,7 @@
 
     const id = setInterval(() => {
       Promise.all([
-        invoke('get_hardware_info'),
+        invoke('get_hardware_info', { refresh: true }),
         invoke('get_running_models'),
       ])
         .then(([r, models]) => { hw = r; runningModels = models; })

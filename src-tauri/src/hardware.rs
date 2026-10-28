@@ -11,9 +11,12 @@
 //! GPU detection is best-effort via subprocess; it never panics. The rest of
 //! the app functions normally even if detection returns no GPU data.
 
+use std::sync::Arc;
+
 use serde::Serialize;
 use sysinfo::{ProcessesToUpdate, System};
 use tokio::process::Command;
+use tokio::sync::{Mutex, watch};
 
 /// Avoid brief console flashes when spawning helper tools on Windows.
 #[cfg(target_os = "windows")]
@@ -42,8 +45,97 @@ pub enum LlmCapability {
 }
 
 /// Startup hardware tier used for LLM gating (avoids re-detecting on every command).
+///
+/// Wrapped in [`std::sync::RwLock`] so a background detect task can upgrade the
+/// provisional [`LlmCapability::EmbeddingOnly`] value set before first paint.
 #[derive(Clone)]
-pub struct HardwareCapability(pub LlmCapability);
+pub struct HardwareCapability(pub Arc<std::sync::RwLock<LlmCapability>>);
+
+impl HardwareCapability {
+    pub fn provisional() -> Self {
+        Self(Arc::new(std::sync::RwLock::new(LlmCapability::EmbeddingOnly)))
+    }
+
+    pub fn get(&self) -> LlmCapability {
+        self.0
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or(LlmCapability::EmbeddingOnly)
+    }
+
+    pub fn set(&self, capability: LlmCapability) {
+        if let Ok(mut g) = self.0.write() {
+            *g = capability;
+        }
+    }
+}
+
+/// Cached hardware snapshot shared across IPC. First detect is spawned at setup;
+/// callers await via [`SharedHardware::wait_info`] until a value is published.
+#[derive(Clone)]
+pub struct SharedHardware {
+    tx: watch::Sender<Option<HardwareInfo>>,
+    /// Kept so `send` succeeds even before the first `wait_info` subscriber exists.
+    /// (tokio `watch::Sender::send` fails when the receiver count is zero.)
+    _keep_alive: watch::Receiver<Option<HardwareInfo>>,
+    /// Serialises startup detect vs Settings `refresh: true` so capability/plan/cache stay aligned.
+    detect_lock: Arc<Mutex<()>>,
+}
+
+impl SharedHardware {
+    pub fn new() -> Self {
+        let (tx, rx) = watch::channel(None);
+        Self {
+            tx,
+            _keep_alive: rx,
+            detect_lock: Arc::new(Mutex::new(())),
+        }
+    }
+
+    pub fn publish(&self, info: HardwareInfo) {
+        // Prefer send_replace so the value is always updated even if a race
+        // briefly drops extra subscribers; keep_alive guarantees ≥1 receiver.
+        self.tx.send_replace(Some(info));
+    }
+
+    pub fn current(&self) -> Option<HardwareInfo> {
+        self.tx.borrow().clone()
+    }
+
+    /// Return the cached snapshot, waiting for the first startup detect if needed.
+    pub async fn wait_info(&self) -> HardwareInfo {
+        let mut rx = self.tx.subscribe();
+        loop {
+            if let Some(info) = rx.borrow_and_update().clone() {
+                return info;
+            }
+            if rx.changed().await.is_err() {
+                break;
+            }
+        }
+        // Sender dropped with no value — fall back to an inline detect.
+        detect().await
+    }
+
+    /// Run detect under the shared lock, update capability + indexing plan, then publish.
+    /// Used by the startup spawn and by Settings `refresh: true` so both paths stay DRY.
+    pub async fn run_detect_and_publish(
+        &self,
+        hw_cap: &HardwareCapability,
+        indexing_plan: &crate::indexing_profile::SharedIndexingPlan,
+    ) -> HardwareInfo {
+        let _guard = self.detect_lock.lock().await;
+        let snapshot = detect().await;
+        hw_cap.set(snapshot.capability.clone());
+        let tier = crate::indexing_profile::tier_from_env()
+            .unwrap_or_else(|| crate::indexing_profile::tier_from_hardware(&snapshot));
+        let plan = Arc::new(crate::indexing_profile::plan_for_tier(tier));
+        crate::indexing_profile::set_global(Arc::clone(&plan));
+        indexing_plan.replace(plan);
+        self.publish(snapshot.clone());
+        snapshot
+    }
+}
 
 /// True when chat/RAG embedding features may run (full hardware or user opt-in).
 pub fn llm_features_enabled(config: &crate::config::AppConfig, capability: LlmCapability) -> bool {
@@ -782,5 +874,45 @@ fn classify(ram_total_mb: u64, gpus: &[GpuInfo]) -> LlmCapability {
         LlmCapability::Full
     } else {
         LlmCapability::EmbeddingOnly
+    }
+}
+
+#[cfg(test)]
+mod shared_hardware_tests {
+    use super::*;
+
+    fn sample_info(capability: LlmCapability) -> HardwareInfo {
+        HardwareInfo {
+            cpu_name: "test".into(),
+            cpu_cores: 4,
+            ram_total_mb: 8192,
+            ram_used_mb: 2048,
+            ram_grimoire_mb: 100,
+            gpus: vec![],
+            capability,
+        }
+    }
+
+    #[tokio::test]
+    async fn wait_info_returns_published_snapshot() {
+        let shared = SharedHardware::new();
+        let shared_bg = shared.clone();
+        let publish = tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            shared_bg.publish(sample_info(LlmCapability::Full));
+        });
+        let info = shared.wait_info().await;
+        publish.await.unwrap();
+        assert_eq!(info.capability, LlmCapability::Full);
+        assert_eq!(info.ram_total_mb, 8192);
+    }
+
+    #[tokio::test]
+    async fn wait_info_sees_value_already_published() {
+        let shared = SharedHardware::new();
+        shared.publish(sample_info(LlmCapability::EmbeddingOnly));
+        assert!(shared.current().is_some());
+        let info = shared.wait_info().await;
+        assert_eq!(info.capability, LlmCapability::EmbeddingOnly);
     }
 }

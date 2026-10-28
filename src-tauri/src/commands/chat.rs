@@ -105,7 +105,7 @@ pub async fn chat(
 ) -> AppResult<()> {
     use tauri::Emitter;
 
-    if !llm_features_enabled(&config.read().unwrap(), hw.0.clone()) {
+    if !llm_features_enabled(&config.read().unwrap(), hw.get()) {
         return Err(AppError::InvalidInput(LLM_GATE_MESSAGE.to_string()));
     }
 
@@ -364,7 +364,7 @@ pub async fn suggest_note_improvement(
 ) -> AppResult<()> {
     use tauri::Emitter;
 
-    if !llm_features_enabled(&config.read().unwrap(), hw.0.clone()) {
+    if !llm_features_enabled(&config.read().unwrap(), hw.get()) {
         return Err(AppError::InvalidInput(LLM_GATE_MESSAGE.to_string()));
     }
 
@@ -457,7 +457,7 @@ pub async fn suggest_hunk_refinement(
 ) -> AppResult<()> {
     use tauri::Emitter;
 
-    if !llm_features_enabled(&config.read().unwrap(), hw.0.clone()) {
+    if !llm_features_enabled(&config.read().unwrap(), hw.get()) {
         return Err(AppError::InvalidInput(LLM_GATE_MESSAGE.to_string()));
     }
 

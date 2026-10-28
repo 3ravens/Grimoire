@@ -9,6 +9,7 @@
   import SettingsData from './settings/SettingsData.svelte';
   import SettingsPrivacy from './settings/SettingsPrivacy.svelte';
   import SettingsKeybinds from './settings/SettingsKeybinds.svelte';
+  import SettingsPinnedActions from './settings/SettingsPinnedActions.svelte';
   import SettingsDeveloper from './settings/SettingsDeveloper.svelte';
   import SettingsWikipedia from './settings/SettingsWikipedia.svelte';
   import SettingsFileScanner from './settings/SettingsFileScanner.svelte';
@@ -64,6 +65,7 @@
     { id: 'wikipedia',    label: t('settings.nav.wikipedia') },
     { id: 'file_scanner', label: t('settings.nav.fileScanner') },
     { id: 'keybinds',   label: t('settings.nav.keybinds') },
+    { id: 'pinned_actions', label: t('settings.nav.pinnedActions') },
     { id: 'help',       label: t('settings.nav.help') },
     ...(isDev ? [{ id: 'developer', label: t('settings.nav.developer') }] : []),
   ]);
@@ -120,6 +122,8 @@
           <SettingsFileScanner />
         {:else if activeSection === 'keybinds'}
           <SettingsKeybinds />
+        {:else if activeSection === 'pinned_actions'}
+          <SettingsPinnedActions />
         {:else if activeSection === 'help'}
           <SettingsHelp onReplayTour={onReplayTour} />
         {:else if activeSection === 'developer'}

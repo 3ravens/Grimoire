@@ -19,6 +19,34 @@
   flex-direction: column;
   align-items: center;
   width: 100%;
+  flex-shrink: 0;
+}
+
+.activity-bar-pins-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.activity-bar-pins {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.activity-bar-pins::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .activity-bar-bottom {
@@ -26,7 +54,7 @@
   flex-direction: column;
   align-items: center;
   width: 100%;
-  margin-top: auto;
+  flex-shrink: 0;
 }
 
 .activity-bar-btn {

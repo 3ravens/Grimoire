@@ -23,6 +23,45 @@ use crate::{
 // Vault commands
 // ---------------------------------------------------------------------------
 
+/// Startup / unlock UI: one IPC instead of `is_vault_locked` + `vault_has_password`.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultLockStatus {
+    pub locked: bool,
+    pub has_password: bool,
+}
+
+pub(crate) async fn vault_lock_status_inner(
+    pool: &SqlitePool,
+    keys: &SharedKeyStore,
+) -> Result<VaultLockStatus, String> {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM vault_lock")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let has_password = count > 0;
+    if !has_password {
+        return Ok(VaultLockStatus {
+            locked: false,
+            has_password: false,
+        });
+    }
+    let key_guard = keys.vault_key.lock().map_err(|e| e.to_string())?;
+    Ok(VaultLockStatus {
+        locked: key_guard.is_none(),
+        has_password: true,
+    })
+}
+
+/// Returns password presence and lock state with a single `vault_lock` read.
+#[tauri::command]
+pub async fn vault_lock_status(
+    pool: State<'_, SqlitePool>,
+    keys: State<'_, SharedKeyStore>,
+) -> Result<VaultLockStatus, String> {
+    vault_lock_status_inner(pool.inner(), keys.inner()).await
+}
+
 /// Returns true if a vault password has been set (i.e. vault_lock table has a row).
 #[tauri::command]
 pub async fn vault_has_password(pool: State<'_, SqlitePool>) -> Result<bool, String> {
@@ -805,5 +844,40 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cnt, 0);
+    }
+
+    #[tokio::test]
+    async fn vault_lock_status_unlocked_when_no_password() {
+        let pool = memory_pool().await;
+        let keys = empty_keys();
+        let s = vault_lock_status_inner(&pool, &keys).await.unwrap();
+        assert!(!s.has_password);
+        assert!(!s.locked);
+    }
+
+    #[tokio::test]
+    async fn vault_lock_status_locked_when_password_without_session_key() {
+        let pool = memory_pool().await;
+        let keys = empty_keys();
+
+        let salt = crypto::generate_salt();
+        let key = crypto::derive_key("pw", &salt).unwrap();
+        let sentinel = crypto::make_sentinel(&key);
+        let salt_b64 = base64::engine::general_purpose::STANDARD.encode(salt);
+        sqlx::query("INSERT INTO vault_lock (id, salt, sentinel) VALUES (1, ?, ?)")
+            .bind(&salt_b64)
+            .bind(&sentinel)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let s = vault_lock_status_inner(&pool, &keys).await.unwrap();
+        assert!(s.has_password);
+        assert!(s.locked);
+
+        assert!(try_unlock_vault(&pool, &keys, "pw").await.unwrap());
+        let s2 = vault_lock_status_inner(&pool, &keys).await.unwrap();
+        assert!(s2.has_password);
+        assert!(!s2.locked);
     }
 }

@@ -16,12 +16,9 @@ export function createVaultService({ onError, ns, ts, fs }) {
 
   async function checkLockState() {
     try {
-      const [locked, hasPw] = await Promise.all([
-        invoke("is_vault_locked"),
-        invoke("vault_has_password"),
-      ]);
-      vaultLocked = locked;
-      vaultHasPassword = hasPw;
+      const status = await invoke("vault_lock_status");
+      vaultLocked = Boolean(status?.locked);
+      vaultHasPassword = Boolean(status?.hasPassword);
     } catch (err) {
       vaultLocked = true;
       onError?.(err);

@@ -42,19 +42,24 @@ async fn upsert_setting_tx(
     Ok(())
 }
 
+/// Values already loaded while running legacy-vault backfill (avoids re-query in status).
+#[derive(Debug, Clone)]
+pub struct WizardBackfillSnapshot {
+    pub done: String,
+    pub note_count: i64,
+    pub folder_count: i64,
+}
+
 /// Run legacy-vault detection: existing notes/folders imply the wizard already de-facto ran.
-pub async fn maybe_backfill_wizard_completed(pool: &SqlitePool) -> AppResult<()> {
-    let done: String = sqlx::query_scalar(
+/// Returns the setting/counts it already read so [`wizard_status_impl`] need not re-query.
+pub async fn maybe_backfill_wizard_completed(pool: &SqlitePool) -> AppResult<WizardBackfillSnapshot> {
+    let mut done: String = sqlx::query_scalar(
         "SELECT value FROM settings WHERE key = ? LIMIT 1",
     )
     .bind(KEY_WIZARD_DONE)
     .fetch_optional(pool)
     .await?
     .unwrap_or_default();
-
-    if done == "true" {
-        return Ok(());
-    }
 
     let note_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notes")
         .fetch_one(pool)
@@ -65,6 +70,14 @@ pub async fn maybe_backfill_wizard_completed(pool: &SqlitePool) -> AppResult<()>
         .fetch_one(pool)
         .await
         .unwrap_or(0);
+
+    if done == "true" {
+        return Ok(WizardBackfillSnapshot {
+            done,
+            note_count,
+            folder_count,
+        });
+    }
 
     if note_count > 0 || folder_count > 0 {
         let mut tx = pool.begin().await?;
@@ -78,9 +91,14 @@ pub async fn maybe_backfill_wizard_completed(pool: &SqlitePool) -> AppResult<()>
             upsert_setting_tx(&mut tx, KEY_FIRST_START_TOUR_DONE, "true").await?;
         }
         tx.commit().await?;
+        done = "true".to_string();
     }
 
-    Ok(())
+    Ok(WizardBackfillSnapshot {
+        done,
+        note_count,
+        folder_count,
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -93,32 +111,13 @@ pub struct WizardStatus {
 
 /// Single cheap IPC: counts + whether the first-run wizard should appear.
 pub async fn wizard_status_impl(pool: &SqlitePool) -> AppResult<WizardStatus> {
-    maybe_backfill_wizard_completed(pool).await?;
-
-    let done: String = sqlx::query_scalar(
-        "SELECT value FROM settings WHERE key = ? LIMIT 1",
-    )
-    .bind(KEY_WIZARD_DONE)
-    .fetch_optional(pool)
-    .await?
-    .unwrap_or_default();
-
-    let note_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notes")
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
-
-    let folder_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM folders")
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
-
-    let show = done != "true";
+    let snap = maybe_backfill_wizard_completed(pool).await?;
+    let show = snap.done != "true";
 
     Ok(WizardStatus {
         show_wizard: show,
-        note_count,
-        folder_count,
+        note_count: snap.note_count,
+        folder_count: snap.folder_count,
     })
 }
 

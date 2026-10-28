@@ -34,6 +34,7 @@
     import { createPanelLayout } from "./lib/stores/panelLayout.svelte.js";
     import { createBookmarks } from "./lib/stores/bookmarks.svelte.js";
     import { createTemplates } from "./lib/stores/templates.svelte.js";
+    import { createPinnedActions } from "./lib/stores/pinnedActions.svelte.js";
     import { createVaultService } from "./lib/services/vaultService.svelte.js";
     import { createFolderService } from "./lib/services/folderService.svelte.js";
     import { createNoteService } from "./lib/services/noteService.svelte.js";
@@ -43,6 +44,8 @@
     import { createErrorService } from "./lib/services/errorService.svelte.js";
     import { createContextMenuService } from "./lib/services/contextMenuService.svelte.js";
     import { createChatSessionService } from "./lib/services/chatSessionService.svelte.js";
+    import { createCommandService } from "./lib/services/commandService.svelte.js";
+    import { getCommand } from "./lib/commands/commandRegistry.js";
     import { folderSubtreeIds } from "./lib/utils/folderTree.js";
     import { createKeyboardService } from "./lib/services/keyboardService.svelte.js";
     import { normalizeReadingWpm } from "./lib/utils/readableText.js";
@@ -60,6 +63,7 @@
     const bm = createBookmarks();
     const tmpl = createTemplates();
     const err = createErrorService();
+    const pins = createPinnedActions({ invoke, onError: err.showError });
     /** @type {{ rootFolderId: number, affectedFolderIds: number[], processed: number, total: number, embeddingChunks: { done: number, total: number, note_title: string } | null } | null} */
     let folderUnlockReindex = $state(null);
 
@@ -232,6 +236,11 @@
         await loadNotes();
     }
 
+    function openPinnedActionsSettings() {
+        ui.settingsPendingSection = "pinned_actions";
+        ui.settingsOpen = true;
+    }
+
     // Context menu service — needs coordinator callbacks, so created after them.
     const ctx = createContextMenuService({
         ns,
@@ -254,6 +263,8 @@
         loadNotes,
         lockFolderSession,
         onError: err.showError,
+        pins,
+        openPinnedActionsSettings,
     });
 
     // Keyboard shortcut handler.
@@ -277,7 +288,7 @@
             const el = document.activeElement;
             if (!(el instanceof HTMLElement)) return;
             const ctxTarget = el.closest(
-                '[data-note-id], [data-folder-id], [data-tab-id], .content-area, [data-action="create-note-btn"]',
+                '[data-note-id], [data-folder-id], [data-tab-id], .content-area, [data-action="create-note-btn"], [data-pinned-action-id], [data-pinned-section-label]',
             );
             if (ctxTarget) ctx.openFromElement(ctxTarget);
         },
@@ -369,6 +380,54 @@
     }
 
     // ── Context ────────────────────────────────────────────────────────────────────
+    const commands = createCommandService({
+        handlers: {
+            search: () => {
+                ts.searchOpen = !ts.searchOpen;
+            },
+            graph: () => openGraphTab(),
+            calendar: () => openCalendarTab(),
+            "daily-note": () => {
+                void createDailyNote();
+            },
+            "quick-switcher": () => {
+                ui.quickSwitcherOpen = true;
+            },
+            wikipedia: () => {
+                ui.wikiSearchOpen = true;
+            },
+            "lock-vault": () => {
+                void lockVault();
+            },
+            settings: () => {
+                ui.settingsOpen = true;
+            },
+            help: () => openPublicSite("https://grimoireapp.dev/help"),
+            docs: () => openPublicSite("https://docs.grimoireapp.dev"),
+            "report-bug": () => {
+                void openBugReportFromShell();
+            },
+            "new-note": () => {
+                void startNoteInline();
+            },
+            "new-folder": () => {
+                layout.foldersOpen = true;
+                void startFolderInline();
+            },
+        },
+        isAvailable: (id) => {
+            const cmd = getCommand(id);
+            if (!cmd) return false;
+            if (cmd.availability === "wikipedia") return settings.wikipediaEnabled;
+            if (cmd.availability === "lock") return vault.vaultHasPassword;
+            return true;
+        },
+        isActive: (id) => {
+            if (id === "search") return ts.searchOpen;
+            return false;
+        },
+    });
+
     setContext("ns", ns);
     setContext("ts", ts);
     setContext("is", is);
@@ -382,6 +441,8 @@
     setContext("err", err);
     setContext("ctx", ctx);
     setContext("chatSession", chatSession);
+    setContext("pins", pins);
+    setContext("commands", commands);
 
     // ── Error banner — errorMsg and showError live in errorService (err).
 
@@ -427,6 +488,7 @@
         loadAllTags();
         tmpl.loadTemplates();
         bm.loadBookmarks();
+        void pins.load();
 
         invoke("get_hardware_info")
             .then((hw) => {
@@ -1329,21 +1391,21 @@
 
     <!-- ── Activity bar ───────────────────────────────────────────────────── -->
     <ActivityBar
-        searchActive={ts.searchOpen}
+        searchActive={commands.isActive("search")}
         showLock={vault.vaultHasPassword}
-        onSearch={() => (ts.searchOpen = !ts.searchOpen)}
-        onGraph={openGraphTab}
-        onCalendar={openCalendarTab}
-        onDailyNote={createDailyNote}
-        onQuickSwitcher={() => (ui.quickSwitcherOpen = true)}
+        onSearch={() => commands.run("search")}
+        onGraph={() => commands.run("graph")}
+        onCalendar={() => commands.run("calendar")}
+        onDailyNote={() => commands.run("daily-note")}
+        onQuickSwitcher={() => commands.run("quick-switcher")}
         wikipediaEnabled={settings.wikipediaEnabled}
-        onWikipedia={() => (ui.wikiSearchOpen = true)}
-        onLock={lockVault}
-        onSettings={() => (ui.settingsOpen = true)}
+        onWikipedia={() => commands.run("wikipedia")}
+        onLock={() => commands.run("lock-vault")}
+        onSettings={() => commands.run("settings")}
         updateAvailable={updateBanner != null}
-        onHelp={() => openPublicSite("https://grimoireapp.dev/help")}
-        onDocs={() => openPublicSite("https://docs.grimoireapp.dev")}
-        onReportBug={openBugReportFromShell}
+        onHelp={() => commands.run("help")}
+        onDocs={() => commands.run("docs")}
+        onReportBug={() => commands.run("report-bug")}
         reportBugBusy={bugReportOpening}
     />
 

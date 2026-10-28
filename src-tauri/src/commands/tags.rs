@@ -404,7 +404,7 @@ pub async fn convert_mention_to_link(
             pool.inner().clone(),
             vdb.inner().0.clone(),
             config.inner().clone(),
-            hw.0.clone(),
+            hw.get(),
             saved.id,
             saved.title.clone(),
             saved.content.clone(),

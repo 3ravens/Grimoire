@@ -209,7 +209,7 @@ pub async fn index_note(
     title: String,
     content: String,
 ) -> AppResult<()> {
-    if !crate::hardware::llm_features_enabled(&config.read().unwrap(), hw.0.clone()) {
+    if !crate::hardware::llm_features_enabled(&config.read().unwrap(), hw.get()) {
         return Ok(());
     }
     let model = config.read().unwrap().embedding_model.clone();
@@ -352,7 +352,7 @@ pub async fn start_folder_unlock_reindex(
     coord: State<'_, super::FolderUnlockReindexCoordinator>,
     root_folder_id: i64,
 ) -> AppResult<()> {
-    if !crate::hardware::llm_features_enabled(&config.read().unwrap(), hw.0.clone()) {
+    if !crate::hardware::llm_features_enabled(&config.read().unwrap(), hw.get()) {
         return Ok(());
     }
     let pool = pool.inner().clone();
@@ -909,7 +909,7 @@ pub async fn reindex_all(
 ) -> AppResult<String> {
     let _hold = gate.0.lock().await;
 
-    if !crate::hardware::llm_features_enabled(&config.read().unwrap(), hw.0.clone()) {
+    if !crate::hardware::llm_features_enabled(&config.read().unwrap(), hw.get()) {
         return Ok("0 notes indexed (LLM features disabled)".to_string());
     }
 

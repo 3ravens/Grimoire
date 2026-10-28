@@ -157,27 +157,35 @@ Only delete the DB files as a last resort when you intentionally want an empty v
                     };
                     panic!("failed to initialise database: {msg}{hint}");
                 });
-                // Audit retention (best-effort; never blocks startup on failure).
-                crate::audit::prune_if_configured(&pool).await;
                 let pool_for_fts = pool.clone();
                 let pool_for_wiki_fts = pool.clone();
+                let pool_for_prune = pool.clone();
 
                 let app_config = config::AppConfig::load(&pool)
                     .await
                     .expect("failed to load app config");
                 app_handle.manage(Arc::new(RwLock::new(app_config)) as config::SharedConfig);
 
-                let hw_snapshot = hardware::detect().await;
-                let capability = hw_snapshot.capability.clone();
-                app_handle.manage(hardware::HardwareCapability(capability));
-                let tier = indexing_profile::tier_from_env()
-                    .unwrap_or_else(|| indexing_profile::tier_from_hardware(&hw_snapshot));
-                let indexing_plan =
-                    Arc::new(indexing_profile::plan_for_tier(tier));
-                indexing_profile::init_global(Arc::clone(&indexing_plan));
-                app_handle.manage(indexing_plan);
+                // Provisional LLM gate + conservative indexing until GPU detect finishes.
+                // Full detect is spawned below so window.show() is not blocked on wmic/DXGI.
+                let hw_cap = hardware::HardwareCapability::provisional();
+                let shared_hw = hardware::SharedHardware::new();
+                let provisional_tier = indexing_profile::tier_from_env()
+                    .unwrap_or(indexing_profile::IndexingThroughputTier::Low);
+                let indexing_plan = indexing_profile::SharedIndexingPlan::new(Arc::new(
+                    indexing_profile::plan_for_tier(provisional_tier),
+                ));
+                indexing_profile::init_global(indexing_plan.current());
+                app_handle.manage(hw_cap.clone());
+                app_handle.manage(shared_hw.clone());
+                app_handle.manage(indexing_plan.clone());
 
                 app_handle.manage(pool);
+
+                // Audit retention (best-effort; never blocks startup on failure).
+                tauri::async_runtime::spawn(async move {
+                    crate::audit::prune_if_configured(&pool_for_prune).await;
+                });
 
                 tauri::async_runtime::spawn(async move {
                     commands::search::fts_initial_sync(&pool_for_fts).await;
@@ -193,6 +201,16 @@ Only delete the DB files as a last resort when you intentionally want an empty v
                 app_handle.manage(commands::CancelMap::new());
                 app_handle.manage(commands::FileScanCancelMap::new());
                 app_handle.manage(commands::VaultReindexGate::new());
+
+                // Full hardware detect off the critical path (same idea as LanceDB below).
+                let hw_cap_bg = hw_cap.clone();
+                let shared_hw_bg = shared_hw.clone();
+                let indexing_plan_bg = indexing_plan.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = shared_hw_bg
+                        .run_detect_and_publish(&hw_cap_bg, &indexing_plan_bg)
+                        .await;
+                });
 
                 // LanceDB open can be slow on large or legacy stores; do not block the window.
                 let app_handle_vdb = app_handle.clone();
@@ -307,6 +325,7 @@ Only delete the DB files as a last resort when you intentionally want an empty v
         commands::dismiss_app_data_migration_banner,
         commands::wizard_status,
         commands::wizard_finish,
+        auth::vault_lock_status,
         auth::vault_has_password,
         auth::is_vault_locked,
         auth::unlock_vault,
