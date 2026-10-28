@@ -624,6 +624,20 @@ export const en = {
       movedAnnounce: "Moved {label} to position {position}",
       alreadyFirst: "Already first",
       alreadyLast: "Already last",
+      presetsHeading: "Presets",
+      presetsNotice:
+        "Apply a curated pin list. This replaces your current pins only — notes and folders are untouched.",
+      presets: {
+        minimal: "Minimal",
+        knowledgeBuilder: "Knowledge builder",
+        bulletJournal: "Bullet journal",
+        para: "PARA",
+        minimalHint: "No pins",
+        apply: "Apply",
+        confirm:
+          "Replace your {count} pinned action(s) with “{name}”? Notes and folders will not change.",
+        appliedAnnounce: "Applied preset {name}",
+      },
     },
     help: {
       updatesTitle: "Updates",

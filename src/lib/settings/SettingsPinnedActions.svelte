@@ -2,6 +2,11 @@
   import { getContext, tick } from 'svelte';
   import { t } from '../i18n/t.js';
   import { COMMANDS, getCommand } from '../commands/commandRegistry.js';
+  import {
+    ACTION_PRESETS,
+    needsPresetConfirm,
+    samePinOrder,
+  } from '../commands/actionPresets.js';
 
   /** @type {{
    *   orderedIds: string[],
@@ -22,6 +27,7 @@
 
   let query = $state('');
   let liveMessage = $state('');
+  let applying = $state(false);
   /** @type {string | null} */
   let dragId = $state(null);
 
@@ -109,6 +115,46 @@
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
   }
+
+  /** @param {import('../commands/actionPresets.js').ActionPreset} preset */
+  function presetHint(preset) {
+    if (preset.ids.length === 0) {
+      return t('settings.pinnedActions.presets.minimalHint');
+    }
+    return preset.ids
+      .map((id) => {
+        const cmd = getCommand(id);
+        return cmd ? t(cmd.labelKey) : id;
+      })
+      .join(', ');
+  }
+
+  /** @param {import('../commands/actionPresets.js').ActionPreset} preset */
+  async function onApplyPreset(preset) {
+    if (!pins.loaded || pins.loadFailed || applying) return;
+    if (samePinOrder(pins.orderedIds, preset.ids)) return;
+    if (needsPresetConfirm(pins.orderedIds, preset.ids)) {
+      const name = t(preset.nameKey);
+      const ok = confirm(
+        t('settings.pinnedActions.presets.confirm', {
+          name,
+          count: pins.orderedIds.length,
+        }),
+      );
+      if (!ok) return;
+    }
+    applying = true;
+    try {
+      await pins.setOrder(preset.ids.slice());
+      liveMessage = t('settings.pinnedActions.presets.appliedAnnounce', {
+        name: t(preset.nameKey),
+      });
+    } catch {
+      // Store already reports via onError and rolls back.
+    } finally {
+      applying = false;
+    }
+  }
 </script>
 
 <h3>{t('settings.pinnedActions.title')}</h3>
@@ -130,6 +176,27 @@
     {t('settings.pinnedActions.resetCorrupt')}
   </button>
 {:else}
+  <h4 class="pinned-actions-heading">{t('settings.pinnedActions.presetsHeading')}</h4>
+  <p class="settings-notice">{t('settings.pinnedActions.presetsNotice')}</p>
+  <ul class="pinned-actions-presets">
+    {#each ACTION_PRESETS as preset (preset.id)}
+      <li class="pinned-actions-row">
+        <span class="pinned-actions-label">
+          <span class="pinned-actions-preset-name">{t(preset.nameKey)}</span>
+          <span class="pinned-actions-preset-hint">{presetHint(preset)}</span>
+        </span>
+        <button
+          type="button"
+          class="pinned-actions-toggle"
+          disabled={!pins.loaded || applying}
+          onclick={() => onApplyPreset(preset)}
+        >
+          {t('settings.pinnedActions.presets.apply')}
+        </button>
+      </li>
+    {/each}
+  </ul>
+
   <div class="pinned-actions-search">
     <label class="sr-only" for="pinned-actions-search">{t('settings.pinnedActions.searchAria')}</label>
     <input
@@ -229,6 +296,30 @@
 {/if}
 
 <style>
+  .pinned-actions-presets {
+    list-style: none;
+    margin: 0 0 16px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 560px;
+  }
+
+  .pinned-actions-preset-name {
+    display: block;
+    font-size: 13px;
+    color: var(--text-h);
+  }
+
+  .pinned-actions-preset-hint {
+    display: block;
+    margin-block-start: 2px;
+    font-size: 12px;
+    color: var(--text);
+    opacity: 0.85;
+  }
+
   .pinned-actions-search {
     margin-block-end: 12px;
   }
