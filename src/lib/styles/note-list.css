@@ -72,7 +72,8 @@
   min-width: 0;
 }
 
-.drag-handle {
+.drag-handle,
+.pin-reorder-grip {
   flex-shrink: 0;
   cursor: grab;
   color: var(--text);
@@ -84,14 +85,32 @@
   transition: opacity 0.1s;
 }
 
-.note-list li:hover .drag-handle {
+.note-list li:hover .drag-handle,
+.note-list li:hover .pin-reorder-grip,
+.note-list li:focus-within .drag-handle,
+.note-list li:focus-within .pin-reorder-grip {
   opacity: 0.35;
 }
 
-.drag-handle:hover {
+.drag-handle:hover,
+.pin-reorder-grip:hover {
   opacity: 0.7 !important;
 }
 
-.drag-handle:active {
+.drag-handle:active,
+.pin-reorder-grip:active {
   cursor: grabbing;
+}
+
+.folder-pin-marker {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted, var(--text));
+  opacity: 0.65;
+}
+
+.note-list li.pin-drop-target {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }

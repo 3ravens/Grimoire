@@ -176,6 +176,10 @@
 
     function onFolderDropZoneDragOver(e, targetFolderId) {
         e.stopPropagation();
+        // Reject folder-pin reorder drags — they must not move notes between folders.
+        if (e.dataTransfer.types.includes("application/x-grimoire-folder-pin")) {
+            return;
+        }
         if (e.dataTransfer.types.includes("folder-id")) {
             if (
                 draggingFolderId &&
@@ -199,6 +203,9 @@
         e.stopPropagation();
         e.preventDefault();
         dragOverFolderId = null;
+        if (e.dataTransfer.types.includes("application/x-grimoire-folder-pin")) {
+            return;
+        }
         if (e.dataTransfer.types.includes("folder-id")) {
             const movingId = Number(e.dataTransfer.getData("folder-id"));
             if (
@@ -349,6 +356,9 @@
         role="treeitem"
         aria-selected={selectedFolderId === null}
         ondragover={(e) => {
+            if (e.dataTransfer.types.includes("application/x-grimoire-folder-pin")) {
+                return;
+            }
             e.preventDefault();
             e.dataTransfer.dropEffect = "move";
             dragOverFolderId = "unfiled";
@@ -363,6 +373,9 @@
         ondrop={(e) => {
             e.preventDefault();
             dragOverFolderId = null;
+            if (e.dataTransfer.types.includes("application/x-grimoire-folder-pin")) {
+                return;
+            }
             if (e.dataTransfer.types.includes("folder-id")) {
                 const fid = Number(e.dataTransfer.getData("folder-id"));
                 if (fid)

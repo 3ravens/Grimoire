@@ -2,11 +2,15 @@
   import { t, tParts } from './i18n/t.js';
   import { getContext } from 'svelte';
   import { autofocus } from './utils/autofocus.js';
+  import { sortNotesWithFolderPins } from './utils/sortNotesWithFolderPins.js';
+  import { FOLDER_PIN_MIME, isFolderPinDrag } from './utils/folderPinDrag.js';
   import LockClosedIcon from './icons/LockClosedIcon.svelte';
+  import FolderPinIcon from './icons/FolderPinIcon.svelte';
 
   const ns = getContext('ns');
   const fs = getContext('fs');
   const ts = getContext('ts');
+  const folderPins = getContext('folderPins');
 
   // Data props replaced by context aliases.
   const notes            = $derived(ns.notes);
@@ -18,6 +22,8 @@
   const selectedFolderId = $derived(fs.selectedFolderId);
   const inlineRenaming   = $derived(fs.inlineRenaming);
   const tableViewOpen    = $derived(ts.tableViewOpen);
+  const pinOrder         = $derived(folderPins?.orderedIds ?? []);
+  const pinnedNoteIds    = $derived(folderPins?.pinnedNoteIds ?? new Set());
 
   let {
     folderUnlockReindex = null,
@@ -36,17 +42,31 @@
   async function clearTagFilter() {
     ns.tagFilter = null;
     await ns.loadNotes(fs.selectedFolderId, null);
+    if (typeof fs.selectedFolderId === 'number') {
+      await folderPins?.load(fs.selectedFolderId);
+    } else {
+      folderPins?.clear();
+    }
   }
 
   let noteSort = $state('modified');
+  /** @type {number | null} */
+  let pinDragId = $state(null);
+  /** @type {number | null} */
+  let pinDropTargetId = $state(null);
+  let pinLiveMessage = $state('');
 
-  const sortedNotes = $derived.by(() => {
-    const arr = [...notes];
-    if (noteSort === 'name')    arr.sort((a, b) => a.title.localeCompare(b.title));
-    else if (noteSort === 'created') arr.sort((a, b) => b.created_at - a.created_at);
-    else arr.sort((a, b) => b.updated_at - a.updated_at);
-    return arr;
-  });
+  const canUseFolderPins = $derived(
+    !tagFilter && typeof selectedFolderId === 'number',
+  );
+
+  const sortedNotes = $derived.by(() =>
+    sortNotesWithFolderPins(
+      notes,
+      noteSort,
+      canUseFolderPins ? pinOrder : [],
+    ),
+  );
 
   const showFolderUnlockProgress = $derived.by(() => {
     const u = folderUnlockReindex;
@@ -57,6 +77,73 @@
     if (!u.total) return null;
     return u;
   });
+
+  /**
+   * @param {DragEvent} e
+   * @param {number} noteId
+   */
+  function onPinGripDragStart(e, noteId) {
+    e.stopPropagation();
+    pinDragId = noteId;
+    e.dataTransfer?.setData(FOLDER_PIN_MIME, String(noteId));
+    e.dataTransfer?.setData('text/plain', '');
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function onPinGripDragEnd() {
+    pinDragId = null;
+    pinDropTargetId = null;
+  }
+
+  /**
+   * @param {DragEvent} e
+   * @param {number} targetNoteId
+   */
+  function onPinRowDragOver(e, targetNoteId) {
+    if (!isFolderPinDrag(e.dataTransfer) || pinDragId == null) return;
+    if (!pinnedNoteIds.has(targetNoteId)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    pinDropTargetId = targetNoteId;
+  }
+
+  /**
+   * @param {DragEvent} e
+   * @param {number} targetNoteId
+   */
+  async function onPinRowDrop(e, targetNoteId) {
+    e.preventDefault();
+    e.stopPropagation();
+    const fromId = pinDragId;
+    pinDragId = null;
+    pinDropTargetId = null;
+    if (
+      fromId == null ||
+      !canUseFolderPins ||
+      !pinnedNoteIds.has(fromId) ||
+      !pinnedNoteIds.has(targetNoteId) ||
+      fromId === targetNoteId
+    ) {
+      return;
+    }
+    const next = [...pinOrder];
+    const fromIdx = next.indexOf(fromId);
+    const toIdx = next.indexOf(targetNoteId);
+    if (fromIdx < 0 || toIdx < 0) return;
+    next.splice(fromIdx, 1);
+    next.splice(toIdx, 0, fromId);
+    try {
+      await folderPins.reorder(selectedFolderId, next);
+      const note = notes.find((n) => n.id === fromId);
+      pinLiveMessage = t('notes.pinMovedAnnounce', {
+        title: note?.title ?? '',
+        position: toIdx + 1,
+      });
+    } catch (err) {
+      // store onError already notified; snap-back via unchanged order
+    }
+  }
 </script>
 
 <div class="panel-header">
@@ -112,18 +199,30 @@
   </p>
 {/if}
 
+<div class="sr-only" aria-live="polite" aria-atomic="true">{pinLiveMessage}</div>
+
 <ul role="listbox" aria-label={t('notes.notesListAria')}>
   {#each sortedNotes as note (note.id)}
+    {@const isPinned = canUseFolderPins && pinnedNoteIds.has(note.id)}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_no_noninteractive_tabindex -->
     <li
       role="option"
       aria-selected={activeNote?.id === note.id}
       class:active={activeNote?.id === note.id}
       class:locked-row={note.locked}
+      class:folder-pinned={isPinned}
+      class:pin-drop-target={pinDropTargetId === note.id}
       data-note-id={note.id}
+      data-note-list-row=""
       draggable={!note.locked}
-      ondragstart={(e) => !note.locked && onNoteDragStart?.(e, note)}
+      ondragstart={(e) => {
+        if (note.locked) return;
+        if (isFolderPinDrag(e.dataTransfer)) return;
+        onNoteDragStart?.(e, note);
+      }}
       ondragend={onNoteDragEnd}
+      ondragover={(e) => isPinned && onPinRowDragOver(e, note.id)}
+      ondrop={(e) => isPinned && onPinRowDrop(e, note.id)}
       tabindex="0"
       onclick={(e) => { if (note.locked) return; if (e.ctrlKey) onOpenNoteInNewTab?.(note); else onOpenNote?.(note); }}
       onkeydown={(e) => { if (e.key === 'Enter' && !note.locked) { onOpenNote?.(note); } }}
@@ -139,8 +238,23 @@
           onblur={() => onConfirmInlineRename?.()}
         />
       {:else}
+        {#if isPinned}
+          <span
+            class="pin-reorder-grip"
+            title={t('notes.reorderPin')}
+            role="presentation"
+            draggable="true"
+            ondragstart={(e) => onPinGripDragStart(e, note.id)}
+            ondragend={onPinGripDragEnd}
+          >⠿</span>
+        {/if}
         <span class="drag-handle" title={t('notes.dragToMove')} aria-hidden="true">⠇</span>
         <span class="row-btn note-title">{note.title}</span>
+        {#if isPinned}
+          <span class="folder-pin-marker" title={t('notes.pinnedInFolder')} aria-hidden="true">
+            <FolderPinIcon />
+          </span>
+        {/if}
         <button
           class="icon-btn danger"
           type="button"

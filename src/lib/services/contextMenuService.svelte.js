@@ -36,6 +36,13 @@ import { t } from "../i18n/t.js";
  *   onError: (e: unknown) => void,
  *   pins?: { unpin: (id: string) => void | Promise<void> },
  *   openPinnedActionsSettings?: () => void,
+ *   folderPins?: {
+ *     pinnedNoteIds: Set<number>,
+ *     pin: (noteId: number, folderId: number) => Promise<void>,
+ *     unpin: (noteId: number, folderId: number) => Promise<void>,
+ *     moveUp: (noteId: number, folderId: number) => Promise<number | null>,
+ *     moveDown: (noteId: number, folderId: number) => Promise<number | null>,
+ *   },
  * }} deps
  */
 export function createContextMenuService(deps) {
@@ -101,10 +108,12 @@ export function createContextMenuService(deps) {
       onError,
       pins,
       openPinnedActionsSettings,
+      folderPins,
     } = deps;
     const pinnedActionEl = target.closest("[data-pinned-action-id]");
     const pinnedSectionLabel = target.closest("[data-pinned-section-label]");
     const tabEl = target.closest("[data-tab-id]");
+    const noteListRowEl = target.closest("[data-note-list-row]");
     const noteLiEl = target.closest("[data-note-id]");
     const folderLiEl = target.closest("[data-folder-id]");
     const createNoteBtn = target.closest('[data-action="create-note-btn"]');
@@ -155,6 +164,54 @@ export function createContextMenuService(deps) {
       );
       const note = ns.notes.find((n) => n.id === noteId);
       const payload = note ? resolveExportPayload(ns, note) : null;
+      const folderId = fs.selectedFolderId;
+      const showFolderPin =
+        !!noteListRowEl &&
+        typeof folderId === "number" &&
+        !!note &&
+        note.folder_id === folderId &&
+        !!folderPins;
+      const isFolderPinned =
+        showFolderPin && folderPins.pinnedNoteIds.has(noteId);
+
+      /** @type {any[]} */
+      const folderPinItems = showFolderPin
+        ? [
+            isFolderPinned
+              ? {
+                  label: t("contextMenu.unpinFromFolder"),
+                  action: () => {
+                    void folderPins.unpin(noteId, folderId).catch(() => {});
+                  },
+                }
+              : {
+                  label: t("contextMenu.pinInFolder"),
+                  action: () => {
+                    void folderPins.pin(noteId, folderId).catch(() => {});
+                  },
+                },
+            ...(isFolderPinned
+              ? [
+                  {
+                    label: t("contextMenu.movePinUp"),
+                    action: () => {
+                      void folderPins.moveUp(noteId, folderId).catch(() => {});
+                    },
+                  },
+                  {
+                    label: t("contextMenu.movePinDown"),
+                    action: () => {
+                      void folderPins
+                        .moveDown(noteId, folderId)
+                        .catch(() => {});
+                    },
+                  },
+                ]
+              : []),
+            { divider: true },
+          ]
+        : [];
+
       items = [
         {
           label: t("contextMenu.openInNewTab"),
@@ -211,6 +268,7 @@ export function createContextMenuService(deps) {
             ]
           : []),
         { divider: true },
+        ...folderPinItems,
         bm.bookmarkedNoteIds.has(noteId)
           ? {
               label: t("contextMenu.removeFromBookmarks"),

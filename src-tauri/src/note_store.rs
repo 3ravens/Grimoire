@@ -597,6 +597,7 @@ impl<'a> EncryptedNoteStore<'a> {
     /// Move a note to a different folder (or to no folder when `folder_id` is None).
     pub async fn move_note(&self, id: i64, folder_id: Option<i64>) -> AppResult<Note> {
         let (row, src_locked_col) = self.get_note_row_with_lock(id).await?;
+        let old_folder_id = row.folder_id;
         self.check_writable(row.folder_id, src_locked_col)?;
 
         let dest_locked_col = if let Some(fid) = folder_id {
@@ -630,6 +631,15 @@ impl<'a> EncryptedNoteStore<'a> {
         .bind(id)
         .fetch_one(self.pool)
         .await?;
+
+        // Folder pin is per-folder; leaving the folder (or Unfiled) drops it.
+        // Same-folder no-op must not clear.
+        if old_folder_id != folder_id {
+            sqlx::query("DELETE FROM folder_pins WHERE note_id = ?")
+                .bind(id)
+                .execute(self.pool)
+                .await?;
+        }
 
         Ok(self.to_note(row, dest_locked_col))
     }

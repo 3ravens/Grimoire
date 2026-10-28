@@ -33,6 +33,7 @@
     import { createSettings } from "./lib/stores/settings.svelte.js";
     import { createPanelLayout } from "./lib/stores/panelLayout.svelte.js";
     import { createBookmarks } from "./lib/stores/bookmarks.svelte.js";
+    import { createFolderPins } from "./lib/stores/folderPins.svelte.js";
     import { createTemplates } from "./lib/stores/templates.svelte.js";
     import { createPinnedActions } from "./lib/stores/pinnedActions.svelte.js";
     import { createVaultService } from "./lib/services/vaultService.svelte.js";
@@ -63,6 +64,7 @@
     const bm = createBookmarks();
     const tmpl = createTemplates();
     const err = createErrorService();
+    const folderPins = createFolderPins({ onError: err.showError });
     const pins = createPinnedActions({ invoke, onError: err.showError });
     /** @type {{ rootFolderId: number, affectedFolderIds: number[], processed: number, total: number, embeddingChunks: { done: number, total: number, note_title: string } | null } | null} */
     let folderUnlockReindex = $state(null);
@@ -265,6 +267,7 @@
         onError: err.showError,
         pins,
         openPinnedActionsSettings,
+        folderPins,
     });
 
     // Keyboard shortcut handler.
@@ -436,6 +439,7 @@
     setContext("settings", settings);
     setContext("layout", layout);
     setContext("bm", bm);
+    setContext("folderPins", folderPins);
     setContext("tmpl", tmpl);
     setContext("ui", ui);
     setContext("err", err);
@@ -454,6 +458,15 @@
 
     async function loadNotes() {
         return ns.loadNotes(fs.selectedFolderId, ns.tagFilter);
+    }
+
+    /** Load folder pins only for a real folder list view; clear otherwise. */
+    async function syncFolderPins() {
+        if (ns.tagFilter || typeof fs.selectedFolderId !== "number") {
+            folderPins.clear();
+            return;
+        }
+        await folderPins.load(fs.selectedFolderId);
     }
 
     async function loadAllTags() {
@@ -488,6 +501,7 @@
         loadAllTags();
         tmpl.loadTemplates();
         bm.loadBookmarks();
+        void syncFolderPins();
         void pins.load();
 
         invoke("get_hardware_info")
@@ -838,7 +852,9 @@
 
     async function revealFolder(folderId) {
         if (!layout.foldersOpen) layout.foldersOpen = true;
-        return fs.revealFolder(folderId, true);
+        const result = await fs.revealFolder(folderId, true);
+        await syncFolderPins();
+        return result;
     }
 
     function deleteFolder(id) {
@@ -847,7 +863,10 @@
 
     async function confirmDeleteFolder() {
         const result = await fs.confirmDeleteFolder();
-        if (result === "refresh_notes") await loadNotes();
+        if (result === "refresh_notes") {
+            await loadNotes();
+            await syncFolderPins();
+        }
     }
 
     async function selectFolder(id) {
@@ -857,6 +876,7 @@
         ns.activeNote = null;
         ts.tableViewOpen = false;
         await loadNotes();
+        await syncFolderPins();
         fs.loadFolderPropertyDefs(id);
     }
 
@@ -1044,7 +1064,7 @@
         fs.selectedFolderId = folderId;
         ns.tagFilter = null;
         ts.tableViewOpen = false;
-        loadNotes();
+        void loadNotes().then(() => syncFolderPins());
         fs.loadFolderPropertyDefs(folderId);
         ts.openKanbanTab(folderId, folderName);
         ns.clearActiveNote();
@@ -1125,14 +1145,23 @@
                 );
                 if (tab) await closeTab(tab.id);
             },
-            () => bm.loadBookmarks(),
+            () => {
+                bm.loadBookmarks();
+                void syncFolderPins();
+            },
         );
-        if (result === "refresh_notes") await loadNotes();
+        if (result === "refresh_notes") {
+            await loadNotes();
+            await syncFolderPins();
+        }
     }
 
     async function moveNote(noteId, targetFolderId) {
         const result = await ns.moveNote(noteId, targetFolderId);
-        if (result === "refresh_notes") await loadNotes();
+        if (result === "refresh_notes") {
+            await loadNotes();
+            await syncFolderPins();
+        }
     }
 
     async function openNoteById(id) {
@@ -1143,6 +1172,7 @@
         ns.tagFilter = tag;
         fs.selectedFolderId = null;
         await loadNotes();
+        folderPins.clear();
     }
 
     // ── Lock / unlock ───────────────────────────────────────────────────────────────
@@ -1732,6 +1762,7 @@
                             fs.selectedFolderId = ns.activeNote?.folder_id;
                             ns.clearActiveNote();
                             ts.tableViewOpen = true;
+                            void loadNotes().then(() => syncFolderPins());
                         }}
                     />
                 {:else}

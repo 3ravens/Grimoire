@@ -71,6 +71,7 @@ impl VaultReindexGate {
 
 pub mod audit;
 pub mod bookmarks;
+pub mod folder_pins;
 pub mod calendar;
 pub mod chat;
 pub mod file_scanner;
@@ -92,6 +93,7 @@ pub mod wizard;
 // Re-export all public command functions so lib.rs can keep using commands::create_note etc.
 pub use audit::*;
 pub use bookmarks::*;
+pub use folder_pins::*;
 pub use calendar::*;
 pub use chat::*;
 pub use file_scanner::*;
