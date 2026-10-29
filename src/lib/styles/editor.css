@@ -144,6 +144,21 @@
   outline: none;
 }
 
+.note-body-with-toc {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.note-body-with-toc > .content-area {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .content-area {
   flex: 1;
   padding: 24px;

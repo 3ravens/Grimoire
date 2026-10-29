@@ -8,8 +8,8 @@
    *   headings       — Array<{ id: string, text: string, level: number }>
    *   onHeadingClick — (id: string) => void
    *
-   * This component is intentionally generic. It is used by WikipediaReader
-   * and will be used by the Phase 3 "Table of contents for notes" feature.
+   * Used by WikipediaReader and the note editor. Collapse is session-local
+   * per mount; open by default when headings exist.
    */
 
   let { headings = [], onHeadingClick } = $props();
@@ -17,20 +17,32 @@
   /** Client-only unique id (Svelte does not ship `useId` on our toolchain). */
   const tocListId = `toc-list-${Math.random().toString(36).slice(2, 11)}`;
 
-  // Collapse state — open by default when headings exist
+  // Open by default; closed = narrow rail that reclaims body width.
   let collapsed = $state(false);
+
+  function toggleCollapsed() {
+    collapsed = !collapsed;
+  }
 </script>
 
 {#if headings.length > 0}
-  <nav class="toc" aria-label={t('views.tocAria')}>
+  <nav
+    class="toc"
+    class:toc-collapsed={collapsed}
+    aria-label={t('views.tocAria')}
+  >
     <div class="toc-header">
-      <span class="toc-title">{t('views.tocTitle')}</span>
+      {#if !collapsed}
+        <span class="toc-title">{t('views.tocTitle')}</span>
+      {/if}
       <button
         class="toc-toggle"
-        onclick={() => (collapsed = !collapsed)}
+        type="button"
+        onclick={toggleCollapsed}
         aria-expanded={!collapsed}
         aria-controls={tocListId}
         title={collapsed ? t('views.tocExpand') : t('views.tocCollapse')}
+        aria-label={collapsed ? t('views.tocExpand') : t('views.tocCollapse')}
       >
         {collapsed ? '▸' : '▾'}
       </button>
@@ -41,6 +53,7 @@
           <li class="toc-item toc-level-{h.level}" role="listitem">
             <button
               class="toc-link"
+              type="button"
               onclick={() => onHeadingClick?.(h.id)}
               title={h.text}
             >
@@ -57,21 +70,37 @@
   .toc {
     flex-shrink: 0;
     width: 220px;
+    overflow-x: hidden;
     overflow-y: auto;
     border-right: 1px solid var(--border);
     padding: 12px 0;
     font-family: var(--sans);
     font-size: 13px;
     background: var(--bg-secondary);
+    transition: width 0.12s ease;
+  }
+
+  .toc.toc-collapsed {
+    width: 36px;
+    padding: 8px 0;
   }
 
   .toc-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 4px;
     padding: 0 12px 6px;
     border-bottom: 1px solid var(--border);
     margin-bottom: 6px;
+  }
+
+  .toc.toc-collapsed .toc-header {
+    flex-direction: column;
+    justify-content: flex-start;
+    padding: 0;
+    border-bottom: none;
+    margin-bottom: 0;
   }
 
   .toc-title {
@@ -80,14 +109,16 @@
     text-transform: uppercase;
     font-size: 11px;
     letter-spacing: 0.05em;
+    min-width: 0;
   }
 
   .toc-toggle {
+    flex-shrink: 0;
     background: none;
     border: none;
     cursor: pointer;
     color: var(--text-muted);
-    padding: 0 4px;
+    padding: 4px;
     font-size: 12px;
     line-height: 1;
     border-radius: 3px;

@@ -4,6 +4,7 @@
     import NoteProperties from "./NoteProperties.svelte";
     import DiffView from "./DiffView.svelte";
     import ImprovePopover from "./ImprovePopover.svelte";
+    import TableOfContents from "./TableOfContents.svelte";
     import { renderTransclusionMarkdownToHtml } from "./utils/transclusion.js";
     import {
         exportNoteHtml,
@@ -16,6 +17,7 @@
         effectiveCopyLockFlag,
     } from "./utils/noteCopyActions.js";
     import { applyEditorTab } from "./utils/editorIndent.js";
+    import { applyBlockquoteEnter } from "./utils/editorBlockquotes.js";
     import {
         applyChecklistToggle,
         applyListEnter,
@@ -23,6 +25,11 @@
         toggleChecklistAtIndex,
     } from "./utils/editorLists.js";
     import { editorReadableStats } from "./utils/readableText.js";
+    import {
+        annotateReadModeTocTargets,
+        extractNoteTocHeadings,
+        focusTextareaAtOffset,
+    } from "./utils/noteTocHeadings.js";
     import { t, tp } from "./i18n/t.js";
 
     const ns = getContext("ns");
@@ -165,6 +172,56 @@
             : false,
     );
 
+    /** @type {Array<{ id: string, text: string, level: number, lineIndex: number, charOffset: number }>} */
+    let tocEntries = $state([]);
+    const tocHeadings = $derived(
+        tocEntries.map(({ id, text, level }) => ({ id, text, level })),
+    );
+    const showNoteToc = $derived(
+        noteBodyReadable &&
+            is.improveState.status === "idle" &&
+            tocEntries.length > 0,
+    );
+    /** @type {HTMLElement | null} */
+    let readModeEl = $state(null);
+
+    let tocNoteId = $state(/** @type {number | string | null} */ (null));
+
+    $effect(() => {
+        const noteId = ns.activeNote?.id ?? null;
+        const content = ns.editorContent ?? "";
+        const readable = noteBodyReadable;
+        const improveIdle = is.improveState.status === "idle";
+        if (!readable || !improveIdle) {
+            tocNoteId = noteId;
+            tocEntries = [];
+            return;
+        }
+        // Note switch: refresh immediately so the previous outline cannot linger.
+        if (noteId !== tocNoteId) {
+            tocNoteId = noteId;
+            tocEntries = extractNoteTocHeadings(content);
+            return;
+        }
+        const handle = setTimeout(() => {
+            tocEntries = extractNoteTocHeadings(content);
+        }, 120);
+        return () => clearTimeout(handle);
+    });
+
+    /** @param {string} id */
+    function onNoteTocClick(id) {
+        const entry = tocEntries.find((h) => h.id === id);
+        if (!entry) return;
+        if (activeTab?.readMode) {
+            const sel = "[data-note-toc-id=\"" + CSS.escape(id) + "\"]";
+            const target = readModeEl?.querySelector(sel);
+            target?.scrollIntoView({ behavior: "smooth", block: "start" });
+            return;
+        }
+        focusTextareaAtOffset(ns.editorTextareaEl, entry.charOffset);
+    }
+
     let propertiesReady = $state(!ns.activeNote?.folder_id);
     let loadedNoteId = ns.activeNote?.id ?? null;
 
@@ -207,6 +264,21 @@
         });
         return () => {
             cancelled = true;
+        };
+    });
+
+    $effect(() => {
+        const html = readModeHtml;
+        const entries = tocEntries;
+        const el = readModeEl;
+        const read = activeTab?.readMode;
+        if (!read || !el || !html || entries.length === 0) return;
+        let cancelledAnnotate = false;
+        tick().then(() => {
+            if (!cancelledAnnotate) annotateReadModeTocTargets(el, entries);
+        });
+        return () => {
+            cancelledAnnotate = true;
         };
     });
 
@@ -264,18 +336,25 @@
             return;
         }
 
-        // Enter: continue / exit / split Markdown list items.
+        // Enter: continue / exit / split Markdown list or blockquote lines.
         if (
             isEnterKey(e) &&
             !e.ctrlKey &&
             !e.metaKey &&
             !e.altKey &&
-            !e.shiftKey
+            !e.shiftKey &&
+            !e.isComposing
         ) {
             const listNext = applyListEnter(value, start, end);
             if (listNext) {
                 e.preventDefault();
                 applyEditorEdit(el, listNext);
+                return;
+            }
+            const quoteNext = applyBlockquoteEnter(value, start, end);
+            if (quoteNext) {
+                e.preventDefault();
+                applyEditorEdit(el, quoteNext);
             }
             return;
         }
@@ -580,19 +659,30 @@
         >
             {is.improveState.improvedText || t("notes.improveThinking")}
         </div>
-    {:else if activeTab?.readMode}
-        <div
-            class="content-area read-mode-content"
-            onchange={handleReadModeChecklistChange}
-        >
-            {@html readModeHtml}
-        </div>
     {:else}
-        <NoteBodyTextarea
-            noteId={ns.activeNote.id}
-            bind:value={ns.editorContent}
-            onkeydown={(e) => handleEditorKeydown(e)}
-        />
+        <div class="note-body-with-toc">
+            {#if showNoteToc}
+                <TableOfContents
+                    headings={tocHeadings}
+                    onHeadingClick={onNoteTocClick}
+                />
+            {/if}
+            {#if activeTab?.readMode}
+                <div
+                    class="content-area read-mode-content"
+                    bind:this={readModeEl}
+                    onchange={handleReadModeChecklistChange}
+                >
+                    {@html readModeHtml}
+                </div>
+            {:else}
+                <NoteBodyTextarea
+                    noteId={ns.activeNote.id}
+                    bind:value={ns.editorContent}
+                    onkeydown={(e) => handleEditorKeydown(e)}
+                />
+            {/if}
+        </div>
     {/if}
 {/if}
 
