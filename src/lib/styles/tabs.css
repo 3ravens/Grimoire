@@ -38,6 +38,7 @@
   border-right: 1px solid var(--border);
   background: var(--bg2);
   border-top: 2px solid transparent;
+  position: relative;
 }
 
 .tab.active {
@@ -47,6 +48,30 @@
 
 .tab:not(.active):hover {
   background: var(--bg3);
+}
+
+.tab.tab-dragging {
+  opacity: 0.45;
+}
+
+.tab.tab-drop-before::before,
+.tab.tab-drop-after::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.tab.tab-drop-before::before {
+  inset-inline-start: 0;
+}
+
+.tab.tab-drop-after::after {
+  inset-inline-end: 0;
 }
 
 .tab-label {

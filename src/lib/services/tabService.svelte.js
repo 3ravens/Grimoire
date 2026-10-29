@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { t } from '../i18n/t.js';
+import { reorderTabs } from '../utils/tabReorder.js';
 
 /**
  * @param {{ onError?: (e: unknown) => void }} opts
@@ -15,6 +16,8 @@ export function createTabService({ onError }) {
   /** @type {string | null} */
   let externalRenameTabId = $state(null);
   let activeViewFilters = $state({});
+  // Gate writes until restoreTabs finishes so startup does not wipe localStorage.
+  let persistEnabled = $state(false);
 
   const activeTab = $derived(tabs.find(t => t.id === activeTabId) ?? null);
 
@@ -54,8 +57,21 @@ export function createTabService({ onError }) {
   // Tab persistence effect — call from the component's $effect
   function setupPersistence() {
     $effect(() => {
+      if (!persistEnabled) return;
       persistTabs();
     });
+  }
+
+  /**
+   * @param {string} fromId
+   * @param {string} targetId
+   * @param {boolean} placeAfter
+   */
+  function reorderTab(fromId, targetId, placeAfter) {
+    const next = reorderTabs(tabs, fromId, targetId, placeAfter);
+    if (next === tabs) return false;
+    tabs = next;
+    return true;
   }
 
   async function newTab() {
@@ -295,6 +311,9 @@ export function createTabService({ onError }) {
         openNoteFn?.(target.note);
       }
     } catch { /* start fresh */ }
+    finally {
+      persistEnabled = true;
+    }
   }
 
   return {
@@ -322,6 +341,7 @@ export function createTabService({ onError }) {
     activateTab,
     closeTab,
     closeOtherTabs,
+    reorderTab,
     startTabRenameExternal,
     renameTab,
     toggleReadMode,

@@ -80,6 +80,7 @@ export const en = {
     closeAria: 'Close {label}',
     newTabShortcut: 'New tab (Ctrl+T)',
     newTabAria: 'New tab',
+    reorderedAnnounce: 'Moved {label} to position {position}',
   },
 
   modals: {

@@ -2,6 +2,7 @@
   import { getContext } from 'svelte';
   import { t } from './i18n/t.js';
   import { displayTabLabel } from './i18n/displayTabLabel.js';
+  import { TAB_MIME, isTabDrag } from './utils/tabReorder.js';
 
   const ts = getContext('ts');
   const fs = getContext('fs');
@@ -15,6 +16,13 @@
   // Local state for the inline rename input.
   let editingTabId = $state(null);
   let renameValue  = $state('');
+
+  /** @type {string | null} */
+  let dragTabId = $state(null);
+  /** @type {string | null} */
+  let dropTargetId = $state(null);
+  let dropPlaceAfter = $state(false);
+  let reorderLiveMessage = $state('');
 
   $effect(() => {
     if (renameRequestId != null) startRename(renameRequestId);
@@ -46,13 +54,94 @@
     return displayTabLabel(tab, { folderName });
   }
 
+  function clearDropState() {
+    dragTabId = null;
+    dropTargetId = null;
+    dropPlaceAfter = false;
+  }
+
+  /**
+   * @param {DragEvent} e
+   * @param {string} tabId
+   */
+  function onTabDragStart(e, tabId) {
+    if (editingTabId != null) {
+      e.preventDefault();
+      return;
+    }
+    const origin = /** @type {Element | null} */ (
+      e.target instanceof Element ? e.target : null
+    );
+    if (origin?.closest('.tab-close, .tab-rename')) {
+      e.preventDefault();
+      return;
+    }
+    e.dataTransfer?.setData(TAB_MIME, tabId);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+    dragTabId = tabId;
+  }
+
+  /**
+   * @param {DragEvent} e
+   * @param {string} targetId
+   */
+  function onTabDragOver(e, targetId) {
+    if (!isTabDrag(e.dataTransfer) || dragTabId == null || dragTabId === targetId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const el = /** @type {HTMLElement | null} */ (
+      e.currentTarget instanceof HTMLElement ? e.currentTarget : null
+    );
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    dropTargetId = targetId;
+    dropPlaceAfter = e.clientX > rect.left + rect.width / 2;
+  }
+
+  /** @param {DragEvent} e */
+  function onTabDragLeave(e) {
+    const el = /** @type {HTMLElement | null} */ (
+      e.currentTarget instanceof HTMLElement ? e.currentTarget : null
+    );
+    const related = /** @type {Node | null} */ (e.relatedTarget);
+    if (el && related && el.contains(related)) return;
+    if (dropTargetId != null) {
+      dropTargetId = null;
+      dropPlaceAfter = false;
+    }
+  }
+
+  /**
+   * @param {DragEvent} e
+   * @param {string} targetId
+   */
+  function onTabDrop(e, targetId) {
+    e.preventDefault();
+    e.stopPropagation();
+    const fromId = dragTabId ?? e.dataTransfer?.getData(TAB_MIME);
+    const placeAfter = dropPlaceAfter;
+    clearDropState();
+    if (!fromId || fromId === targetId || editingTabId != null) return;
+    const changed = ts.reorderTab(fromId, targetId, placeAfter);
+    if (!changed) return;
+    const moved = ts.tabs.find((t) => t.id === fromId);
+    const idx = ts.tabs.findIndex((t) => t.id === fromId);
+    if (moved && idx >= 0) {
+      reorderLiveMessage = t('tabs.reorderedAnnounce', {
+        label: tabLabel(moved),
+        position: idx + 1,
+      });
+    }
+  }
+
   function handleTabListKeydown(e) {
     const tabBtn = /** @type {HTMLElement | null} */ (
       e.target instanceof Element ? e.target.closest('[role="tab"]') : null
     );
     if (!tabBtn) return;
 
-    const tabId = Number(tabBtn.closest('[data-tab-id]')?.getAttribute('data-tab-id'));
+    const tabId = tabBtn.closest('[data-tab-id]')?.getAttribute('data-tab-id');
     const idx = tabs.findIndex(t => t.id === tabId);
     if (idx === -1) return;
 
@@ -85,14 +174,24 @@
   drag regions — click events propagate normally.
 -->
 <div class="tabbar" data-tauri-drag-region>
+  <div class="sr-only" aria-live="polite" aria-atomic="true">{reorderLiveMessage}</div>
   <!-- tab-list uses display:contents so flex layout is unaffected -->
   <div class="tab-list" role="tablist" aria-label={t('tabs.openTabsAria')} aria-orientation="horizontal" tabindex="-1" onkeydown={handleTabListKeydown}>
     {#each tabs as tab (tab.id)}
       <div
         class="tab"
         class:active={tab.id === activeTabId}
+        class:tab-dragging={dragTabId === tab.id}
+        class:tab-drop-before={dropTargetId === tab.id && !dropPlaceAfter}
+        class:tab-drop-after={dropTargetId === tab.id && dropPlaceAfter}
         role="presentation"
         data-tab-id={tab.id}
+        draggable={editingTabId == null}
+        ondragstart={(e) => onTabDragStart(e, tab.id)}
+        ondragover={(e) => onTabDragOver(e, tab.id)}
+        ondragleave={onTabDragLeave}
+        ondrop={(e) => onTabDrop(e, tab.id)}
+        ondragend={clearDropState}
         onmousedown={(e) => { if (e.button === 1) { e.preventDefault(); onClose(tab.id); } }}
       >
         <button
