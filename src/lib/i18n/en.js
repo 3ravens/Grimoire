@@ -135,6 +135,9 @@ export const en = {
     paste: 'Paste',
     sendToChat: 'Send to Chat',
     suggestImprovements: 'Suggest improvements',
+    copyNote: 'Copy note',
+    copyAsMarkdown: 'As Markdown',
+    copyAsPlainText: 'As plain text',
   },
 
   export: {
@@ -1040,6 +1043,8 @@ export const en = {
     improveDisabled:
       'AI features are disabled for this hardware — enable in Settings → Hardware',
     exportNote: 'Export note',
+    copyNote: 'Copy',
+    copyLockedRefuse: 'Cannot copy a locked note.',
     editMode: 'Switch to edit mode',
     readMode: 'Switch to read mode',
     closeNote: 'Close note',

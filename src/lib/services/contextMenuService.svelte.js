@@ -5,6 +5,11 @@ import {
   exportNotePdfPrint,
   resolveExportPayload,
 } from "../utils/noteExportActions.js";
+import {
+  copyNoteMarkdown,
+  copyNotePlainText,
+  effectiveCopyLockFlag,
+} from "../utils/noteCopyActions.js";
 import { t } from "../i18n/t.js";
 
 /**
@@ -228,6 +233,45 @@ export function createContextMenuService(deps) {
             }
           },
         },
+        ...(note
+          ? [
+              {
+                label: t("contextMenu.copyNote"),
+                submenu: [
+                  {
+                    label: t("contextMenu.copyAsMarkdown"),
+                    action: async () => {
+                      const current = ns.notes.find((n) => n.id === noteId);
+                      if (!current) return;
+                      const live =
+                        ns.activeNote?.id === noteId ? ns.activeNote : null;
+                      const payload = resolveExportPayload(ns, current);
+                      await copyNoteMarkdown({
+                        locked: effectiveCopyLockFlag(current, live),
+                        body: payload.body,
+                        onError,
+                      });
+                    },
+                  },
+                  {
+                    label: t("contextMenu.copyAsPlainText"),
+                    action: async () => {
+                      const current = ns.notes.find((n) => n.id === noteId);
+                      if (!current) return;
+                      const live =
+                        ns.activeNote?.id === noteId ? ns.activeNote : null;
+                      const payload = resolveExportPayload(ns, current);
+                      await copyNotePlainText({
+                        locked: effectiveCopyLockFlag(current, live),
+                        body: payload.body,
+                        onError,
+                      });
+                    },
+                  },
+                ],
+              },
+            ]
+          : []),
         ...(note && payload
           ? [
               {

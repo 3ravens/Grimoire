@@ -1212,11 +1212,12 @@
     async function handleFolderPwSubmit(password) {
         if (!fs.folderPwModal) return true;
         const folderId = fs.folderPwModal.folderId;
-        if (
-            fs.folderPwModal.mode === "set" &&
-            ns.activeNote?.folder_id === folderId
-        ) {
-            ns.clearActiveNote();
+        if (fs.folderPwModal.mode === "set") {
+            const subtree = folderSubtreeIds(fs.folders, folderId);
+            const fid = ns.activeNote?.folder_id;
+            if (fid != null && subtree.has(fid)) {
+                ns.clearActiveNote();
+            }
         }
         const ok = await fs.handleFolderPwSubmit(password);
         if (ok) await loadNotes();

@@ -10,6 +10,11 @@
         exportNoteMarkdown,
         exportNotePdfPrint,
     } from "./utils/noteExportActions.js";
+    import {
+        copyNoteMarkdown,
+        copyNotePlainText,
+        effectiveCopyLockFlag,
+    } from "./utils/noteCopyActions.js";
     import { applyEditorTab } from "./utils/editorIndent.js";
     import {
         applyChecklistToggle,
@@ -52,10 +57,19 @@
     let exportDetailsEl = $state(null);
     let exportMenuOpen = $state(false);
     let exportFocusPos = $state(0);
+    /** @type {HTMLDetailsElement | null} */
+    let copyDetailsEl = $state(null);
+    let copyMenuOpen = $state(false);
+    let copyFocusPos = $state(0);
 
     function closeExportMenu() {
         if (exportDetailsEl) exportDetailsEl.open = false;
         exportMenuOpen = false;
+    }
+
+    function closeCopyMenu() {
+        if (copyDetailsEl) copyDetailsEl.open = false;
+        copyMenuOpen = false;
     }
 
     async function handleExportMenuToggle(e) {
@@ -90,6 +104,38 @@
         }
     }
 
+    async function handleCopyMenuToggle() {
+        copyMenuOpen = copyDetailsEl?.open ?? false;
+        if (copyMenuOpen) {
+            copyFocusPos = 0;
+            await tick();
+            copyDetailsEl?.querySelector('[role="menuitem"]')?.focus();
+        }
+    }
+
+    async function handleCopyMenuKeydown(e) {
+        const items = Array.from(
+            copyDetailsEl?.querySelectorAll('[role="menuitem"]') ?? [],
+        );
+        if (items.length === 0) return;
+
+        if (e.key === "ArrowDown") {
+            e.preventDefault();
+            copyFocusPos = (copyFocusPos + 1) % items.length;
+            await tick();
+            /** @type {HTMLElement} */ (items[copyFocusPos])?.focus();
+        } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            copyFocusPos = (copyFocusPos - 1 + items.length) % items.length;
+            await tick();
+            /** @type {HTMLElement} */ (items[copyFocusPos])?.focus();
+        } else if (e.key === "Escape") {
+            e.preventDefault();
+            closeCopyMenu();
+            copyDetailsEl?.querySelector("summary")?.focus();
+        }
+    }
+
     // ── Local derived / state ─────────────────────────────────────────────────
     const activeTab = $derived(
         ts.tabs.find((t) => t.id === ts.activeTabId) ?? null,
@@ -107,6 +153,16 @@
         readableStats
             ? tp("editor.wordCountLabel", wordCount, { readingTime })
             : "",
+    );
+    const listNoteForActive = $derived(
+        ns.activeNote
+            ? ns.notes.find((n) => n.id === ns.activeNote.id) ?? null
+            : null,
+    );
+    const noteBodyReadable = $derived(
+        ns.activeNote
+            ? effectiveCopyLockFlag(listNoteForActive, ns.activeNote) === false
+            : false,
     );
 
     let propertiesReady = $state(!ns.activeNote?.folder_id);
@@ -355,7 +411,51 @@
         >
             {t("notes.improve")}
         </button>
-        {#if !ns.activeNote.locked}
+        {#if noteBodyReadable}
+            <details
+                class="toolbar-export"
+                bind:this={copyDetailsEl}
+                ontoggle={handleCopyMenuToggle}
+            >
+                <summary
+                    class="graph-toggle export-summary"
+                    aria-haspopup="menu"
+                    aria-expanded={copyMenuOpen}
+                    aria-label={t("notes.copyNote")}
+                    title={t("notes.copyNote")}
+                    >{t("notes.copyNote")}</summary
+                >
+                <div class="toolbar-export-menu" role="menu" tabindex="-1" onkeydown={handleCopyMenuKeydown}>
+                    <button
+                        type="button"
+                        role="menuitem"
+                        class="toolbar-export-item"
+                        onclick={() => {
+                            void copyNoteMarkdown({
+                                locked: effectiveCopyLockFlag(listNoteForActive, ns.activeNote),
+                                body: ns.editorContent,
+                                onError: onExportError,
+                            });
+                            closeCopyMenu();
+                        }}
+                        >{t("contextMenu.copyAsMarkdown")}</button
+                    >
+                    <button
+                        type="button"
+                        role="menuitem"
+                        class="toolbar-export-item"
+                        onclick={() => {
+                            void copyNotePlainText({
+                                locked: effectiveCopyLockFlag(listNoteForActive, ns.activeNote),
+                                body: ns.editorContent,
+                                onError: onExportError,
+                            });
+                            closeCopyMenu();
+                        }}
+                        >{t("contextMenu.copyAsPlainText")}</button
+                    >
+                </div>
+            </details>
             <details
                 class="toolbar-export"
                 bind:this={exportDetailsEl}
