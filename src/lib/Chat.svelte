@@ -445,6 +445,42 @@
     return value === '';
   }
 
+  /** Load inference + active persona settings (shared by send / regenerate). */
+  async function loadChatParams() {
+    const [temperature, top_p, top_k, repeat_penalty, num_ctx, verbosity] = await Promise.all([
+      invoke('get_setting', { key: 'chat_temperature' }),
+      invoke('get_setting', { key: 'chat_top_p' }),
+      invoke('get_setting', { key: 'chat_top_k' }),
+      invoke('get_setting', { key: 'chat_repeat_penalty' }),
+      invoke('get_setting', { key: 'chat_num_ctx' }),
+      invoke('get_setting', { key: 'chat_verbosity' }),
+    ]);
+
+    let persona = null;
+    try {
+      const activePersona = await invoke('resolve_active_persona');
+      if (activePersona) {
+        persona = {
+          body: activePersona.body,
+          alsoApplyVerbosity: Boolean(activePersona.alsoApplyVerbosity),
+        };
+      }
+    } catch (e) {
+      // Don't wipe inference params if persona resolve fails.
+      console.warn('resolve_active_persona failed:', e);
+    }
+
+    return {
+      temperature: temperature !== '' ? parseFloat(temperature) : 0.8,
+      top_p:       top_p !== ''       ? parseFloat(top_p)       : 0.9,
+      top_k:       top_k !== ''       ? parseInt(top_k, 10)     : 40,
+      repeat_penalty: repeat_penalty !== '' ? parseFloat(repeat_penalty) : 1.1,
+      num_ctx:     num_ctx !== ''     ? parseInt(num_ctx, 10)   : 8192,
+      verbosity:   verbosity !== ''   ? verbosity               : 'concise',
+      persona,
+    };
+  }
+
   // Builds the system prompt, pushes a placeholder assistant message, and
   // streams the response. `history` must be the full message list ending with
   // a user message — it is never mutated.
@@ -456,6 +492,7 @@
       repeat_penalty = 1.1,
       num_ctx = 8192,
       verbosity = 'concise',
+      persona = null,
     } = params;
     let payload = history;
     const systemParts = [];
@@ -667,7 +704,8 @@
     }
 
     // ── Assemble system message ──────────────────────────────────────────────
-    if (systemParts.length > 0) {
+    // Active persona always forces a system message, even with empty systemParts.
+    if (systemParts.length > 0 || persona) {
       const hasWikiContext = chatSession.wikiSourcesUsed.length > 0;
       const hasNotesContext = chatSession.sourcesUsed.length > 0;
       const hasFilesContext = fileMatches.length > 0;
@@ -679,6 +717,8 @@
         dailyNoteResolution,
         dailyNoteFormat: settings.dailyNoteFormat,
         verbosity,
+        persona,
+        includeFeatureGuideHint: useFeatureGuide,
       });
       payload = [{ role: 'system', content }, ...history];
     }
@@ -711,22 +751,7 @@
     // Load inference params from settings so changes take effect immediately.
     let params = {};
     try {
-      const [temperature, top_p, top_k, repeat_penalty, num_ctx, verbosity] = await Promise.all([
-        invoke('get_setting', { key: 'chat_temperature' }),
-        invoke('get_setting', { key: 'chat_top_p' }),
-        invoke('get_setting', { key: 'chat_top_k' }),
-        invoke('get_setting', { key: 'chat_repeat_penalty' }),
-        invoke('get_setting', { key: 'chat_num_ctx' }),
-        invoke('get_setting', { key: 'chat_verbosity' }),
-      ]);
-      params = {
-        temperature: temperature !== '' ? parseFloat(temperature) : 0.8,
-        top_p:       top_p !== ''       ? parseFloat(top_p)       : 0.9,
-        top_k:       top_k !== ''       ? parseInt(top_k, 10)     : 40,
-        repeat_penalty: repeat_penalty !== '' ? parseFloat(repeat_penalty) : 1.1,
-        num_ctx:     num_ctx !== ''     ? parseInt(num_ctx, 10)   : 8192,
-        verbosity:   verbosity !== ''   ? verbosity               : 'concise',
-      };
+      params = await loadChatParams();
     } catch {
       params = {};
     }
@@ -766,22 +791,7 @@
     // Load inference params from settings (same as send()).
     let params = {};
     try {
-      const [temperature, top_p, top_k, repeat_penalty, num_ctx, verbosity] = await Promise.all([
-        invoke('get_setting', { key: 'chat_temperature' }),
-        invoke('get_setting', { key: 'chat_top_p' }),
-        invoke('get_setting', { key: 'chat_top_k' }),
-        invoke('get_setting', { key: 'chat_repeat_penalty' }),
-        invoke('get_setting', { key: 'chat_num_ctx' }),
-        invoke('get_setting', { key: 'chat_verbosity' }),
-      ]);
-      params = {
-        temperature: temperature !== '' ? parseFloat(temperature) : 0.8,
-        top_p:       top_p !== ''       ? parseFloat(top_p)       : 0.9,
-        top_k:       top_k !== ''       ? parseInt(top_k, 10)     : 40,
-        repeat_penalty: repeat_penalty !== '' ? parseFloat(repeat_penalty) : 1.1,
-        num_ctx:     num_ctx !== ''     ? parseInt(num_ctx, 10)   : 8192,
-        verbosity:   verbosity !== ''   ? verbosity               : 'concise',
-      };
+      params = await loadChatParams();
     } catch {
       params = {};
     }

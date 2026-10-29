@@ -35,6 +35,10 @@ pub use commands::wizard::{
     WizardFinishResult,
     WizardStatus,
 };
+pub use commands::personas::{
+    create_persona_impl, delete_persona_impl, list_personas_impl, resolve_active_persona_impl,
+    update_persona_impl, Persona,
+};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
@@ -293,6 +297,11 @@ Only delete the DB files as a last resort when you intentionally want an empty v
         commands::create_template,
         commands::update_template,
         commands::delete_template,
+        commands::list_personas,
+        commands::create_persona,
+        commands::update_persona,
+        commands::delete_persona,
+        commands::resolve_active_persona,
         commands::get_property_defs,
         commands::create_property_def,
         commands::update_property_def,

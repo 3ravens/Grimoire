@@ -262,6 +262,148 @@
   let chatNumCtx      = $state(8192);
   let verbosity       = $state('concise');
 
+  /** @type {{ id: string, title: string, body: string, alsoApplyVerbosity: boolean, builtin: boolean }[]} */
+  let personas = $state([]);
+  let activePersonaId = $state('');
+  let personaError = $state('');
+  /** @type {null | 'create' | { id: string }} */
+  let personaEditor = $state(null);
+  let editTitle = $state('');
+  let editBody = $state('');
+  let editAlsoApplyVerbosity = $state(false);
+  let personaBusy = $state(false);
+
+  const BUILTIN_TITLE_KEYS = {
+    'builtin:blunt-editor': 'settings.llm.personaBluntEditor',
+    'builtin:socratic-tutor': 'settings.llm.personaSocraticTutor',
+    'builtin:cite-notes-only': 'settings.llm.personaCiteNotesOnly',
+  };
+
+  function personaDisplayTitle(p) {
+    const key = BUILTIN_TITLE_KEYS[p.id];
+    return key ? t(key) : p.title;
+  }
+
+  async function loadPersonas() {
+    try {
+      const [list, active] = await Promise.all([
+        invoke('list_personas'),
+        invoke('get_setting', { key: 'chat_active_persona' }),
+      ]);
+      personas = Array.isArray(list) ? list : [];
+      activePersonaId = active || '';
+      if (activePersonaId && !personas.some((p) => p.id === activePersonaId)) {
+        activePersonaId = '';
+      }
+    } catch (e) {
+      personaError = formatAppError(e);
+    }
+  }
+
+  function openCreatePersona() {
+    personaError = '';
+    personaEditor = 'create';
+    editTitle = '';
+    editBody = '';
+    editAlsoApplyVerbosity = false;
+  }
+
+  function openEditPersona(p) {
+    if (p.builtin) return;
+    personaError = '';
+    personaEditor = { id: p.id };
+    editTitle = p.title;
+    editBody = p.body;
+    editAlsoApplyVerbosity = Boolean(p.alsoApplyVerbosity);
+  }
+
+  function closePersonaEditor() {
+    personaEditor = null;
+    personaError = '';
+  }
+
+  async function savePersonaForm() {
+    const title = editTitle.trim();
+    const body = editBody.trim();
+    if (!title) {
+      personaError = t('settings.llm.personaEmptyTitle');
+      return;
+    }
+    if (!body) {
+      personaError = t('settings.llm.personaEmptyBody');
+      return;
+    }
+    personaBusy = true;
+    personaError = '';
+    try {
+      if (personaEditor === 'create') {
+        await invoke('create_persona', {
+          title,
+          body,
+          alsoApplyVerbosity: editAlsoApplyVerbosity,
+        });
+      } else if (personaEditor && typeof personaEditor === 'object') {
+        await invoke('update_persona', {
+          id: personaEditor.id,
+          title,
+          body,
+          alsoApplyVerbosity: editAlsoApplyVerbosity,
+        });
+      }
+      closePersonaEditor();
+      await loadPersonas();
+    } catch (e) {
+      personaError = formatAppError(e);
+    } finally {
+      personaBusy = false;
+    }
+  }
+
+  async function duplicatePersona(p) {
+    personaBusy = true;
+    personaError = '';
+    try {
+      const baseTitle = personaDisplayTitle(p);
+      // Keep "{title} (copy)" within the 80-char Rust title cap.
+      const suffix = ' (copy)';
+      const maxBase = Math.max(1, 80 - suffix.length);
+      const clipped = baseTitle.length > maxBase ? baseTitle.slice(0, maxBase) : baseTitle;
+      await invoke('create_persona', {
+        title: t('settings.llm.personaCopyTitle', { title: clipped }),
+        body: p.body,
+        alsoApplyVerbosity: Boolean(p.alsoApplyVerbosity),
+      });
+      await loadPersonas();
+    } catch (e) {
+      personaError = formatAppError(e);
+    } finally {
+      personaBusy = false;
+    }
+  }
+
+  async function deletePersona(p) {
+    if (p.builtin) return;
+    if (!confirm(t('settings.llm.personaDeleteConfirm', { title: p.title }))) return;
+    personaBusy = true;
+    personaError = '';
+    try {
+      await invoke('delete_persona', { id: p.id });
+      if (personaEditor && typeof personaEditor === 'object' && personaEditor.id === p.id) {
+        closePersonaEditor();
+      }
+      await loadPersonas();
+    } catch (e) {
+      personaError = formatAppError(e);
+    } finally {
+      personaBusy = false;
+    }
+  }
+
+  function saveActivePersona(id) {
+    activePersonaId = id;
+    save('chat_active_persona', id);
+  }
+
   onMount(async () => {
     const [model, embed, temp, top_p, top_k, repeat, ctx, verb, maxRetries] = await Promise.all([
       invoke('get_setting', { key: 'chat_model' }),
@@ -290,7 +432,7 @@
       const n = parseInt(String(maxRetries), 10);
       if (!Number.isNaN(n)) backgroundMaxRetries = Math.min(10, Math.max(0, n));
     }
-    await refreshExtraInstalledModels();
+    await Promise.all([refreshExtraInstalledModels(), loadPersonas()]);
   });
 
   function save(key, value) {
@@ -527,6 +669,130 @@
     <option value="caveman">{t('settings.llm.verbosityCaveman')}</option>
   </select>
 </div>
+
+<h4 class="settings-subsection">{t('settings.llm.personas')}</h4>
+<p class="setting-section-desc">{t('settings.llm.personasDesc')}</p>
+
+<div class="setting-row">
+  <div class="setting-label">
+    <span class="setting-name">{t('settings.llm.activePersona')}</span>
+    <span class="setting-desc">{t('settings.llm.activePersonaDesc')}</span>
+  </div>
+  <select
+    value={activePersonaId}
+    onchange={(e) => saveActivePersona(e.currentTarget.value)}
+    disabled={personaBusy}
+  >
+    <option value="">{t('settings.llm.personaNone')}</option>
+    {#each personas as p (p.id)}
+      <option value={p.id}>{personaDisplayTitle(p)}</option>
+    {/each}
+  </select>
+</div>
+
+<div class="persona-list">
+  {#each personas as p (p.id)}
+    <div class="persona-list-row">
+      <div class="setting-label">
+        <span class="setting-name">
+          {personaDisplayTitle(p)}
+          {#if p.builtin}
+            <span class="persona-badge">{t('settings.llm.personaBuiltinBadge')}</span>
+          {/if}
+        </span>
+      </div>
+      <div class="setting-actions">
+        <button
+          type="button"
+          class="settings-action-btn"
+          disabled={personaBusy}
+          onclick={() => duplicatePersona(p)}
+        >{t('settings.llm.personaDuplicate')}</button>
+        {#if !p.builtin}
+          <button
+            type="button"
+            class="settings-action-btn"
+            disabled={personaBusy}
+            onclick={() => openEditPersona(p)}
+          >{t('settings.llm.personaEdit')}</button>
+          <button
+            type="button"
+            class="settings-action-btn danger"
+            disabled={personaBusy}
+            onclick={() => deletePersona(p)}
+          >{t('settings.llm.personaDelete')}</button>
+        {/if}
+      </div>
+    </div>
+  {/each}
+</div>
+
+<div class="setting-actions" style="margin-block: 8px;">
+  <button
+    type="button"
+    class="settings-action-btn"
+    disabled={personaBusy || personaEditor === 'create'}
+    onclick={openCreatePersona}
+  >{t('settings.llm.personaNew')}</button>
+</div>
+
+{#if personaEditor}
+  <div class="persona-editor">
+    <h4 class="settings-subsection">
+      {personaEditor === 'create' ? t('settings.llm.personaNew') : t('settings.llm.personaEdit')}
+    </h4>
+    <div class="setting-row">
+      <div class="setting-label">
+        <span class="setting-name">{t('settings.llm.personaTitle')}</span>
+      </div>
+      <input
+        class="setting-text"
+        type="text"
+        maxlength="80"
+        bind:value={editTitle}
+        disabled={personaBusy}
+      />
+    </div>
+    <div class="setting-row setting-row--stack">
+      <div class="setting-label">
+        <span class="setting-name">{t('settings.llm.personaBody')}</span>
+        <span class="setting-desc">{t('settings.llm.personaBodyDesc')}</span>
+      </div>
+      <textarea
+        class="setting-textarea"
+        rows="6"
+        maxlength="4000"
+        bind:value={editBody}
+        disabled={personaBusy}
+      ></textarea>
+    </div>
+    <label class="persona-flag">
+      <input type="checkbox" bind:checked={editAlsoApplyVerbosity} disabled={personaBusy} />
+      <span>
+        <span class="setting-name">{t('settings.llm.personaAlsoApplyVerbosity')}</span>
+        <span class="setting-desc">{t('settings.llm.personaAlsoApplyVerbosityDesc')}</span>
+      </span>
+    </label>
+    <div class="setting-actions">
+      <button
+        type="button"
+        class="settings-action-btn"
+        disabled={personaBusy}
+        onclick={savePersonaForm}
+      >{t('settings.llm.personaSave')}</button>
+      <button
+        type="button"
+        class="settings-action-btn"
+        disabled={personaBusy}
+        onclick={closePersonaEditor}
+      >{t('settings.llm.personaCancel')}</button>
+    </div>
+  </div>
+{/if}
+
+{#if personaError}
+  <p class="export-err">{personaError}</p>
+{/if}
 
 <div class="setting-row">
   <div class="setting-label">

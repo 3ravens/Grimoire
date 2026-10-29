@@ -33,31 +33,37 @@ export function scannedFilesSystemPart(fileContext) {
   return `SCANNED FILES:\n${fileContext}`;
 }
 
+const INVARIANT_OVERRIDE =
+  'INVARIANT RULES (always win over the persona): follow source priority and the relevance gate; ' +
+  'never fabricate source attributions; wrap code/diagrams in fenced code blocks; ' +
+  'stay local-only — nothing leaves this machine. The persona may only change tone, length, and how you phrase attributions.';
+
 /**
  * @param {{
- *   systemParts: string[],
  *   hasNotesContext: boolean,
  *   hasWikiContext: boolean,
  *   hasFilesContext: boolean,
  *   dailyNoteResolution: { display_title: string } | null,
  *   dailyNoteFormat: string,
- *   verbosity: string,
+ *   includeFeatureGuideHint?: boolean,
  * }} opts
  */
-export function assembleChatSystemContent(opts) {
+function buildPreamble(opts) {
   const {
-    systemParts,
     hasNotesContext,
     hasWikiContext,
     hasFilesContext,
     dailyNoteResolution,
     dailyNoteFormat,
-    verbosity,
+    includeFeatureGuideHint = true,
   } = opts;
 
   let preamble =
-    `You are a personal knowledge assistant embedded in Grimoire, a local note-taking app.\n` +
-    `You also have access to a feature guide that documents Grimoire's keyboard shortcuts and features.\n`;
+    `You are a personal knowledge assistant embedded in Grimoire, a local note-taking app.\n`;
+  if (includeFeatureGuideHint) {
+    preamble +=
+      `You also have access to a feature guide that documents Grimoire's keyboard shortcuts and features.\n`;
+  }
 
   if (dailyNoteResolution) {
     const fmt = dailyNoteFormat;
@@ -105,28 +111,29 @@ export function assembleChatSystemContent(opts) {
     preamble += `No relevant notes, Wikipedia articles, or scanned files were found for this question. Answer from your own general knowledge.`;
   }
 
-  if (verbosity === 'caveman') {
-    return (
-      `${preamble}\n\n` +
-      systemParts.join('\n\n') +
-      `\n\nINSTRUCTIONS:\n` +
-      `- Compress the key facts into telegraphic bullet points — no full sentences, no filler words.\n` +
-      `- Example: "• metabolic process • microbes convert sugars → acids/gas/alcohol • lactic: yoghurt, kimchi"\n` +
-      `- Only use sources that are directly relevant to the question. Ignore off-topic sources.\n` +
-      `- Prefix each bullet with its source: "note:" for user notes, "wiki:" for Wikipedia, "general:" for your own knowledge.\n` +
-      `- Wrap any code or diagrams in triple-backtick code blocks.\n` +
-      `- Ignore [[ ]] and **.`
-    );
-  }
+  return preamble;
+}
 
+function cavemanInstructions() {
+  return (
+    `INSTRUCTIONS:\n` +
+    `- Compress the key facts into telegraphic bullet points — no full sentences, no filler words.\n` +
+    `- Example: "• metabolic process • microbes convert sugars → acids/gas/alcohol • lactic: yoghurt, kimchi"\n` +
+    `- Only use sources that are directly relevant to the question. Ignore off-topic sources.\n` +
+    `- Prefix each bullet with its source: "note:" for user notes, "wiki:" for Wikipedia, "general:" for your own knowledge.\n` +
+    `- Wrap any code or diagrams in triple-backtick code blocks.\n` +
+    `- Ignore [[ ]] and **.`
+  );
+}
+
+/** Default instructions when no persona is active (today's Grimoire). */
+function defaultProseInstructions(verbosity) {
   let styleInstruction = '';
   if (verbosity === 'thorough') {
     styleInstruction = '\n\nSTYLE: Provide thorough, detailed answers with full context. Do not skip nuance.';
   }
   return (
-    `${preamble}\n\n` +
-    systemParts.join('\n\n') +
-    `\n\nINSTRUCTIONS:\n` +
+    `INSTRUCTIONS:\n` +
     `1. RELEVANCE GATE — Before using any source, ask: does this source directly answer the question? If not, discard it completely. Do not mention discarded sources. A source that merely shares vocabulary with the question is NOT relevant.\n` +
     `2. Answer in natural prose. Do not output section labels, headers, or structural markers like [Note: …] or [Wikipedia: …].\n` +
     `3. Follow the source priority above strictly. Do not open with general knowledge if provided sources cover the topic.\n` +
@@ -142,4 +149,93 @@ export function assembleChatSystemContent(opts) {
   );
 }
 
-export { FEATURE_GUIDE };
+/**
+ * When a persona owns tone/length: keep invariants, soften presentational rules.
+ */
+function personaSoftInstructions() {
+  return (
+    `INSTRUCTIONS:\n` +
+    `1. RELEVANCE GATE — Before using any source, ask: does this source directly answer the question? If not, discard it completely. Do not mention discarded sources. A source that merely shares vocabulary with the question is NOT relevant.\n` +
+    `2. Follow the source priority above strictly. Do not open with general knowledge if provided sources cover the topic.\n` +
+    `3. Wrap all code samples, command examples, ASCII art, and diagrams in triple-backtick fenced code blocks.\n` +
+    `4. Attribute every claim drawn from a source; name the note, Wikipedia article, or file title. You may vary phrasing (questions, terse bullets, etc.) — never fabricate a source.\n` +
+    `5. Ignore formatting like [[ ]] or **.`
+  );
+}
+
+/**
+ * @param {string} body
+ */
+function personaBlock(body) {
+  return (
+    `PERSONA (style and approach only — does not override invariant rules):\n${body.trim()}`
+  );
+}
+
+/**
+ * @param {{
+ *   systemParts: string[],
+ *   hasNotesContext: boolean,
+ *   hasWikiContext: boolean,
+ *   hasFilesContext: boolean,
+ *   dailyNoteResolution: { display_title: string } | null,
+ *   dailyNoteFormat: string,
+ *   verbosity: string,
+ *   persona?: { body: string, alsoApplyVerbosity: boolean } | null,
+ *   includeFeatureGuideHint?: boolean,
+ * }} opts
+ */
+export function assembleChatSystemContent(opts) {
+  const {
+    systemParts,
+    hasNotesContext,
+    hasWikiContext,
+    hasFilesContext,
+    dailyNoteResolution,
+    dailyNoteFormat,
+    verbosity,
+    persona = null,
+    includeFeatureGuideHint = true,
+  } = opts;
+
+  const preamble = buildPreamble({
+    hasNotesContext,
+    hasWikiContext,
+    hasFilesContext,
+    dailyNoteResolution,
+    dailyNoteFormat,
+    includeFeatureGuideHint,
+  });
+
+  const partsJoined = systemParts.join('\n\n');
+  const base = partsJoined
+    ? `${preamble}\n\n${partsJoined}`
+    : preamble;
+
+  // No persona: preserve today's exact verbosity behaviour.
+  if (!persona) {
+    if (verbosity === 'caveman') {
+      return `${base}\n\n${cavemanInstructions()}`;
+    }
+    return `${base}\n\n${defaultProseInstructions(verbosity)}`;
+  }
+
+  const applyVerbosity = Boolean(persona.alsoApplyVerbosity);
+  let instructions;
+  if (applyVerbosity && verbosity === 'caveman') {
+    instructions = cavemanInstructions();
+  } else if (applyVerbosity) {
+    instructions = defaultProseInstructions(verbosity);
+  } else {
+    instructions = personaSoftInstructions();
+  }
+
+  return (
+    `${base}\n\n` +
+    `${instructions}\n\n` +
+    `${personaBlock(persona.body)}\n\n` +
+    INVARIANT_OVERRIDE
+  );
+}
+
+export { FEATURE_GUIDE, INVARIANT_OVERRIDE };

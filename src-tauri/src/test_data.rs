@@ -514,6 +514,7 @@ pub async fn clean_developer_database(
         .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM templates").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM chat_personas").execute(&mut *tx).await?;
     sqlx::query("DELETE FROM tags").execute(&mut *tx).await?;
     sqlx::query("DELETE FROM folders").execute(&mut *tx).await?;
 
