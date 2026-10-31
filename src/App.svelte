@@ -105,8 +105,10 @@
 
     /** Non-null when an opt-in update check found a newer version (notify-only). */
     let updateBanner = $state(
-        /** @type {{ latest: string, current: string, downloadUrl: string } | null} */ (null),
+        /** @type {{ latest: string, current: string, downloadUrl: string, canApplyUpdate: boolean } | null} */ (null),
     );
+    let updateApplying = $state(false);
+    let updateApplyError = $state("");
 
     /** First-run installation wizard (see `wizard_status`). */
     let installationWizardOpen = $state(false);
@@ -190,16 +192,19 @@
                 latest: String(res.latest),
                 current: String(res.current),
                 downloadUrl: String(res.downloadUrl),
+                canApplyUpdate: Boolean(res.canApplyUpdate),
             };
+            updateApplyError = "";
         } else {
             updateBanner = null;
+            updateApplyError = "";
         }
     }
 
-    /** Opt-in, notify-only update check. Makes no network call unless enabled. */
+    /** Opt-in update check. Makes no network call unless enabled (force=false). */
     async function refreshUpdateBanner() {
         try {
-            const res = await invoke("check_for_update");
+            const res = await invoke("check_for_update", { force: false });
             applyUpdateCheckResult(res);
         } catch {
             updateBanner = null;
@@ -208,6 +213,7 @@
 
     function dismissUpdateBanner() {
         updateBanner = null;
+        updateApplyError = "";
     }
 
     async function openUpdateDownload() {
@@ -216,6 +222,28 @@
             await invoke("open_external_url", { url: updateBanner.downloadUrl });
         } catch (e) {
             err.showError(e);
+        }
+    }
+
+    async function applyInAppUpdateFromBanner() {
+        if (!updateBanner?.canApplyUpdate) return;
+        updateApplying = true;
+        updateApplyError = "";
+        const latest = updateBanner.latest;
+        const ok = window.confirm(
+            `Download and install Grimoire ${latest}? The app will restart to finish.`,
+        );
+        if (!ok) {
+            updateApplying = false;
+            return;
+        }
+        try {
+            await invoke("apply_in_app_update");
+            await invoke("restart_for_update");
+        } catch (e) {
+            updateApplyError = e?.message ?? String(e);
+        } finally {
+            updateApplying = false;
         }
     }
 
@@ -1318,12 +1346,25 @@
                     latest: updateBanner.latest,
                     current: updateBanner.current,
                 })}
+                {#if updateApplyError}
+                    <span class="export-err"> {updateApplyError}</span>
+                {/if}
             </span>
             <span class="banner-actions">
-                <button type="button" class="primary" onclick={openUpdateDownload}>
+                {#if updateBanner.canApplyUpdate}
+                    <button
+                        type="button"
+                        class="primary"
+                        onclick={applyInAppUpdateFromBanner}
+                        disabled={updateApplying}
+                    >
+                        {updateApplying ? t("app.updating") : t("app.update")}
+                    </button>
+                {/if}
+                <button type="button" class:primary={!updateBanner.canApplyUpdate} onclick={openUpdateDownload}>
                     {t("app.viewDownload")}
                 </button>
-                <button type="button" onclick={dismissUpdateBanner}>{t("common.dismiss")}</button>
+                <button type="button" onclick={dismissUpdateBanner}>{t("app.notNow")}</button>
             </span>
         </div>
     {/if}

@@ -38,6 +38,7 @@
     "shortDescription": "Local-first Markdown notes with private LLM chat and RAG.",
     "longDescription": "Grimoire stores notes on your machine, indexes them in SQLite and LanceDB, and uses a local Ollama runtime for AI chat and retrieval — no cloud accounts or API keys required.",
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -49,6 +50,14 @@
       "webviewInstallMode": {
         "type": "skip"
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY5MjNBMTMyOTIxQjQ3MkMKUldRc1J4dVNNcUVqK1JUM1VodEVNbVIrUkdSbTdLZStQNitVdlhyVmNJNUNTUm5OZ05xZnBaL3MK",
+      "endpoints": [
+        "https://github.com/3ravens/Grimoire/releases/latest/download/latest.json"
+      ]
     }
   }
 }

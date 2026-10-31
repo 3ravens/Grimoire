@@ -295,7 +295,7 @@ From the v1.0 release gate:
 - **Dependency license audit** — implemented: `cargo deny check licenses`
   ([`src-tauri/deny.toml`](../src-tauri/deny.toml)) and `npm run license:check`
   (`license-checker-rseidelsohn`), both enforced by the `license-audit` CI job.
-- **Production signing** — still a separate hardening pass (Authenticode / Developer ID + notarization).
+- **Production signing** — updater minisign via `TAURI_SIGNING_*`; Authenticode/notarization optional until certs exist.
 
 ---
 

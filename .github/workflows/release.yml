@@ -163,7 +163,8 @@ jobs:
         include:
           - platform: windows
             os: windows-latest
-            args: ''
+            # cargo feature enables In-app Update UI/apply on Windows
+            args: '--features updater-apply'
             bundle_root: src-tauri/target/release/bundle
           - platform: linux
             os: ubuntu-22.04
@@ -230,11 +231,17 @@ jobs:
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Minisign key for createUpdaterArtifacts / latest.json (required for In-app Update).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Optional Authenticode (Windows). When unset, installer remains unsigned but updater .sig still works.
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: Grimoire ${{ env.RELEASE_TAG }}
           releaseBody: |
-            Unsigned pre-release installers. See [docs/builds-and-installers.md](https://github.com/${{ github.repository }}/blob/main/docs/builds-and-installers.md) for install notes and SHA-256 verification.
+            Installers and updater artifacts for this tag. See [docs/builds-and-installers.md](https://github.com/${{ github.repository }}/blob/main/docs/builds-and-installers.md) for install notes and SHA-256 verification.
 
             **Ollama is not bundled** — install separately or use the in-app setup wizard.
           releaseDraft: true
@@ -250,10 +257,12 @@ jobs:
           RELEASE_TAG: ${{ env.RELEASE_TAG }}
           BUNDLE_ROOT: ${{ matrix.bundle_root }}
           TAURI_ARGS: ${{ matrix.args }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           RELEASE_NAME: Grimoire ${{ env.RELEASE_TAG }}
           RELEASE_PRERELEASE: ${{ !startsWith(env.RELEASE_TAG, 'v1.') || contains(env.RELEASE_TAG, '-') }}
           RELEASE_BODY: |
-            Unsigned pre-release installers. See [docs/builds-and-installers.md](https://github.com/${{ github.repository }}/blob/main/docs/builds-and-installers.md) for install notes and SHA-256 verification.
+            Installers and updater artifacts for this tag. See [docs/builds-and-installers.md](https://github.com/${{ github.repository }}/blob/main/docs/builds-and-installers.md) for install notes and SHA-256 verification.
 
             **Ollama is not bundled** — install separately or use the in-app setup wizard.
         run: bash scripts/ci/macos-publish-retry.sh

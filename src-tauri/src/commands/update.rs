@@ -1,20 +1,17 @@
-//! Opt-in, notify-only update check.
+//! Opt-in update check (`version.json`) and user-chosen in-app apply (Tauri updater).
 //!
-//! Privacy: this command performs **no network request** unless the user has
-//! explicitly enabled the `update_check_enabled` setting (default off). When
-//! enabled it fetches a tiny static manifest (`{ "version": "x.y.z" }`) from the
-//! Grimoire site and compares it against the running app version. Only the
-//! request itself leaves the machine — no telemetry, no identifiers. The check
-//! is recorded in the audit log so the user can verify the behaviour.
-//!
-//! There is no silent in-app apply: the UI surfaces a banner/badge linking to
-//! the download page (deferred per the Phase 4 scope decision).
+//! Privacy: launch checks make **no network request** unless `update_check_enabled`
+//! is on (default off). **Check now** may force a one-shot even when the toggle is
+//! off. Notify uses `version.json` only; the signed updater endpoint is contacted
+//! only when the user starts an In-app Update. Never silent-download or auto-restart.
 
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::State;
+#[cfg(all(feature = "updater-apply", target_os = "windows"))]
+use tauri_plugin_updater::UpdaterExt;
 
 use crate::audit;
 use crate::error::AppError;
@@ -40,7 +37,8 @@ struct VersionManifest {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateCheckResult {
-    /// False when the user has not opted in; in that case no network call was made.
+    /// False when the startup toggle is off and this was not a forced Check now.
+    /// Forced checks still set this to true after a successful network fetch.
     pub enabled: bool,
     /// The running app version (always populated).
     pub current: String,
@@ -50,6 +48,19 @@ pub struct UpdateCheckResult {
     pub update_available: bool,
     /// Where to send the user to download a newer build.
     pub download_url: String,
+    /// True when this build may offer In-app Update (compile gate: Windows + feature).
+    pub can_apply_update: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyUpdateResult {
+    pub version: String,
+}
+
+/// True when this binary is allowed to show / run In-app Update.
+pub fn platform_can_apply_update() -> bool {
+    cfg!(all(feature = "updater-apply", target_os = "windows"))
 }
 
 /// Read a boolean setting from the `settings` table (text "true"/"false").
@@ -64,27 +75,7 @@ async fn read_bool_setting(pool: &SqlitePool, key: &str, default: bool) -> bool 
         .unwrap_or(default)
 }
 
-/// Opt-in update check. Returns `{ enabled: false, .. }` without touching the
-/// network when the user has not enabled `update_check_enabled`.
-#[tauri::command]
-pub async fn check_for_update(
-    app_handle: tauri::AppHandle,
-    db: State<'_, SqlitePool>,
-) -> AppResult<UpdateCheckResult> {
-    let current = app_handle.package_info().version.to_string();
-    let pool = db.inner();
-
-    if !read_bool_setting(pool, SETTING_UPDATE_CHECK_ENABLED, false).await {
-        return Ok(UpdateCheckResult {
-            enabled: false,
-            current,
-            latest: None,
-            update_available: false,
-            download_url: DOWNLOAD_URL.to_string(),
-        });
-    }
-
-    // The one privacy-sensitive action: record the outbound check before it runs.
+async fn fetch_version_manifest(current: &str, pool: &SqlitePool) -> AppResult<(String, bool)> {
     audit::log_event(
         pool,
         "update_check",
@@ -112,15 +103,112 @@ pub async fn check_for_update(
         .map_err(|e| AppError::Io(format!("Could not parse version manifest: {e}")))?;
 
     let latest = manifest.version.trim().to_string();
-    let update_available = is_newer(&latest, &current);
+    let update_available = is_newer(&latest, current);
+    Ok((latest, update_available))
+}
+
+/// Opt-in update check against `version.json`.
+///
+/// When `force` is true (Check now), runs even if the startup toggle is off.
+/// Launch paths must pass `force: false`.
+#[tauri::command]
+pub async fn check_for_update(
+    app_handle: tauri::AppHandle,
+    db: State<'_, SqlitePool>,
+    force: Option<bool>,
+) -> AppResult<UpdateCheckResult> {
+    let current = app_handle.package_info().version.to_string();
+    let pool = db.inner();
+    let force = force.unwrap_or(false);
+    let can_apply_update = platform_can_apply_update();
+
+    let opted_in = read_bool_setting(pool, SETTING_UPDATE_CHECK_ENABLED, false).await;
+    if !opted_in && !force {
+        return Ok(UpdateCheckResult {
+            enabled: false,
+            current,
+            latest: None,
+            update_available: false,
+            download_url: DOWNLOAD_URL.to_string(),
+            can_apply_update,
+        });
+    }
+
+    let (latest, update_available) = fetch_version_manifest(&current, pool).await?;
 
     Ok(UpdateCheckResult {
+        // Forced Check now still reports as an enabled/completed check for the UI.
         enabled: true,
         current,
         latest: Some(latest),
         update_available,
         download_url: DOWNLOAD_URL.to_string(),
+        can_apply_update,
     })
+}
+
+/// Download and stage a signed update via the Tauri updater (user-initiated only).
+///
+/// On Windows, installing typically exits the process after launching the installer.
+/// Callers must confirm with the user before invoking this command.
+#[tauri::command]
+pub async fn apply_in_app_update(
+    app_handle: tauri::AppHandle,
+    db: State<'_, SqlitePool>,
+) -> AppResult<ApplyUpdateResult> {
+    #[cfg(all(feature = "updater-apply", target_os = "windows"))]
+    {
+        let pool = db.inner();
+        let current = app_handle.package_info().version.to_string();
+
+        audit::log_event(
+            pool,
+            "update_download",
+            Some("network"),
+            None,
+            Some("tauri-updater"),
+            Some(audit::truncate(&format!("current={current}"), 64)),
+        )
+        .await;
+
+        let updater = app_handle
+            .updater()
+            .map_err(|e| AppError::Io(format!("Updater unavailable: {e}")))?;
+
+        let update = updater
+            .check()
+            .await
+            .map_err(|e| AppError::Io(format!("Could not check for a signed update: {e}")))?
+            .ok_or_else(|| {
+                AppError::Io(
+                    "No signed in-app update is available for this platform yet. Use View download."
+                        .into(),
+                )
+            })?;
+
+        let version = update.version.clone();
+
+        update
+            .download_and_install(|_chunk, _progress| {}, || {})
+            .await
+            .map_err(|e| AppError::Io(format!("Update download or install failed: {e}")))?;
+
+        Ok(ApplyUpdateResult { version })
+    }
+
+    #[cfg(not(all(feature = "updater-apply", target_os = "windows")))]
+    {
+        let _ = (app_handle, db);
+        Err(AppError::InvalidInput(
+            "In-app Update is not available on this build. Use View download instead.".into(),
+        ))
+    }
+}
+
+/// Restart after a staged update (when the process is still alive after install).
+#[tauri::command]
+pub fn restart_for_update(app_handle: tauri::AppHandle) {
+    app_handle.restart();
 }
 
 /// A parsed semantic version: numeric `major.minor.patch` plus optional

@@ -26,6 +26,7 @@ fn action_group_to_in(filter: Option<&str>) -> &'static str {
         "llm"          => "'llm_chat','llm_improve'",
         "file_scanner" => "'file_scan','file_import'",
         "wikipedia"    => "'wikipedia_read'",
+        "updates"      => "'update_check','update_download'",
         // "all" and any unknown value → every action type
         _              => concat!(
             "'note_open','note_create','note_update','note_delete','note_export',",
@@ -33,7 +34,8 @@ fn action_group_to_in(filter: Option<&str>) -> &'static str {
             "'search_fts','search_semantic','search_combined',",
             "'llm_chat','llm_improve',",
             "'file_scan','file_import',",
-            "'wikipedia_read'"
+            "'wikipedia_read',",
+            "'update_check','update_download'"
         ),
     }
 }

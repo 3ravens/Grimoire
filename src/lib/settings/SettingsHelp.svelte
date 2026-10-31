@@ -12,9 +12,10 @@
   // ── Updates (opt-in, notify-only) ──────────────────────────────────────────
   let updateCheckEnabled = $state(false);
   let updateChecking = $state(false);
-  /** @type {null | { enabled: boolean, current: string, latest: string | null, updateAvailable: boolean, downloadUrl: string }} */
+  /** @type {null | { enabled: boolean, current: string, latest: string | null, updateAvailable: boolean, downloadUrl: string, canApplyUpdate: boolean }} */
   let updateResult = $state(null);
   let updateError = $state('');
+  let updateApplying = $state(false);
 
   onMount(async () => {
     try {
@@ -40,7 +41,7 @@
     updateChecking = true;
     updateError = '';
     try {
-      updateResult = await invoke('check_for_update');
+      updateResult = await invoke('check_for_update', { force: true });
       window.dispatchEvent(
         new CustomEvent('grimoire:update-check', { detail: updateResult })
       );
@@ -48,6 +49,29 @@
       updateError = e?.message ?? String(e);
     } finally {
       updateChecking = false;
+    }
+  }
+
+  async function applyInAppUpdate() {
+    updateApplying = true;
+    updateError = '';
+    const latest = updateResult?.latest ?? '';
+    const ok = window.confirm(
+      // Confirm before any download; Windows installer exits the app after install.
+      `Download and install Grimoire ${latest}? The app will restart to finish.`
+    );
+    if (!ok) {
+      updateApplying = false;
+      return;
+    }
+    try {
+      await invoke('apply_in_app_update');
+      // If we are still running (non-Windows installer path), restart explicitly.
+      await invoke('restart_for_update');
+    } catch (e) {
+      updateError = e?.message ?? String(e);
+    } finally {
+      updateApplying = false;
     }
   }
 
@@ -108,6 +132,15 @@
         <span class="setting-desc">
           {t('settings.help.updateAvailable', { latest: updateResult.latest, current: updateResult.current })}
         </span>
+        {#if updateResult.canApplyUpdate}
+          <button
+            class="settings-action-btn"
+            onclick={applyInAppUpdate}
+            disabled={updateApplying}
+          >
+            {updateApplying ? t('settings.help.updating') : t('settings.help.update')}
+          </button>
+        {/if}
         <button
           class="settings-action-btn"
           onclick={() => openPublicSite(updateResult.downloadUrl)}

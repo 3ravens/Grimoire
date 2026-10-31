@@ -66,10 +66,26 @@ Confirm uninstall does **not** delete user data when the Windows NSIS **“Delet
 - Download page still says “coming soon” after publish.
 - `version.json` on grimoireapp.dev was not bumped to the published version.
 
+## Updater signing (required for In-app Update)
+
+Release builds use `bundle.createUpdaterArtifacts` and publish `latest.json` + `.sig` files via
+`tauri-action`. Set these GitHub Actions secrets before cutting a release that should support
+**Update** on Windows:
+
+| Secret | Purpose |
+|--------|---------|
+| `TAURI_SIGNING_PRIVATE_KEY` | Contents of the minisign private key (pair with the pubkey in `src-tauri/tauri.conf.json`) |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Key password (if any) |
+| `WINDOWS_CERTIFICATE` | Optional Base64 `.pfx` for Authenticode |
+| `WINDOWS_CERTIFICATE_PASSWORD` | Optional PFX password |
+
+Windows release jobs pass `--features updater-apply` so the app shows **Update**. macOS/Linux stay
+notify-only (**View download** / **Not now**) until those platforms are signed for apply.
+
+Notify path remains opt-in `version.json` on grimoireapp.dev (no silent download, no auto-restart).
+
 ## Not in this release pipeline
 
 - **Ollama** and models — user installs via wizard or manually.
-- **Code signing / notarization** — follow-up hardening; see builds doc.
-- **Silent in-app auto-update** — deferred to a future v1.1 item (see `ROADMAP.md` v1.1 release intro). The shipped behaviour is **opt-in,
-  notify-only**: clients read `version.json` and link to the download page (hence the
-  publish step above). No `tauri-plugin-updater` background apply yet.
+- **macOS notarization / Linux signed In-app Update** — later per-platform follow-up.
+- **Silent / background apply** — never; user must click **Update** and confirm.

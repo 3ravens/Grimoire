@@ -100,6 +100,8 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -388,6 +390,8 @@ Only delete the DB files as a last resort when you intentionally want an empty v
         commands::open_bug_report,
         commands::open_external_url,
         commands::check_for_update,
+        commands::apply_in_app_update,
+        commands::restart_for_update,
         // ── Debug-only commands (excluded from release builds) ───────────────
         #[cfg(debug_assertions)]
         commands::debug_search,
@@ -413,3 +417,5 @@ Only delete the DB files as a last resort when you intentionally want an empty v
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+

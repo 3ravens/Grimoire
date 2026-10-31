@@ -174,6 +174,8 @@
       file_scan: t('views.auditActionFileScan'),
       file_import: t('views.auditActionFileImport'),
       wikipedia_read: t('views.auditActionWikipedia'),
+      update_check: t('views.auditActionUpdateCheck'),
+      update_download: t('views.auditActionUpdateDownload'),
     };
     const cats = {
       note_open: 'note', note_create: 'note', note_update: 'note', note_delete: 'note', note_export: 'note',
@@ -182,6 +184,7 @@
       llm_chat: 'llm', llm_improve: 'llm',
       file_scan: 'file', file_import: 'file',
       wikipedia_read: 'wiki',
+      update_check: 'other', update_download: 'other',
     };
     return { label: labels[action] ?? action, cat: cats[action] ?? 'other' };
   }
@@ -198,6 +201,7 @@
       <option value="llm">{t('views.auditLlm')}</option>
       <option value="file_scanner">{t('views.auditFileScanner')}</option>
       <option value="wikipedia">{t('views.auditWikipedia')}</option>
+      <option value="updates">{t('views.auditUpdates')}</option>
     </select>
 
     <input

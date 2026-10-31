@@ -33,6 +33,8 @@
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2.4.0",
+    "@tauri-apps/plugin-updater": "^2.14.1",
     "d3-force": "^3.0.0",
     "dompurify": "^3.4.11",
     "marked": "^17.0.6"
