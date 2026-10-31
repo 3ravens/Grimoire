@@ -215,10 +215,16 @@ jobs:
         env:
           CI: true
         # bundle.targets is "all"; RPM packaging has hung >4h on ubuntu-22.04 runners.
-        run: npm run tauri build -- --debug --bundles deb
+        # Disable updater artifacts: CI has no TAURI_SIGNING_PRIVATE_KEY (release workflow signs).
+        run: >-
+          npm run tauri build -- --debug --bundles deb
+          --config "{\"bundle\":{\"createUpdaterArtifacts\":false}}"
 
       - name: Tauri debug bundle smoke (macOS)
         if: matrix.platform == 'macos-arm'
         env:
           CI: true
-        run: npm run tauri build -- --debug --bundles dmg
+        run: >-
+          npm run tauri build -- --debug --bundles dmg
+          --config "{\"bundle\":{\"createUpdaterArtifacts\":false}}"
+
