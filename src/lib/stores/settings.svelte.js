@@ -7,6 +7,7 @@ export function createSettings() {
   let theme  = $state(localStorage.getItem('theme')  ?? 'system');
   let dailyNoteFormat = $state(localStorage.getItem('dailyNoteFormat') ?? 'DD-MM-YYYY');
   let readingWpm = $state(200);
+  let editorSoftWrap = $state(localStorage.getItem('editorSoftWrap') !== 'false');
   let devNativeContextMenu = $state(
     import.meta.env.DEV ? (localStorage.getItem('devNativeContextMenu') === 'true') : false
   );
@@ -62,6 +63,10 @@ export function createSettings() {
     }
   });
 
+  $effect(() => {
+    localStorage.setItem('editorSoftWrap', String(editorSoftWrap));
+  });
+
   return {
     get keepModelInMemory() { return keepModelInMemory; },
     set keepModelInMemory(v) { keepModelInMemory = v; },
@@ -73,6 +78,8 @@ export function createSettings() {
     set dailyNoteFormat(v) { dailyNoteFormat = v; },
     get readingWpm() { return readingWpm; },
     set readingWpm(v) { readingWpm = v; },
+    get editorSoftWrap() { return editorSoftWrap; },
+    set editorSoftWrap(v) { editorSoftWrap = Boolean(v); },
     get devNativeContextMenu() { return devNativeContextMenu; },
     set devNativeContextMenu(v) { devNativeContextMenu = v; },
     get hwCapability() { return hwCapability; },

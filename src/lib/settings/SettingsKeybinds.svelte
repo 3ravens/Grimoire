@@ -38,6 +38,42 @@
       <td><kbd>Ctrl+Enter</kbd></td>
     </tr>
     <tr>
+      <td>{t('settings.keybinds.undo')}</td>
+      <td><kbd>Ctrl+Z</kbd></td>
+    </tr>
+    <tr>
+      <td>{t('settings.keybinds.redo')}</td>
+      <td><kbd>Ctrl+Y</kbd> / <kbd>Ctrl+Shift+Z</kbd></td>
+    </tr>
+    <tr>
+      <td>{t('settings.keybinds.boldWrap')}</td>
+      <td><kbd>Ctrl+B</kbd></td>
+    </tr>
+    <tr>
+      <td>{t('settings.keybinds.italicWrap')}</td>
+      <td><kbd>Ctrl+I</kbd></td>
+    </tr>
+    <tr>
+      <td>{t('settings.keybinds.inlineCodeWrap')}</td>
+      <td><kbd>Ctrl+`</kbd></td>
+    </tr>
+    <tr>
+      <td>{t('settings.keybinds.moveLines')}</td>
+      <td><kbd>Alt+↑</kbd> / <kbd>Alt+↓</kbd></td>
+    </tr>
+    <tr>
+      <td>{t('settings.keybinds.duplicateLines')}</td>
+      <td><kbd>Shift+Alt+↑</kbd> / <kbd>Shift+Alt+↓</kbd></td>
+    </tr>
+    <tr>
+      <td>{t('settings.keybinds.cycleHeading')}</td>
+      <td><kbd>Ctrl+Alt+H</kbd> / <kbd>Ctrl+Alt+Shift+H</kbd></td>
+    </tr>
+    <tr>
+      <td>{t('settings.keybinds.smartPasteLink')}</td>
+      <td><kbd>Ctrl+V</kbd> {t('settings.keybinds.smartPasteLinkWhen')}</td>
+    </tr>
+    <tr>
       <td>{t('settings.keybinds.cycleTabForward')}</td>
       <td><kbd>Ctrl+Tab</kbd></td>
     </tr>

@@ -7,7 +7,10 @@
     let {
         noteId,
         value = $bindable(""),
+        wrap = "soft",
         onkeydown = () => {},
+        onpaste = () => {},
+        onbeforeinput = () => {},
     } = $props();
 
     /** @type {HTMLTextAreaElement | null} */
@@ -41,8 +44,11 @@
     <textarea
         class="content-area"
         bind:this={el}
+        {wrap}
         oninput={handleInput}
+        {onbeforeinput}
         {onkeydown}
+        {onpaste}
         placeholder={t("notes.writePlaceholder")}
     ></textarea>
 {/key}

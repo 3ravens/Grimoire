@@ -171,6 +171,11 @@
   tab-size: 4;
 }
 
+.content-area[wrap="off"] {
+  overflow-x: auto;
+  white-space: pre;
+}
+
 .read-mode-content {
   overflow-y: auto;
   cursor: default;

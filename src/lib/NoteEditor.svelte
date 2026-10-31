@@ -24,6 +24,14 @@
         applyListTab,
         toggleChecklistAtIndex,
     } from "./utils/editorLists.js";
+    import { applyAutoPair, applyMarkdownWrap } from "./utils/editorWrap.js";
+    import { trySmartPasteMarkdownLink } from "./utils/editorSmartPaste.js";
+    import {
+        duplicateEditorLines,
+        moveEditorLines,
+    } from "./utils/editorLines.js";
+    import { cycleHeadingLevel } from "./utils/editorHeadings.js";
+    import { createEditorHistory } from "./utils/editorHistory.js";
     import { editorReadableStats } from "./utils/readableText.js";
     import {
         annotateReadModeTocTargets,
@@ -37,6 +45,17 @@
     const is = getContext("is");
     const fs = getContext("fs");
     const settings = getContext("settings");
+
+    const editorHistory = createEditorHistory();
+    ns.editorHistory = editorHistory;
+    let historyNoteId = $state(/** @type {number | string | null} */ (null));
+
+    $effect(() => {
+        const noteId = ns.activeNote?.id ?? null;
+        if (noteId === historyNoteId) return;
+        historyNoteId = noteId;
+        editorHistory.reset();
+    });
 
     const llmImproveDisabled = $derived(!settings.llmEnabled);
     const improveTooltip = $derived(
@@ -300,13 +319,48 @@
     }
 
     // ── Editor keydown (lists, Tab indent, wiki-link brackets) ────────────────
-    function applyEditorEdit(el, next) {
+    function snapshotFromEl(el) {
+        return {
+            value: el.value,
+            selectionStart: el.selectionStart,
+            selectionEnd: el.selectionEnd,
+        };
+    }
+
+    function restoreEditorState(el, snap) {
+        ns.editorContent = snap.value;
+        el.value = snap.value;
+        ns.markDirty();
+        el.selectionStart = snap.selectionStart;
+        el.selectionEnd = snap.selectionEnd;
+    }
+
+    function applyEditorEdit(el, next, { record = true } = {}) {
+        if (record) {
+            editorHistory.push(snapshotFromEl(el));
+            editorHistory.markCoalesceBoundary();
+        }
         ns.editorContent = next.value;
         // Sync the DOM immediately so caret restore is not racing the bind effect.
         el.value = next.value;
         ns.markDirty();
         el.selectionStart = next.selectionStart;
         el.selectionEnd = next.selectionEnd;
+    }
+
+    function handleEditorBeforeInput(e) {
+        const el = /** @type {HTMLTextAreaElement} */ (e.currentTarget);
+        const inputType = e.inputType ?? "";
+        if (inputType.startsWith("history")) return;
+        const coalesce =
+            inputType === "insertText" ||
+            inputType === "insertCompositionText" ||
+            inputType === "deleteContentBackward" ||
+            inputType === "deleteContentForward" ||
+            inputType === "deleteByCut" ||
+            inputType === "deleteByDrag";
+        editorHistory.push(snapshotFromEl(el), { coalesce });
+        if (!coalesce) editorHistory.markCoalesceBoundary();
     }
 
     function isEnterKey(e) {
@@ -317,15 +371,107 @@
         );
     }
 
+    function handleEditorPaste(e) {
+        const el = /** @type {HTMLTextAreaElement} */ (e.currentTarget);
+        const clip = e.clipboardData?.getData("text/plain") ?? "";
+        const next = trySmartPasteMarkdownLink(
+            el.value,
+            el.selectionStart,
+            el.selectionEnd,
+            clip,
+        );
+        if (!next) return;
+        e.preventDefault();
+        applyEditorEdit(el, next);
+    }
+
     function handleEditorKeydown(e) {
         const el = /** @type {HTMLTextAreaElement} */ (e.currentTarget);
         const { selectionStart: start, selectionEnd: end, value } = el;
+        const mod = e.ctrlKey || e.metaKey;
+
+        // Ctrl/Cmd+Z undo; Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z redo.
+        if (mod && !e.altKey && !e.isComposing) {
+            const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+            if (k === "z" && !e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                const prev = editorHistory.undo(snapshotFromEl(el));
+                if (prev) restoreEditorState(el, prev);
+                return;
+            }
+            if (k === "y" || (k === "z" && e.shiftKey)) {
+                e.preventDefault();
+                e.stopPropagation();
+                const next = editorHistory.redo(snapshotFromEl(el));
+                if (next) restoreEditorState(el, next);
+                return;
+            }
+        }
+
+        // Ctrl/Cmd+B / I / `: wrap or unwrap Markdown markers.
+        if (mod && !e.altKey && !e.isComposing) {
+            const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+            let marker = null;
+            if (key === "b" && !e.shiftKey) marker = "**";
+            else if (key === "i" && !e.shiftKey) marker = "*";
+            // Prefer e.code: with Ctrl held, WebView2/Chromium often does not
+            // report e.key as "`" (Dead / empty / layout-dependent).
+            else if (
+                !e.shiftKey &&
+                (key === "`" || e.code === "Backquote")
+            )
+                marker = "`";
+            if (marker != null) {
+                e.preventDefault();
+                e.stopPropagation();
+                applyEditorEdit(
+                    el,
+                    applyMarkdownWrap(value, start, end, marker),
+                );
+                return;
+            }
+        }
+
+        // Ctrl/Cmd+Alt+H: cycle ATX heading level (Shift reverses).
+        if (
+            mod &&
+            e.altKey &&
+            !e.isComposing &&
+            (e.key === "h" || e.key === "H")
+        ) {
+            e.preventDefault();
+            e.stopPropagation();
+            applyEditorEdit(
+                el,
+                cycleHeadingLevel(value, start, end, {
+                    reverse: e.shiftKey,
+                }),
+            );
+            return;
+        }
+
+        // Alt+↑/↓ move lines; Shift+Alt+↑/↓ duplicate.
+        if (
+            e.altKey &&
+            !mod &&
+            !e.isComposing &&
+            (e.key === "ArrowUp" || e.key === "ArrowDown")
+        ) {
+            const direction = e.key === "ArrowUp" ? -1 : 1;
+            e.preventDefault();
+            const next = e.shiftKey
+                ? duplicateEditorLines(value, start, end, direction)
+                : moveEditorLines(value, start, end, direction);
+            if (next) applyEditorEdit(el, next);
+            return;
+        }
 
         // Ctrl/Cmd+Enter: toggle checklist on the current line.
         // Always preventDefault so the browser does not insert a newline.
         if (
             isEnterKey(e) &&
-            (e.ctrlKey || e.metaKey) &&
+            mod &&
             !e.shiftKey &&
             !e.altKey
         ) {
@@ -372,6 +518,25 @@
             return;
         }
 
+        // Auto-pair *, _, `, ( at a caret (skip when modifiers held).
+        if (
+            !mod &&
+            !e.altKey &&
+            !e.shiftKey &&
+            !e.isComposing &&
+            (e.key === "*" ||
+                e.key === "_" ||
+                e.key === "`" ||
+                e.key === "(")
+        ) {
+            const paired = applyAutoPair(value, start, end, e.key);
+            if (paired) {
+                e.preventDefault();
+                applyEditorEdit(el, paired);
+                return;
+            }
+        }
+
         if (e.key !== "[") return;
         const prevChar = value[start - 1];
         e.preventDefault();
@@ -379,21 +544,19 @@
             const before = value.slice(0, start - 1);
             const after = value.slice(end + (value[end] === "]" ? 1 : 0));
             const cursor = before.length + 2;
-            ns.editorContent = before + "[[]]" + after;
-            ns.markDirty();
-            requestAnimationFrame(() => {
-                el.selectionStart = cursor;
-                el.selectionEnd = cursor;
+            applyEditorEdit(el, {
+                value: before + "[[]]" + after,
+                selectionStart: cursor,
+                selectionEnd: cursor,
             });
         } else {
             const before = value.slice(0, start);
             const after = value.slice(end);
             const cursor = before.length + 1;
-            ns.editorContent = before + "[]" + after;
-            ns.markDirty();
-            requestAnimationFrame(() => {
-                el.selectionStart = cursor;
-                el.selectionEnd = cursor;
+            applyEditorEdit(el, {
+                value: before + "[]" + after,
+                selectionStart: cursor,
+                selectionEnd: cursor,
             });
         }
     }
@@ -679,7 +842,10 @@
                 <NoteBodyTextarea
                     noteId={ns.activeNote.id}
                     bind:value={ns.editorContent}
+                    wrap={settings.editorSoftWrap ? "soft" : "off"}
+                    onbeforeinput={(e) => handleEditorBeforeInput(e)}
                     onkeydown={(e) => handleEditorKeydown(e)}
+                    onpaste={(e) => handleEditorPaste(e)}
                 />
             {/if}
         </div>

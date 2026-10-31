@@ -11,7 +11,7 @@ export const FEATURE_GUIDE = `## Grimoire Feature Guide
 - F11: Toggle focus / distraction-free mode (hides all panels)
 - Ctrl+Shift+L: Lock vault
 - Ctrl+Shift+Enter: Send selected text to chat
-- In the note editor: Enter continues Markdown lists; Tab / Shift+Tab nest / unnest list items; Ctrl+Enter toggles checklists; in Read mode, click a checklist box to toggle and save
+- In the note editor: Enter continues Markdown lists; Tab / Shift+Tab nest / unnest list items; Ctrl+Enter toggles checklists; Ctrl+Z / Ctrl+Y undo and redo; Ctrl+B / Ctrl+I / Ctrl+\` wrap bold / italic / inline code; Alt+↑/↓ move lines; Shift+Alt+↑/↓ duplicate lines; Ctrl+Alt+H cycles heading level (Shift reverses); paste a URL over a selection to make a Markdown link; in Read mode, click a checklist box to toggle and save
 - Delete: Delete active note
 - M (on kanban card): Start keyboard move mode
 - Arrow keys: Navigate tabs, calendar, quick switcher, menus
@@ -45,7 +45,7 @@ export const FEATURE_GUIDE = `## Grimoire Feature Guide
 
 ### Settings
 - LLM: Model selection, keep in memory toggle, embedding model
-- Appearance: Theme (System/Light/Dark/Spellbook/Matrix), accent colour (Default, Crimson, Cyan, Forest green, Black and grey), date format
+- Appearance: Theme (System/Light/Dark/Spellbook/Matrix), accent colour (Default, Crimson, Cyan, Forest green, Black and grey), date format, editor soft-wrap
 - Security: Vault password (AES-GCM + Argon2id), per-folder passwords
 - Data: Export all notes as Markdown; export single note from editor or folder list (Markdown, HTML, PDF via print)
 

@@ -1,5 +1,8 @@
 <script>
+  import { getContext } from 'svelte';
   import { t } from '../i18n/t.js';
+
+  const settings = getContext('settings');
 
   let {
     theme = 'system', onThemeChange = () => {},
@@ -141,5 +144,21 @@
     value={readingWpm}
     aria-label={t('settings.appearance.readingWpmAria')}
     onchange={(e) => onReadingWpmChange(e.currentTarget.value)}
+  />
+</div>
+
+<div class="setting-row">
+  <div class="setting-label">
+    <label class="setting-name" for="editor-soft-wrap">{t('settings.appearance.softWrap')}</label>
+    <span class="setting-desc">{t('settings.appearance.softWrapDesc')}</span>
+  </div>
+  <input
+    id="editor-soft-wrap"
+    type="checkbox"
+    checked={settings.editorSoftWrap}
+    aria-label={t('settings.appearance.softWrapAria')}
+    onchange={(e) => {
+      settings.editorSoftWrap = e.currentTarget.checked;
+    }}
   />
 </div>

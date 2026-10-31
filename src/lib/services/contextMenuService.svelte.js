@@ -11,6 +11,9 @@ import {
   effectiveCopyLockFlag,
 } from "../utils/noteCopyActions.js";
 import { t } from "../i18n/t.js";
+import { applyMarkdownWrap } from "../utils/editorWrap.js";
+import { trySmartPasteMarkdownLink } from "../utils/editorSmartPaste.js";
+import { commitEditorBody } from "../utils/editorHistory.js";
 
 /**
  * Context menu state and logic.
@@ -59,11 +62,24 @@ export function createContextMenuService(deps) {
   /** @param {number} start @param {number} end @param {string} val
    *  @param {string} prefix @param {string} suffix */
   function applyInlineFormat(start, end, val, prefix, suffix) {
+    // Shared wrap helper when prefix === suffix (bold/italic/code); else legacy wrap.
+    if (prefix === suffix) {
+      const next = applyMarkdownWrap(val, start, end, prefix);
+      commitEditorBody(deps.ns, next.value, {
+        selectionStart: next.selectionStart,
+        selectionEnd: next.selectionEnd,
+      });
+      return;
+    }
     const sel = val.slice(start, end);
     const trimmed = sel.trimEnd();
-    deps.ns.editorContent =
+    const nextValue =
       val.slice(0, start) + prefix + trimmed + suffix + val.slice(end);
-    deps.ns.markDirty();
+    const cursor = start + prefix.length + trimmed.length + suffix.length;
+    commitEditorBody(deps.ns, nextValue, {
+      selectionStart: cursor,
+      selectionEnd: cursor,
+    });
   }
 
   /** @param {number} start @param {number} end @param {string} val
@@ -77,13 +93,21 @@ export function createContextMenuService(deps) {
       .split("\n")
       .map((line) => prefix + line.replace(/^#{1,6}\s*/, ""))
       .join("\n");
-    deps.ns.editorContent =
+    const nextValue =
       val.slice(0, start) +
       (needBefore ? "\n" : "") +
       prefixed +
       (needAfter ? "\n" : "") +
       val.slice(end);
-    deps.ns.markDirty();
+    const cursor =
+      start +
+      (needBefore ? 1 : 0) +
+      prefixed.length +
+      (needAfter ? 1 : 0);
+    commitEditorBody(deps.ns, nextValue, {
+      selectionStart: cursor,
+      selectionEnd: cursor,
+    });
   }
 
   // ── Menu builder ──────────────────────────────────────────────────────────
@@ -430,8 +454,10 @@ export function createContextMenuService(deps) {
           disabled: !hasSel,
           action: () => {
             navigator.clipboard.writeText(selText);
-            ns.editorContent = val.slice(0, start) + val.slice(end);
-            ns.markDirty();
+            commitEditorBody(ns, val.slice(0, start) + val.slice(end), {
+              selectionStart: start,
+              selectionEnd: start,
+            });
           },
         },
         {
@@ -442,9 +468,21 @@ export function createContextMenuService(deps) {
         {
           label: t("contextMenu.paste"),
           action: async () => {
-            const text = await navigator.clipboard.readText();
-            ns.editorContent = val.slice(0, start) + text + val.slice(end);
-            ns.markDirty();
+            const clip = await navigator.clipboard.readText();
+            const smart = trySmartPasteMarkdownLink(val, start, end, clip);
+            if (smart) {
+              commitEditorBody(ns, smart.value, {
+                selectionStart: smart.selectionStart,
+                selectionEnd: smart.selectionEnd,
+              });
+              return;
+            }
+            const nextValue = val.slice(0, start) + clip + val.slice(end);
+            const cursor = start + clip.length;
+            commitEditorBody(ns, nextValue, {
+              selectionStart: cursor,
+              selectionEnd: cursor,
+            });
           },
         },
         ...(hasSel
